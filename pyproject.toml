@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sfc-tfsig-portfolio-strategy"
+version = "0.1.0"
+description = "Modelo multifactor long-only US+Canada para el portafolio conjunto SFC x TFSIG"
+requires-python = ">=3.11"
+
+# El nucleo -- panel, factores, cartera, backtest, metricas y validacion -- solo
+# necesita pandas y numpy. Es deliberado: son funciones puras sobre DataFrames y
+# se prueban con datos sinteticos, sin red. `tomllib` es estandar desde 3.11.
+#
+# `requests` es para la capa de la SEC. `yfinance` es para precios y se importa
+# de forma perezosa dentro de `data/prices.py`.
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "requests>=2.31",
+    "yfinance>=0.2",
+]
+
+[project.optional-dependencies]
+# Parquet para las caches y el panel. Sin el se cae a CSV comprimido: pierde
+# tipos, no pierde datos.
+fast = ["pyarrow>=15"]
+
+# Graficos del reporte trimestral. Todo el analisis corre sin ellos.
+charts = ["matplotlib>=3.8"]
+
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

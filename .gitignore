@@ -1,0 +1,25 @@
+# Secretos y configuracion local
+.env
+
+# Datos y salidas: se regeneran, no se versionan
+data/cache/
+data/raw/
+output/
+*.parquet
+*.csv.gz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

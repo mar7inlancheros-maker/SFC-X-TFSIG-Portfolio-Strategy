@@ -1,0 +1,151 @@
+# ============================================================================
+#  SFC x TFSIG -- Portfolio Strategy
+#  TODA decision de inversion vive en este fichero.
+#
+#  Regla de la casa: si cambiar un numero cambia que se compra, ese numero va
+#  aqui y no en el codigo. El motor lee esto, calcula un fingerprint (sha256) y
+#  lo estampa en cada backtest y cada reporte. Dos resultados con el mismo
+#  fingerprint son comparables; con fingerprint distinto, no lo son.
+#
+#  Los parametros de mandato (capital, cadencia, benchmark) son DEFAULTS
+#  propuestos, no acuerdos cerrados: los fija el comite conjunto.
+# ============================================================================
+
+[meta]
+name          = "SFC x TFSIG Joint Equity Model"
+version       = "0.1.0"
+base_currency = "USD"
+
+# ---------------------------------------------------------------------------
+#  UNIVERSO INVESTIBLE
+#
+#  US + Canada, pero via listado en EE.UU.: emisores estadounidenses mas
+#  canadienses cross-listed (NYSE/Nasdaq/NYSE American). Razon: los
+#  fundamentales point-in-time salen del XBRL de la SEC, que cubre a los
+#  canadienses que presentan 40-F o 10-K y NO a los exclusivos de TSX. Todo
+#  cotiza en USD, asi que el book no carga riesgo de divisa.
+#
+#  El tramo TSX-only se activa con `include_tsx_only` y HOY degrada a factores
+#  solo-precio (momentum y baja volatilidad): sin fundamentales no hay value ni
+#  quality. Ver README, "Limitaciones declaradas".
+# ---------------------------------------------------------------------------
+[universe]
+# Valores que la SEC emite de verdad en company_tickers_exchange.json:
+# "NYSE", "Nasdaq", "OTC", "CBOE" y vacio. No existe "NYSE American" como tal.
+# OTC queda fuera por liquidez y calidad de informacion, no por tamaño.
+exchanges            = ["NYSE", "Nasdaq"]
+include_tsx_only     = false
+min_price            = 5.0          # USD. Debajo de esto el spread se come la señal
+min_dollar_volume    = 3_000_000    # USD/dia, mediana de 63 sesiones
+min_market_cap       = 750_000_000  # USD. Micro caps: datos peores, costes peores
+min_history_months   = 24           # necesario para momentum 12-1 y vol de 12m
+max_names            = 1200         # techo del panel, por coste de descarga
+
+# Antiguedad maxima de la ultima presentacion. Por encima de esto la empresa se
+# cae del panel: 550 dias son mas de cuatro trimestres de retraso, y una empresa
+# que no reporta en ese plazo o esta en problemas o ya no informa. Comprarla con
+# los numeros de hace dos anos es comprar a ciegas.
+max_fundamental_staleness_d = 550
+
+# SIC excluidos: fondos cerrados, REITs hipotecarios, blank checks y vehiculos
+# de inversion. Sus estados financieros no son comparables con los de una
+# empresa operativa: el "margen" y el "ROIC" de un fondo no significan nada.
+exclude_sic = [6189, 6199, 6726, 6770, 6798]
+
+# ---------------------------------------------------------------------------
+#  CALENDARIO Y EJECUCION
+# ---------------------------------------------------------------------------
+[calendar]
+start           = "2012-01-31"
+end             = ""      # vacio = ultimo cierre disponible
+rebalance       = "M"     # M = fin de mes | Q = fin de trimestre
+execution_lag_d = 1       # la señal se calcula en T y se ejecuta en T+1
+
+# ---------------------------------------------------------------------------
+#  FACTORES
+#
+#  Pesos del score compuesto. Se normalizan a 1, asi que importan las
+#  proporciones, no la escala. Un peso 0 apaga el factor sin tocar el codigo.
+# ---------------------------------------------------------------------------
+[factors.weights]
+value    = 0.30
+quality  = 0.30
+momentum = 0.30
+lowvol   = 0.10
+
+[factors.processing]
+winsorize_pct    = 0.02   # recorta el 2% de cada cola antes de estandarizar
+sector_neutral   = true   # z-score DENTRO del sector, no contra todo el panel
+min_sector_names = 5      # sector con menos nombres: cae a z-score global
+min_coverage     = 0.60   # metrica con menos cobertura que esto se descarta
+
+[factors.value]
+# Rendimientos, no multiplos: un yield negativo ordena bien y un P/E negativo
+# no. Cada metrica se estandariza por separado y luego se promedian.
+metrics = ["earnings_yield", "fcf_yield", "book_to_price", "sales_to_price", "ebit_to_ev"]
+
+[factors.quality]
+# Rentabilidad, solidez y prudencia contable. Los accruals entran con signo
+# negativo: mas devengo sobre el beneficio es peor calidad.
+metrics = ["roic", "roe", "gross_profitability", "fcf_margin", "interest_coverage",
+           "debt_to_equity", "current_ratio", "accruals", "shares_growth"]
+
+[factors.momentum]
+lookback_m = 12   # 12 meses...
+skip_m     = 1    # ...saltando el ultimo, por la reversion de corto plazo
+
+[factors.lowvol]
+lookback_d = 252  # volatilidad realizada de los retornos diarios de 1 año
+
+# ---------------------------------------------------------------------------
+#  CONSTRUCCION DE CARTERA
+# ---------------------------------------------------------------------------
+[portfolio]
+n_positions      = 30
+weighting        = "score_tilt"  # equal | score_tilt | inverse_vol
+max_weight       = 0.06          # techo por nombre
+min_weight       = 0.01
+max_sector_w     = 0.30          # techo por sector: el modelo no apuesta el book a un sector
+buffer_rank      = 45            # una posicion se mantiene mientras siga en el top 45.
+                                 # Amortigua el turnover sin cambiar la señal.
+cash_buffer      = 0.02          # colchon para comisiones y ordenes parciales
+
+# ---------------------------------------------------------------------------
+#  COSTES DE TRANSACCION
+#
+#  Conservador a proposito. Un backtest sin costes realistas es publicidad, no
+#  evidencia: el turnover mensual de un modelo multifactor paga peaje de verdad.
+# ---------------------------------------------------------------------------
+[costs]
+commission_bps = 5.0    # comision por lado
+spread_bps     = 10.0   # medio spread efectivo por lado
+slippage_bps   = 5.0    # impacto adicional
+
+# ---------------------------------------------------------------------------
+#  BACKTEST
+# ---------------------------------------------------------------------------
+[backtest]
+initial_capital = 200_000.0   # notional simulado. Lo fija el comite.
+benchmark       = "SPY"
+risk_free_rate  = 0.04        # anual, para Sharpe. Aproximacion de T-bill.
+
+# ---------------------------------------------------------------------------
+#  VALIDACION
+#
+#  Walk-forward: el modelo solo se juzga fuera de muestra. `train_years` se usa
+#  para calibrar; `test_years` es el tramo que cuenta. La ventana avanza y nunca
+#  mira hacia atras.
+# ---------------------------------------------------------------------------
+[validation]
+train_years    = 4
+test_years     = 1
+n_quantiles    = 5     # quintiles para el spread de la señal
+newey_west_lag = 6     # rezagos para los errores estandar de Fama-MacBeth
+
+# ---------------------------------------------------------------------------
+#  REPORTE
+# ---------------------------------------------------------------------------
+[reporting]
+cadence   = "Q"                # trimestral, para el comite conjunto
+charts    = true
+decimals  = 2
