@@ -136,8 +136,11 @@ def _get_json(session: requests.Session, url: str) -> Any:
 # ---------------------------------------------------------------------------
 #  Conceptos: un nombre economico -> muchas etiquetas XBRL posibles
 #
-#  El orden importa: se toma la PRIMERA etiqueta con datos. Las de arriba son
-#  las mas especificas y modernas; las de abajo, las historicas o las generales.
+#  El orden importa: para CADA PERIODO se toma la etiqueta disponible que este
+#  mas arriba en la lista. Las de arriba son las mas especificas y modernas; las
+#  de abajo, las historicas o las generales. Elegir periodo a periodo -- y no una
+#  etiqueta unica para toda la empresa -- es lo que cose la historia a traves de
+#  la transicion contable de ASC 606 en 2018.
 # ---------------------------------------------------------------------------
 
 _USD = ("USD",)
@@ -339,20 +342,23 @@ _ACCEPTED_FORMS = {"10-K", "10-Q", "20-F", "40-F", "10-K/A", "10-Q/A", "20-F/A",
 
 
 def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
-    """JSON de companyfacts -> filas tidy de los conceptos que usa el modelo.
+    """JSON de companyfacts -> filas tidy de TODAS las etiquetas candidatas.
 
-    Columnas: concept, tag, start, end, filed, value, form, kind.
+    Columnas: concept, tag, priority, start, end, filed, value, form, kind.
+
+    No elige entre etiquetas: eso lo hace `select_by_priority`, periodo a
+    periodo. Guardar todas las candidatas es lo que permite cambiar el orden de
+    prioridad mas adelante sin volver a descargar 5.000 ficheros de EDGAR.
     """
     facts = facts_json.get("facts", {}) if facts_json else {}
     rows: list[dict[str, Any]] = []
 
     for concept, spec in CONCEPTS.items():
-        for namespace, tag in spec["tags"]:
+        for priority, (namespace, tag) in enumerate(spec["tags"]):
             block = facts.get(namespace, {}).get(tag)
             if not block:
                 continue
             units = block.get("units", {})
-            found_for_tag = 0
             for unit_name in spec["units"]:
                 entries = units.get(unit_name)
                 if not entries:
@@ -370,6 +376,7 @@ def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
                         {
                             "concept": concept,
                             "tag": f"{namespace}:{tag}",
+                            "priority": priority,
                             "start": entry.get("start"),
                             "end": end,
                             "filed": filed,
@@ -378,12 +385,6 @@ def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
                             "kind": spec["kind"],
                         }
                     )
-                    found_for_tag += 1
-            if found_for_tag:
-                # Primera etiqueta con datos gana: mezclar `Revenues` con
-                # `RevenueFromContractWithCustomer...` en la misma serie produce
-                # saltos que luego parecen crecimiento.
-                break
 
     if not rows:
         return _empty_raw()
@@ -395,11 +396,38 @@ def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
     return df.dropna(subset=["end", "filed"])
 
 
+def select_by_priority(raw: pd.DataFrame) -> pd.DataFrame:
+    """Una etiqueta por periodo: la de mayor prioridad que tenga dato.
+
+    **Por periodo, no por empresa.** La version anterior elegia una sola
+    etiqueta para toda la historia de la empresa: la primera de la lista que
+    tuviera algun dato. Con la transicion contable de ASC 606 (2018) eso salia
+    carisimo -- Apple publica `RevenueFromContractWithCustomerExcludingAssessedTax`
+    desde 2017 y `Revenues` antes, asi que el modelo se quedaba con la moderna,
+    cortaba y perdia toda la historia de ingresos anterior a 2017. La cobertura
+    de ingresos del panel era del 52%, y `sales_to_price` y `fcf_margin` caian
+    solas por debajo del umbral.
+
+    Elegir periodo a periodo cose las dos eras. El riesgo conocido es que
+    ambas etiquetas no midan exactamente lo mismo en el punto de union y
+    aparezca un salto que parezca crecimiento; es un riesgo acotado a un
+    trimestre y mucho menor que perder seis anos de historia.
+    """
+    if raw.empty:
+        return raw
+    return (
+        raw.sort_values(["priority", "filed"])
+        .groupby(["concept", "start", "end"], as_index=False, dropna=False)
+        .first()
+    )
+
+
 def _empty_raw() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "concept": pd.Series(dtype="object"),
             "tag": pd.Series(dtype="object"),
+            "priority": pd.Series(dtype="int64"),
             "start": pd.Series(dtype="datetime64[ns]"),
             "end": pd.Series(dtype="datetime64[ns]"),
             "filed": pd.Series(dtype="datetime64[ns]"),
@@ -572,9 +600,18 @@ def facts_to_observations(facts_json: Mapping[str, Any]) -> pd.DataFrame:
     Columnas: concept, period_end, filed, value. Los flujos vienen en TTM, los
     saldos en su valor de cierre.
     """
-    raw = extract_raw_facts(facts_json)
+    return observations_from_raw(extract_raw_facts(facts_json))
+
+
+def observations_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
+    """Filas crudas cacheadas -> observaciones listas para el panel.
+
+    Se separa de `facts_to_observations` para poder recalcular desde la cache
+    sin volver a pedir nada a EDGAR.
+    """
     if raw.empty:
         return point_in_time_balances(raw)
+    raw = select_by_priority(raw)
     flows = raw[raw["kind"] == "flow"]
     points = raw[raw["kind"] == "point"]
     out = pd.concat(
@@ -614,19 +651,59 @@ def listed_companies(max_age_days: float = 7) -> pd.DataFrame:
     return df
 
 
+# Version de la logica que convierte filas crudas en observaciones: seleccion de
+# etiqueta por periodo, primera publicacion y reconstruccion del TTM. Forma parte
+# del nombre de la cache de observaciones, asi que SUBIRLA invalida todas las
+# observaciones calculadas con la logica anterior y las recalcula desde las
+# crudas, sin tocar EDGAR.
+#
+# Regla: cualquier cambio en `select_by_priority`, `quarterly_segments`,
+# `trailing_twelve_months` o `point_in_time_balances` sube esta version. Si no
+# se sube, el panel mezcla observaciones de la logica vieja con codigo nuevo y
+# nada falla ni avisa.
+OBSERVATIONS_VERSION = "v2"
+
+
+def _raw_name(cik: int) -> str:
+    return f"facts_raw/cik_{cik:010d}"
+
+
+def _observations_name(cik: int) -> str:
+    return f"facts_obs_{OBSERVATIONS_VERSION}/cik_{cik:010d}"
+
+
+def _derive_and_cache(cik: int, raw: pd.DataFrame) -> pd.DataFrame:
+    observations = observations_from_raw(raw)
+    observations.insert(0, "cik", cik)
+    cache.write_frame(_observations_name(cik), observations)
+    return observations
+
+
 def company_observations(cik: int, *, session: requests.Session | None = None,
                          refresh: bool = False) -> pd.DataFrame:
-    """Observaciones de una empresa, con cache por CIK.
+    """Observaciones de una empresa, con dos niveles de cache por CIK.
 
-    La cache no caduca por defecto: un 10-K de 2015 no cambia. Para traer
-    presentaciones nuevas se pasa `refresh=True` (lo hace el pipeline para los
-    ultimos trimestres).
+    1. **Observaciones** (`facts_obs_<version>/`): el resultado final. Leerlo es
+       inmediato.
+    2. **Filas crudas** (`facts_raw/`): todas las etiquetas candidatas tal como
+       las publica EDGAR. Si la version de la logica cambia, las observaciones
+       se recalculan desde aqui sin red.
+
+    Antes solo existia el nivel 2, y reconstruir el panel recalculaba el TTM de
+    3.800 empresas en cada corrida: unos veinte minutos por iteracion, que es
+    justo lo que desanima a probar una hipotesis mas. Con el nivel 1 esa parte
+    baja a segundos.
+
+    Ninguna cache caduca: un 10-K de 2015 no cambia. Para traer presentaciones
+    nuevas, `refresh=True` vuelve a EDGAR y rehace ambos niveles.
     """
-    name = f"facts/cik_{cik:010d}"
     if not refresh:
-        cached = cache.read_frame(name)
-        if cached is not None:
-            return cached
+        observations = cache.read_frame(_observations_name(cik))
+        if observations is not None:
+            return observations
+        raw = cache.read_frame(_raw_name(cik))
+        if raw is not None:
+            return _derive_and_cache(cik, raw)
 
     own_session = session is None
     session = session or _session()
@@ -636,11 +713,14 @@ def company_observations(cik: int, *, session: requests.Session | None = None,
         if own_session:
             session.close()
 
-    observations = facts_to_observations(payload or {})
-    observations.insert(0, "cik", cik)
-    (cache.CACHE_DIR / "facts").mkdir(parents=True, exist_ok=True)
-    cache.write_frame(name, observations)
-    return observations
+    # Se cachean las filas CRUDAS, con todas las etiquetas candidatas, ademas de
+    # las observaciones. Cuesta algo mas de disco y ahorra la leccion que costo
+    # el fallo de ASC 606: cambiar el orden de prioridad de las etiquetas, o la
+    # reconstruccion del TTM, obligaba a volver a descargar 5.000 ficheros de
+    # EDGAR. Con las crudas en disco, ese cambio se recalcula sin red.
+    raw = extract_raw_facts(payload or {})
+    cache.write_frame(_raw_name(cik), raw)
+    return _derive_and_cache(cik, raw)
 
 
 def download_fundamentals(

@@ -27,6 +27,18 @@ from . import financials, universe as universe_mod
 from .config import Config
 from .data import prices as prices_mod, sec
 
+# Version de la logica de ensamblaje. Va en el nombre de la cache del panel,
+# junto al fingerprint de la configuracion. Hace falta porque el fingerprint
+# solo cambia cuando cambia el TOML: si cambia el CODIGO que aplica el TOML --
+# como cuando `min_history_months` paso de ignorarse a aplicarse -- el
+# fingerprint es el mismo y la cache serviria el panel viejo sin avisar.
+#
+# Regla: cualquier cambio en que filas entran al panel o en como se calculan
+# sus columnas sube esta version.
+#
+#   v2 -- 2026-09-23: se aplica `min_history_months`.
+PANEL_VERSION = "v2"
+
 # Conceptos crudos que viajan al panel desde la SEC.
 _CONCEPT_COLUMNS = tuple(sec.CONCEPTS.keys())
 
@@ -48,6 +60,16 @@ def rebalance_dates(cfg: Config, available: pd.DatetimeIndex) -> pd.DatetimeInde
     # Solo fechas para las que hay mercado: el ultimo dia natural del mes puede
     # ser domingo.
     return pd.DatetimeIndex([d for d in grid if (available <= d).any()])
+
+
+def history_months_at(first_trade: pd.Series, date: pd.Timestamp) -> pd.Series:
+    """Meses de historia de precio de cada ticker en `date`.
+
+    Un ticker cuyo primer cierre es posterior a `date` sale negativo, y el
+    filtro lo excluye igual que a uno con historia corta.
+    """
+    first = pd.to_datetime(first_trade)
+    return (pd.Timestamp(date) - first).dt.days / 30.4375
 
 
 def _as_of_price_frame(close_wide: pd.DataFrame, date: pd.Timestamp) -> pd.Series:
@@ -83,15 +105,17 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
         static["ticker"], price_start, end, refresh=refresh, progress=progress
     )
     close_wide = prices_mod.to_wide(long_prices, "close")
-    dollar_volume_daily = prices_mod.to_wide(
-        long_prices.assign(dv=long_prices["close"] * long_prices["volume"]), "dv"
-    )
+    # Mediana movil de 63 sesiones, el MISMO criterio que usa el filtro por
+    # fecha. Con el maximo diario crudo el prefiltro no filtraba nada: cualquier
+    # accion toca tres millones de dolares en un dia suelto de resultados, asi
+    # que sobrevivian 5.836 de 6.029 y se descargaba el XBRL de casi todas.
+    dollar_volume = prices_mod.median_dollar_volume(long_prices)
 
     # Prefiltro de coste: sin precio no hay nada que hacer, y sin liquidez
-    # suficiente en NINGUN momento del historico la empresa no va a entrar en la
+    # sostenida en NINGUN momento del historico la empresa no va a entrar en la
     # cartera ningun mes. Bajar su XBRL es gastar peticiones para nada.
     liquid = universe_mod.ever_liquid(
-        dollar_volume_daily, float(cfg.get("universe.min_dollar_volume"))
+        dollar_volume, float(cfg.get("universe.min_dollar_volume"))
     )
     tradable = static[
         static["ticker"].isin(close_wide.columns) & static["ticker"].isin(liquid)
@@ -126,11 +150,15 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
     volatility = prices_mod.realized_volatility(
         close_wide, window_d=int(cfg.get("factors.lowvol.lookback_d"))
     )
-    dollar_volume = prices_mod.median_dollar_volume(long_prices)
 
     dates = rebalance_dates(cfg, close_wide.index)
     if progress:
         print(f"[6/6] ensamblando {len(dates)} fechas de rebalanceo...", flush=True)
+
+    # Primer cierre de cada ticker en la cache. Es informacion conocida en
+    # cualquier fecha posterior, asi que usarla para medir la historia no mira
+    # al futuro.
+    first_trade = close_wide.apply(lambda s: s.first_valid_index())
 
     cik_to_ticker = dict(zip(tradable["cik"], tradable["ticker"]))
     max_stale = int(cfg.get("universe.max_fundamental_staleness_d", 550))
@@ -177,6 +205,7 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
             price=visible.set_index("ticker")["price"],
             dollar_volume=visible.set_index("ticker")["dollar_volume"],
             market_cap=visible.set_index("ticker")["market_cap"],
+            history_months=history_months_at(first_trade, date),
         )
         if eligible.empty:
             continue

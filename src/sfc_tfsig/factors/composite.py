@@ -70,14 +70,27 @@ def build_scores(panel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
             min_sector_names=int(proc["min_sector_names"]),
         )
 
-    scores["composite"] = combine_factors(scores, weights)
+    # El minimo de factores no puede superar los que estan encendidos. Con un
+    # modelo de un solo factor -- legitimo para validar ese factor por separado
+    # antes de meterlo en el compuesto -- un minimo fijo de 2 deja TODOS los
+    # scores en NaN, la cartera sin candidatos, y el backtest muere con un error
+    # sobre fechas que no tiene nada que ver con la causa.
+    composite = combine_factors(scores, weights, min_factors=min(2, len(weights)))
+
+    # Sin fundamentales no hay compuesto. Ver el comentario de
+    # `require_fundamental_score` en el TOML: es lo que impide que un vehiculo
+    # sin ingresos ni patrimonio entre en cartera puntuado solo por precio.
+    # Solo aplica a los factores fundamentales que esten ENCENDIDOS, para no
+    # romper una corrida de un solo factor de precio.
+    if bool(proc.get("require_fundamental_score", False)):
+        required = [f for f in ("value", "quality") if f in weights]
+        if required:
+            has_fundamentals = scores[required].notna().all(axis=1)
+            composite = composite.where(has_fundamentals)
+
+    scores["composite"] = composite
 
     out = panel.copy()
     for column in scores.columns:
         out[f"score_{column}"] = scores[column]
     return out
-
-
-def rank_within_date(panel: pd.DataFrame, score_col: str = "score_composite") -> pd.Series:
-    """Rango 1 = mejor, dentro de cada fecha."""
-    return panel.groupby("date")[score_col].rank(ascending=False, method="first")

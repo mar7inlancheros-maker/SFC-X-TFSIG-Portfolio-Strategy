@@ -100,3 +100,67 @@ def test_un_fallo_viejo_se_vuelve_a_intentar(tmp_path, monkeypatch):
     viejo = (pd.Timestamp.today().normalize() - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
     cache.write_json(prices_mod._FAILURES, {"ANTIGUA": viejo})
     assert "ANTIGUA" not in prices_mod._recent_failures()
+
+
+# ---------------------------------------------------------------------------
+#  Descarga incremental: planificador
+# ---------------------------------------------------------------------------
+
+INICIO = pd.Timestamp("2009-07-31")
+FIN = pd.Timestamp("2026-09-23")
+
+
+def _registro(desde, hasta):
+    return {"from": desde, "to": hasta}
+
+
+def test_ticker_nuevo_pide_la_serie_completa():
+    trabajos = prices_mod.plan_downloads(["NUEVO"], {}, INICIO, FIN)
+    assert trabajos == [(["NUEVO"], INICIO, FIN)]
+
+
+def test_ticker_que_salio_a_bolsa_despues_no_se_repide_cada_corrida():
+    """El bug: primer precio en 2015 > inicio 2009 parecia 'falta historia'."""
+    registro = {"IPO2015": _registro("2009-07-31", "2026-09-22")}
+    assert prices_mod.plan_downloads(["IPO2015"], registro, INICIO, FIN) == []
+
+
+def test_ticker_que_dejo_de_cotizar_no_se_repide_cada_corrida():
+    """Se pidio hasta ayer; que su ultimo precio sea de 2018 da igual."""
+    registro = {"MUERTA2018": _registro("2009-07-31", "2026-09-22")}
+    assert prices_mod.plan_downloads(["MUERTA2018"], registro, INICIO, FIN) == []
+
+
+def test_la_actualizacion_mensual_pide_solo_la_cola():
+    registro = {"AAA": _registro("2009-07-31", "2026-08-31"),
+                "BBB": _registro("2009-07-31", "2026-08-29")}
+    trabajos = prices_mod.plan_downloads(["AAA", "BBB"], registro, INICIO, FIN)
+    assert len(trabajos) == 1
+    tickers, desde, hasta = trabajos[0]
+    assert tickers == ["AAA", "BBB"]
+    # Desde la ultima descarga (menos la tolerancia), no desde 2009.
+    assert desde >= pd.Timestamp("2026-08-20")
+    assert hasta == FIN
+
+
+def test_un_ticker_muy_atrasado_no_arrastra_a_los_demas():
+    """Agrupar las colas por mes evita bajar anos de historia para todos."""
+    registro = {"AL_DIA": _registro("2009-07-31", "2026-08-31"),
+                "ATRASADO": _registro("2009-07-31", "2020-01-31")}
+    trabajos = prices_mod.plan_downloads(["AL_DIA", "ATRASADO"], registro, INICIO, FIN)
+    por_ticker = {t: desde for tickers, desde, _ in trabajos for t in tickers}
+    assert por_ticker["AL_DIA"] >= pd.Timestamp("2026-08-20")
+    assert por_ticker["ATRASADO"] < pd.Timestamp("2020-02-01")
+
+
+def test_si_nunca_se_pidio_desde_el_inicio_se_pide_completo():
+    registro = {"CORTO": _registro("2020-01-02", "2026-09-22")}
+    trabajos = prices_mod.plan_downloads(["CORTO"], registro, INICIO, FIN)
+    assert trabajos == [(["CORTO"], INICIO, FIN)]
+
+
+def test_el_registro_anota_lo_pedido_aunque_no_vengan_datos():
+    registro = {}
+    prices_mod._update_ledger(registro, ["X"], INICIO, FIN)
+    prices_mod._update_ledger(registro, ["X"], pd.Timestamp("2026-08-01"), pd.Timestamp("2026-10-01"))
+    assert registro["X"] == {"from": "2009-07-31", "to": "2026-10-01"}

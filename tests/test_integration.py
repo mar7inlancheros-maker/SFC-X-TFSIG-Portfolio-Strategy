@@ -147,22 +147,74 @@ def test_la_cadena_completa_corre_sin_red(mercado, cfg_integracion):
     assert not pd.isna(perf.information_ratio)
 
 
-def test_en_un_mundo_con_senal_el_modelo_bate_al_indice(mercado, cfg_integracion):
-    """Comprobacion de cordura del cableado, no promesa de rendimiento.
-
-    El mercado sintetico esta construido para que la calidad prediga el retorno.
-    Si el motor esta bien conectado, tiene que encontrarlo. Que lo encuentre
-    AQUI no dice nada sobre si existe senal en el mercado real -- eso lo decide
-    la validacion fuera de muestra sobre datos de verdad.
-    """
-    crudo, close = mercado
-    cfg = cfg_integracion
+def _exceso(crudo, close, cfg):
     puntuado = build_scores(crudo, cfg)
     resultado = run_backtest(puntuado, close, cfg, progress=False)
     indice = benchmark_nav(close, "INDICE", resultado.nav.index,
                            float(cfg.get("backtest.initial_capital")))
-    perf = evaluate(resultado.nav, indice)
-    assert perf.excess_cagr > 0.0
+    return evaluate(resultado.nav, indice).excess_cagr
+
+
+def test_el_motor_encuentra_la_unica_senal_que_el_mercado_sintetico_contiene(
+    mercado, cfg_integracion
+):
+    """Comprobacion de cableado, no promesa de rendimiento.
+
+    Este mercado codifica UNA relacion: la calidad del negocio predice la
+    deriva del precio. El modelo de solo-calidad tiene que encontrarla. Si no
+    la encuentra, hay un cable suelto entre `financials`, `scoring`,
+    `portfolio` y `backtest`, y cualquier resultado sobre datos reales seria
+    ruido con formato de reporte.
+
+    Que la encuentre AQUI no dice nada sobre si existe senal en el mercado
+    real. Eso lo decide la validacion fuera de muestra sobre datos de verdad.
+    """
+    crudo, close = mercado
+    cfg = cfg_integracion.replace(**{
+        "factors.weights": {"value": 0.0, "quality": 1.0, "momentum": 0.0, "lowvol": 0.0}
+    })
+    assert _exceso(crudo, close, cfg) > 0.03
+
+
+def test_el_compuesto_pierde_aqui_y_eso_es_lo_esperado(mercado, cfg_integracion):
+    """El compuesto NO bate a este indice, y el test lo fija a proposito.
+
+    En este mercado la empresa buena sube de precio, asi que su rendimiento por
+    beneficio BAJA: el factor de valor compra sistematicamente a la mala. La
+    volatilidad es identica para todas por construccion, asi que ordenar por
+    volatilidad realizada es ordenar por suerte. Con el 75% del peso en
+    factores que aqui son ruido o peor, el compuesto pierde contra un indice
+    que ademas se reequilibra a diario y diversifica 80 nombres.
+
+    Se fija como test porque es la lectura que hay que recordar al mirar el
+    backtest real: un mercado sintetico solo puede validar el cableado del
+    motor. No puede validar la tesis de inversion, y un test que pareciera
+    decir lo contrario seria peor que no tenerlo.
+    """
+    crudo, close = mercado
+    solo_calidad = cfg_integracion.replace(**{
+        "factors.weights": {"value": 0.0, "quality": 1.0, "momentum": 0.0, "lowvol": 0.0}
+    })
+    assert _exceso(crudo, close, cfg_integracion) < _exceso(crudo, close, solo_calidad)
+
+
+def test_un_modelo_de_un_solo_factor_produce_cartera(mercado, cfg_integracion):
+    """Apagar tres factores es legitimo: es como se valida el cuarto por separado.
+
+    El minimo de factores del compuesto se ajusta a los que estan encendidos.
+    Con un minimo fijo de 2, esta configuracion dejaba todos los scores en NaN
+    y el backtest moria con un error sobre fechas de mercado que no apuntaba a
+    la causa.
+    """
+    crudo, close = mercado
+    cfg = cfg_integracion.replace(**{
+        "factors.weights": {"value": 0.0, "quality": 1.0, "momentum": 0.0, "lowvol": 0.0}
+    })
+    puntuado = build_scores(crudo, cfg)
+    assert puntuado["score_composite"].notna().mean() > 0.9
+
+    resultado = run_backtest(puntuado, close, cfg, progress=False)
+    assert not resultado.holdings.empty
 
 
 def test_las_restricciones_de_riesgo_se_respetan_en_todas_las_fechas(mercado, cfg_integracion):
@@ -211,6 +263,38 @@ def test_el_reporte_se_genera_entero_y_lleva_las_limitaciones(mercado, cfg_integ
     assert cfg.fingerprint in texto
     assert "Sesgo de supervivencia" in texto
     # El reporte va a fichero redirigido: tiene que ser ASCII puro.
+    texto.encode("cp1252")
+
+
+def test_el_reporte_incluye_atribucion_y_decaimiento(mercado, cfg_integracion):
+    """Lo que se analizo a mano sobre el primer backtest sale ahora solo.
+
+    Si estas secciones faltan, el comite vuelve a ver un CAGR sin saber cuantos
+    nombres lo hicieron ni cuanto dura la senal.
+    """
+    from sfc_tfsig import attribution as attr
+
+    crudo, close = mercado
+    cfg = cfg_integracion
+    puntuado = build_scores(crudo, cfg)
+    resultado = run_backtest(puntuado, close, cfg, progress=False)
+    indice = benchmark_nav(close, "INDICE", resultado.nav.index,
+                           float(cfg.get("backtest.initial_capital")))
+    perf = evaluate(resultado.nav, indice)
+
+    contribuciones = attr.position_contributions(resultado.holdings, close, resultado.rebalances)
+    exceso = attr.excess_decomposition(contribuciones, resultado.nav, indice)
+    por_retraso = validation_mod.ic_by_lag(puntuado, close, lags_m=(0, 1, 2))
+    por_horizonte = validation_mod.ic_by_horizon(puntuado, close, horizons=(1, 3))
+
+    texto = report_mod.build_report(
+        resultado, perf, cfg, benchmark_nav=indice,
+        contributions=contribuciones, yearly_excess=exceso,
+        decay_lag=por_retraso, decay_horizon=por_horizonte,
+    )
+    for seccion in ("## Atribucion", "Nombres necesarios para la mitad",
+                    "Exceso mediano", "## Decaimiento de la senal", "Trimestral:"):
+        assert seccion in texto
     texto.encode("cp1252")
 
 

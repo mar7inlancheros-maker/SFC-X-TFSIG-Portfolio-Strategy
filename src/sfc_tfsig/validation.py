@@ -341,6 +341,127 @@ def out_of_sample_ic(
     return pd.DataFrame(rows)
 
 
+# ---------------------------------------------------------------------------
+#  Decaimiento de la senal
+#
+#  La pregunta de negocio detras: el modelo rota el 273% al ano y paga ~0,55
+#  puntos de CAGR en costes. Rebalancear cada trimestre ahorraria dos tercios de
+#  eso -- pero solo si la senal sigue viva tres meses despues de calcularla. Si
+#  muere en un mes, rebalancear menos no ahorra coste: regala la senal.
+#
+#  Esto se decide midiendo, no probando frecuencias en el backtest hasta ver cual
+#  sale mejor. Lo segundo es elegir el parametro con el resultado delante.
+# ---------------------------------------------------------------------------
+
+
+def ic_by_horizon(
+    panel: pd.DataFrame,
+    close_wide: pd.DataFrame,
+    horizons: tuple[int, ...] = (1, 3, 6, 12),
+    *,
+    score_col: str = "score_composite",
+    lags: int = 6,
+) -> pd.DataFrame:
+    """IC del score de hoy contra el retorno de los proximos `h` meses.
+
+    **Los retornos a h meses se solapan** entre fechas consecutivas: el retorno
+    de enero a abril y el de febrero a mayo comparten dos meses. Eso fabrica
+    autocorrelacion en la serie de IC, y el error estandar clasico la ignora e
+    infla el t. Se corrige con Newey-West usando al menos `h` rezagos -- el
+    minimo que cubre el solape.
+    """
+    from .panel import add_forward_returns  # evita import circular
+
+    rows = []
+    for h in horizons:
+        with_forward = add_forward_returns(panel, close_wide, horizon_m=h)
+        ic = information_coefficient(
+            with_forward, score_col=score_col, forward_col="forward_return"
+        )
+        test = test_mean(ic, lags=max(lags, h))
+        rows.append(
+            {
+                "horizon_m": h,
+                "ic_mean": test.mean,
+                "t_stat": test.t_stat,
+                "p_value": test.p_value,
+                "months": test.n,
+                # IC por mes de horizonte: compara la senal por unidad de
+                # tiempo. Un IC a 12 meses de 0.06 no es "el doble de bueno"
+                # que uno a 1 mes de 0.03.
+                "ic_per_month": test.mean / h if h else np.nan,
+            }
+        )
+    return pd.DataFrame(rows).set_index("horizon_m")
+
+
+def ic_by_lag(
+    panel: pd.DataFrame,
+    close_wide: pd.DataFrame,
+    lags_m: tuple[int, ...] = (0, 1, 2, 3, 5, 11),
+    *,
+    score_col: str = "score_composite",
+    nw_lags: int = 6,
+) -> pd.DataFrame:
+    """IC del score calculado hace `k` meses contra el retorno del mes siguiente.
+
+    Es la medida que decide la frecuencia de rebalanceo. Con rebalanceo
+    trimestral, la cartera opera en promedio con una senal de 1 mes de
+    antiguedad, y en el peor caso de 2. Si el IC con `k = 2` sigue cerca del de
+    `k = 0`, la senal aguanta y rebalancear menos solo ahorra coste.
+
+    `k = 0` es el IC normal del modelo, y sirve de referencia.
+    """
+    from .panel import add_forward_returns
+
+    with_forward = add_forward_returns(panel, close_wide, horizon_m=1)
+    base = with_forward[["date", "ticker", score_col, "forward_return"]].copy()
+    base["_month"] = base["date"].dt.to_period("M")
+
+    reference = None
+    rows = []
+    for k in lags_m:
+        # Se desplaza el SCORE hacia delante k meses: la fila del mes t lleva el
+        # score que se calculo en t-k. El retorno sigue siendo el de t a t+1.
+        stale = base[["ticker", "_month", score_col]].copy()
+        stale["_month"] = stale["_month"] + k
+        stale = stale.rename(columns={score_col: "_stale_score"})
+
+        joined = base.drop(columns=[score_col]).merge(stale, on=["ticker", "_month"], how="inner")
+        ic = information_coefficient(joined, score_col="_stale_score", forward_col="forward_return")
+        test = test_mean(ic, lags=nw_lags)
+        if k == 0:
+            reference = test.mean
+        rows.append(
+            {
+                "lag_m": k,
+                "ic_mean": test.mean,
+                "t_stat": test.t_stat,
+                "p_value": test.p_value,
+                "months": test.n,
+                "vs_fresh": (test.mean / reference) if reference else np.nan,
+            }
+        )
+    return pd.DataFrame(rows).set_index("lag_m")
+
+
+def rebalance_signal_cost(decay: pd.DataFrame, period_m: int) -> float:
+    """Fraccion de IC que conserva una cartera rebalanceada cada `period_m` meses.
+
+    Con rebalanceo cada `p` meses, la senal tiene 0, 1, ..., p-1 meses de
+    antiguedad en los meses del ciclo. La senal efectiva es la media de esos
+    retrasos. Devuelve esa media relativa al IC fresco: 1.0 = no se pierde nada.
+    """
+    lags = list(range(period_m))
+    available = [lag for lag in lags if lag in decay.index]
+    if len(available) < len(lags) or 0 not in decay.index:
+        return float("nan")
+    fresh = decay.loc[0, "ic_mean"]
+    if not fresh:
+        return float("nan")
+    return float(decay.loc[available, "ic_mean"].mean() / fresh)
+
+
 def full_report(
     panel: pd.DataFrame,
     cfg,

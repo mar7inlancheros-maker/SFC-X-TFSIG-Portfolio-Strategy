@@ -35,6 +35,7 @@ BASE_CONFIG = {
             "sector_neutral": True,
             "min_sector_names": 5,
             "min_coverage": 0.6,
+            "require_fundamental_score": False,
         },
         "value": {"metrics": ["earnings_yield", "fcf_yield"]},
         "quality": {"metrics": ["roic", "debt_to_equity"]},

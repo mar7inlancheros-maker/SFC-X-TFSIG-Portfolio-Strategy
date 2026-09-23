@@ -216,3 +216,30 @@ def test_benchmark_nav_se_alinea_y_escala():
     bench = benchmark_nav(close, "SPY", nav_index, 100_000.0)
     assert bench.iloc[0] == pytest.approx(100_000.0)
     assert bench.iloc[-1] == pytest.approx(110_000.0)
+
+
+def test_la_rotacion_anualizada_usa_los_rebalanceos_reales_no_doce(make_cfg):
+    """Trimestral: la rotacion anual no puede salir multiplicada por 12."""
+    from sfc_tfsig import report as report_mod
+    from sfc_tfsig.metrics import evaluate
+
+    cfg = make_cfg(**{"portfolio.n_positions": 10, "portfolio.buffer_rank": 10,
+                      "portfolio.max_sector_w": 1.0, "portfolio.max_weight": 0.2,
+                      "portfolio.cash_buffer": 0.0})
+    sessions = _sessions(start="2020-01-01", periods=800)
+    tickers = [f"T{i:02d}" for i in range(20)]
+    close = _flat_prices(tickers, sessions)
+    trimestres = pd.date_range("2020-03-31", periods=10, freq="QE")
+    rows = []
+    for j, date in enumerate(trimestres):
+        for i, ticker in enumerate(tickers):
+            rows.append({"date": date, "ticker": ticker, "sector": "Tech", "price": 100.0,
+                         "volatility": 0.2, "score_composite": float((i + 5 * j) % 20)})
+    result = run_backtest(pd.DataFrame(rows), close, cfg, progress=False)
+    perf = evaluate(result.nav)
+
+    texto = report_mod.costs_section(result, perf)
+    esperado = result.rebalances["turnover"].sum() / perf.years
+    assert f"{esperado * 100:.2f}%" in texto
+    # Y no la version inflada:
+    assert f"{result.average_turnover * 12 * 100:.2f}%" not in texto

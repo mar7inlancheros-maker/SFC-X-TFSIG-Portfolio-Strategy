@@ -50,7 +50,15 @@ max_fundamental_staleness_d = 550
 # SIC excluidos: fondos cerrados, REITs hipotecarios, blank checks y vehiculos
 # de inversion. Sus estados financieros no son comparables con los de una
 # empresa operativa: el "margen" y el "ROIC" de un fondo no significan nada.
-exclude_sic = [6189, 6199, 6726, 6770, 6798]
+#
+# 6221 (Commodity Contracts Brokers & Dealers) se anadio el 2026-09-23 tras la
+# atribucion del primer backtest. Ahi viven TODOS los ETF y fideicomisos de
+# materias primas y divisas: GBTC y ETHE (bitcoin y ether), GLD, SLV, CEF y
+# OUNZ (metales), USO, UNG y BNO (energia), DBA y DBC (cestas), FXC y FXF
+# (divisas). El modelo los venia comprando por momentum, con el peso maximo.
+# GBTC aporto 4,86 puntos en 2024 y el bloque entero devolvio 4,6 en 2025 y 5,4
+# en 2026. Son 28 tickers, ninguno una empresa.
+exclude_sic = [6189, 6199, 6221, 6726, 6770, 6798]
 
 # ---------------------------------------------------------------------------
 #  CALENDARIO Y EJECUCION
@@ -78,6 +86,15 @@ winsorize_pct    = 0.02   # recorta el 2% de cada cola antes de estandarizar
 sector_neutral   = true   # z-score DENTRO del sector, no contra todo el panel
 min_sector_names = 5      # sector con menos nombres: cae a z-score global
 min_coverage     = 0.60   # metrica con menos cobertura que esto se descarta
+
+# Exige que la empresa tenga score de VALOR y de CALIDAD para recibir un score
+# compuesto. Sin esto, un nombre sin fundamentales entra por momentum y baja
+# volatilidad, que es como el Grayscale Bitcoin Trust acabo con el peso maximo
+# de la cartera: cero cobertura en ingresos y en patrimonio, y aun asi un score
+# compuesto en el 100% de las fechas. Solo quita el 2,8% del panel, pero el
+# 13,1% de los nombres que entraban al top-30. Este es un modelo multifactor
+# FUNDAMENTAL: si no se pueden puntuar los fundamentales, no se compra.
+require_fundamental_score = true
 
 [factors.value]
 # Rendimientos, no multiplos: un yield negativo ordena bien y un P/E negativo

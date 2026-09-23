@@ -1,0 +1,246 @@
+# ============================================================================
+#  SFC x TFSIG -- Politica de riesgo
+#
+#  Separado de strategy.toml a proposito: NADA de lo que hay aqui cambia lo que
+#  se compra. Son niveles de confianza, horizontes, escenarios y limites de
+#  VIGILANCIA. Si vivieran en strategy.toml, subir un limite de VaR cambiaria el
+#  fingerprint de la estrategia, invalidaria la cache del panel y haria parecer
+#  distintos dos backtests identicos.
+#
+#  El dia que un limite pase a RESTRINGIR la cartera (un techo de volatilidad
+#  que recorte pesos, por ejemplo), ese numero se muda a strategy.toml: a partir
+#  de ese momento si cambia lo que se compra.
+#
+#  Este fichero tiene su propio fingerprint, estampado en el reporte de riesgo
+#  junto al de la estrategia. Los valores son DEFAULTS propuestos: los fija el
+#  comite.
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+#  VaR Y EXPECTED SHORTFALL
+#
+#  Convenio: perdida positiva en fraccion del NAV. "VaR 99% 1d = 3%" quiere
+#  decir que uno de cada cien dias se espera perder MAS del 3%. El ES es la
+#  perdida media de ese uno de cada cien.
+# ---------------------------------------------------------------------------
+[var]
+confidence  = [0.95, 0.99]
+horizons_d  = [1, 21]      # una sesion y un mes de sesiones
+# Decaimiento de la volatilidad EWMA (RiskMetrics, 1996). Memoria efectiva de
+# unas 1 / (1 - 0.94) = 17 sesiones: responde a un cambio de regimen en
+# semanas, no en anos.
+ewma_lambda = 0.94
+
+[var.backtest]
+# Un VaR sin backtest es una opinion. Se reestima cada dia con la informacion
+# del dia anterior y se cuentan las veces que la perdida real lo supera.
+confidence = 0.99
+window_d   = 250           # ventana del VaR historico; tambien la de Basilea
+recent_d   = 250           # tramo final para el semaforo de Basilea
+
+# ---------------------------------------------------------------------------
+#  MONTE CARLO
+# ---------------------------------------------------------------------------
+[montecarlo]
+seed = 20260923            # fija: dos corridas con la misma semilla dan lo mismo
+
+[montecarlo.bootstrap]
+# Remuestreo de la historia REAL de la estrategia y el benchmark, por bloques
+# y con los mismos indices para ambos: conserva la correlacion entre los dos,
+# la autocorrelacion y los racimos de volatilidad dentro de cada bloque.
+n_paths      = 10_000
+horizons_y   = [1, 3, 5]
+mean_block_d = 21          # longitud media del bloque (bootstrap estacionario)
+
+# Descuento anual al retorno de la estrategia antes de remuestrear. El
+# backtest hereda el sesgo de supervivencia declarado en el README (1-2 puntos
+# de CAGR) y la regla de v2 no es fuera de muestra. Proyectar el futuro con el
+# drift del backtest tal cual es prometer ese sesgo. 0 lo desactiva.
+return_haircut = 0.02
+
+drawdown_thresholds = [0.10, 0.20, 0.30]
+
+[montecarlo.parametric]
+# Simulacion de la cartera ACTUAL con su covarianza estimada. Normal y t de
+# Student con la misma covarianza: la diferencia entre ambas es la prima de
+# cola gorda que el VaR normal no ve.
+n_sims     = 50_000
+horizons_d = [1, 21]
+t_dof      = 5             # grados de libertad; 3-6 es lo tipico en acciones
+
+# ---------------------------------------------------------------------------
+#  EXPOSICION, COVARIANZA Y LIQUIDEZ
+# ---------------------------------------------------------------------------
+[exposure]
+cov_window_d      = 252    # un ano de retornos diarios para la covarianza
+min_coverage      = 0.80   # nombre con menos historia en la ventana: se avisa
+adv_window_d      = 63     # mediana del volumen en dolares, 3 meses
+# Fraccion del volumen diario que se puede operar sin mover el precio. 20% es
+# el techo habitual; por encima, el impacto de mercado deja de ser despreciable
+# y el backtest (que no lo modela) deja de ser representativo.
+participation     = 0.20
+
+# ---------------------------------------------------------------------------
+#  PRUEBAS DE ESTRES
+#
+#  Historicas: la cartera de HOY con los precios reales de cada episodio. Un
+#  nombre que no cotizaba entonces se aproxima por su beta frente al
+#  benchmark, y el reporte dice que fraccion del peso se aproximo.
+#
+#  Las fechas son pico y valle del S&P 500 en cada episodio (cierre).
+# ---------------------------------------------------------------------------
+[stress]
+# Se descarga historia de precios de las posiciones actuales desde aqui, solo
+# para el estres. El backtest no la usa.
+history_start = "2007-01-01"
+
+[[stress.historical]]
+name  = "Crisis financiera: pico a valle"
+start = "2007-10-09"
+end   = "2009-03-09"
+
+[[stress.historical]]
+name  = "Quiebra de Lehman"
+start = "2008-09-12"
+end   = "2008-11-20"
+
+[[stress.historical]]
+name  = "Rebote basura de 2009 (crash de momentum)"
+start = "2009-03-09"
+end   = "2009-06-01"
+
+[[stress.historical]]
+name  = "Rebaja de la deuda de EE.UU."
+start = "2011-07-22"
+end   = "2011-10-03"
+
+[[stress.historical]]
+name  = "Devaluacion del yuan"
+start = "2015-08-17"
+end   = "2015-08-25"
+
+[[stress.historical]]
+name  = "Volmageddon"
+start = "2018-01-26"
+end   = "2018-02-08"
+
+[[stress.historical]]
+name  = "Venta del cuarto trimestre de 2018"
+start = "2018-09-20"
+end   = "2018-12-24"
+
+[[stress.historical]]
+name  = "COVID-19"
+start = "2020-02-19"
+end   = "2020-03-23"
+
+[[stress.historical]]
+name  = "Inflacion y subida de tipos 2022"
+start = "2022-01-03"
+end   = "2022-10-12"
+
+[[stress.historical]]
+name  = "Bancos regionales (SVB)"
+start = "2023-03-08"
+end   = "2023-03-17"
+
+[[stress.historical]]
+name  = "Deshacer el carry del yen"
+start = "2024-07-16"
+end   = "2024-08-05"
+
+[[stress.historical]]
+name  = "Choque arancelario 2025"
+start = "2025-02-19"
+end   = "2025-04-08"
+
+# ---------------------------------------------------------------------------
+#  Hipoteticas: choque por nombre = beta x mercado + extra de su sector +
+#  suma de (choque del factor x z-score del nombre en ese factor).
+#
+#  Los extras sectoriales y de factor son JUICIO declarado, no una calibracion:
+#  aproximan como se comporto cada sector mas alla de su beta en el episodio
+#  que da nombre al escenario. Se discuten en el comite, no se ajustan hasta
+#  que el resultado guste.
+#
+#  Sectores validos: los once de universe.py (Technology, Financials,
+#  HealthCare, ConsumerDiscretionary, ConsumerStaples, Industrials, Energy,
+#  Materials, Utilities, RealEstate, CommunicationServices). Factores validos:
+#  value, quality, momentum, lowvol.
+# ---------------------------------------------------------------------------
+[[stress.hypothetical]]
+name    = "Crisis financiera severa (tipo 2008)"
+market  = -0.45
+sectors = { Financials = -0.20, RealEstate = -0.15 }
+
+[[stress.hypothetical]]
+name    = "Crash de un dia (tipo octubre 1987)"
+market  = -0.20
+
+[[stress.hypothetical]]
+name    = "Pandemia (tipo 2020)"
+market  = -0.34
+sectors = { Energy = -0.20, RealEstate = -0.10, Technology = 0.05 }
+
+[[stress.hypothetical]]
+name    = "Inflacion y tipos (tipo 2022)"
+market  = -0.25
+sectors = { Technology = -0.10, CommunicationServices = -0.10, Energy = 0.35, Utilities = 0.10, ConsumerStaples = 0.10 }
+
+[[stress.hypothetical]]
+name    = "Estallido tecnologico (tipo 2000-02)"
+market  = -0.35
+sectors = { Technology = -0.30, CommunicationServices = -0.20, ConsumerStaples = 0.15, Utilities = 0.10, Energy = 0.10 }
+
+# El riesgo propio de un modelo con 30% de momentum (Daniel y Moskowitz, 2016):
+# el mercado rebota y los perdedores del ano suben mucho mas que los
+# ganadores. Para un libro long-only la perdida es sobre todo RELATIVA.
+[[stress.hypothetical]]
+name    = "Crash de momentum (tipo 2009)"
+market  = 0.15
+factors = { momentum = -0.10 }
+
+# Rally de baja calidad: lo endeudado y sin beneficios sube primero (2003,
+# noviembre de 2020). Otra perdida relativa para un libro de calidad.
+[[stress.hypothetical]]
+name    = "Rally basura (tipo 2020-11)"
+market  = 0.10
+factors = { quality = -0.05, lowvol = -0.05, value = 0.03 }
+
+[stress.reverse]
+# Cuanto tiene que caer el mercado para que la cartera pierda esto.
+loss_thresholds = [0.10, 0.20, 0.30]
+
+# ---------------------------------------------------------------------------
+#  LIMITES DE VIGILANCIA
+#
+#  NO restringen la cartera: el modelo compra lo que compra. Un limite
+#  EXCEDIDO se escala al comite, que decide si se actua (reducir, cubrir,
+#  cambiar un parametro de strategy.toml) o si se acepta por escrito.
+#
+#  ALERTA salta al llegar a `warning_fraction` del limite. Un limite sin
+#  entrada en `LIMIT_SPECS` (risk/limits.py) es un error de configuracion: un
+#  numero que nadie sabe con que medida comparar no protege de nada.
+# ---------------------------------------------------------------------------
+[limits]
+warning_fraction      = 0.80
+
+# El backtest realizo 22.8% de volatilidad con SPY en torno al 17%.
+max_ex_ante_vol       = 0.25
+# VaR 99% a un dia de la cartera actual, t de Student. Fraccion de NAV.
+max_var_99_1d         = 0.040
+max_beta              = 1.30
+max_tracking_error    = 0.15
+# Caida desde el maximo del NAV a partir de la cual el comite revisa el
+# modelo. El backtest toco -37.7%; SPY en el mismo periodo, -33.7%.
+max_current_drawdown  = 0.25
+# Contribucion de un solo nombre, o un solo sector, a la varianza total. El
+# tope de peso no basta: un 6% de peso muy volatil puede ser el 15% del riesgo.
+max_name_risk_share   = 0.10
+max_sector_risk_share = 0.40
+# Sesiones para liquidar la posicion menos liquida a `participation`.
+max_liquidation_days  = 3.0
+# Numero efectivo de nombres (1 / HHI de los pesos invertidos).
+min_effective_names   = 15.0
+# Peor perdida absoluta de los escenarios hipoteticos.
+max_stress_loss       = 0.45

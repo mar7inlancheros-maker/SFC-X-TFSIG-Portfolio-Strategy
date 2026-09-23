@@ -1,0 +1,101 @@
+# ============================================================================
+#  Quantitative Long/Short Research Engine -- configuracion
+#
+#  Todo numero que cambia un resultado vive aqui. La terminal pide lo basico
+#  (tickers, benchmark, periodo, construccion, capital, costes) y usa estos
+#  valores como defaults.
+#
+#  Este motor NO elige acciones. Recibe una lista LONG y una SHORT de un equipo
+#  de research fundamental y mide si esa lista se sostiene cuantitativamente.
+# ============================================================================
+
+defaults:
+  benchmark: SPY
+  lookback: 5y              # 1y | 2y | 3y | 5y | 10y
+  risk_free_rate: 0.04      # anual, constante. Ver README: supuesto declarado
+  rebalance: monthly        # monthly | quarterly
+  construction: risk_parity # equal_weight | inverse_vol | risk_parity | min_variance | max_sharpe
+  initial_capital: 1000000
+  transaction_cost: 0.0005  # 0.05% por lado sobre el nocional operado
+  # Coste de prestamo de los cortos, anual, sobre el nocional corto. No esta en
+  # la especificacion original, pero un corto sin coste de prestamo sobrestima
+  # el retorno de cualquier cartera long/short. 0.25% es tipico de un nombre
+  # "general collateral"; los nombres dificiles de prestar cuestan mucho mas.
+  borrow_cost: 0.0025
+
+portfolio:
+  gross_exposure: 2.0       # 100% largo + 100% corto
+  net_exposure: 0.0         # neutral en dolares
+  # |peso| maximo por nombre, sobre capital. NO 20%: con 5 nombres por pata y
+  # patas de 100%, 5 x 20% = 100% obliga a que cada nombre valga exactamente
+  # 20%, y los cinco metodos de construccion dan la MISMA cartera (se comprobo
+  # en la primera corrida: Sharpe, beta y neta identicos en todos). 35% deja
+  # libertad real para que los metodos se distingan, y sigue impidiendo que un
+  # solo nombre domine su pata.
+  max_position: 0.35
+  estimation_window_d: 252  # ventana para covarianza y volatilidad al construir
+  ewma_lambda: 0.94         # RiskMetrics
+
+# Pesos del Quant Score. Se normalizan a 1. Cada componente es un z-score de
+# seccion cruzada con signo tal que MAS ALTO = MAS FAVORABLE PARA UN LARGO.
+# La definicion exacta de cada uno esta en src/quant_engine/signals/composite.py.
+signal_weights:
+  momentum: 0.25             # 12-1, 6M, 3M y distancia a medias moviles
+  risk_adjusted_return: 0.20 # Sharpe de 1 ano
+  volatility: 0.15           # volatilidad anual, invertida (menos = mejor)
+  mean_reversion: 0.10       # z-score de 20 dias, invertido (estirado = peor)
+  liquidity: 0.10            # log del volumen medio en dolares
+  beta: 0.10                 # beta, invertida (anomalia de baja beta, BAB)
+  statistical: 0.10          # calidad de tendencia: signo(pendiente) x R2
+
+# Umbrales de acuerdo entre research y cuantitativo, en unidades de z-score del
+# Quant Score ALINEADO: score si el research dice LONG, -score si dice SHORT.
+agreement:
+  strong: 0.50
+  weak: 0.15
+  conflict: -0.15            # por debajo de esto, el dato contradice al research
+
+# Clasificacion de regimen de volatilidad: percentil de la vol de 21 dias
+# actual dentro de su propia historia.
+volatility_regime:
+  low: 0.20
+  high: 0.80
+  extreme: 0.95
+
+# Clasificacion momentum / neutral / reversion a la media.
+regime:
+  trend_threshold: 0.5       # |z de momentum| minimo para llamar tendencia
+  reversion_threshold: 1.5   # |z de precio a 20 dias| para llamar estiramiento
+
+factor_proxies:
+  # Factores construidos con ETF reales: rendimiento de la cartera larga menos
+  # la de referencia. No se inventa ningun factor fundamental.
+  size: [IWM, SPY]
+  value: [IWD, IWF]
+  momentum: [MTUM, SPY]
+  low_volatility: [USMV, SPY]
+  quality: [QUAL, SPY]
+
+stress:
+  volatility_multipliers: [1.5, 2.0]
+  market_shocks: [-0.10, -0.20]
+  liquidity_participation: 0.10   # fraccion del volumen diario que se puede operar
+  liquidity_spread_multiplier: 3.0
+
+montecarlo:
+  n_paths: 10000
+  horizon_d: 252
+  block_d: 10
+  seed: 20260923
+  drawdown_thresholds: [0.10, 0.20, 0.30]
+
+robustness:
+  lookbacks: [1y, 3y, 5y]
+  rebalances: [monthly, quarterly]
+  transaction_costs: [0.0005, 0.0015, 0.0030]
+  constructions: [equal_weight, inverse_vol, risk_parity, min_variance]
+  signal_weight_draws: 500
+
+output:
+  directory: output/quant_engine
+  charts: true

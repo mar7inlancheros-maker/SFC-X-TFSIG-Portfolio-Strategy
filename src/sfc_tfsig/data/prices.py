@@ -109,6 +109,95 @@ def _download_batch(tickers: Sequence[str], start, end) -> pd.DataFrame:
     return _tidy(raw, list(tickers))
 
 
+_LEDGER = "prices_fetched"
+_TOLERANCE = pd.Timedelta(days=5)  # fines de semana y festivos no son huecos
+
+
+def plan_downloads(
+    wanted: Sequence[str],
+    ledger: dict[str, dict[str, str]],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> list[tuple[list[str], pd.Timestamp, pd.Timestamp]]:
+    """Decide que pedir a Yahoo y con que rango. Funcion pura.
+
+    Devuelve trabajos `(tickers, desde, hasta)`. Se decide con el REGISTRO de lo
+    ya solicitado, no con las fechas que hay en la cache. La diferencia importa:
+
+    - Una empresa que salio a bolsa en 2015 no tiene precios de 2009, por mucho
+      que se pidan. Mirando la cache, su primer precio (2015) queda despues del
+      inicio pedido (2009) y parece que "falta historia": se volvia a pedir la
+      serie completa EN CADA CORRIDA, para siempre. Unos 2.400 tickers del
+      universo estaban en ese caso.
+    - Una empresa que dejo de cotizar en 2018 tampoco tendra precios nuevos.
+      Mirando la cache, su ultimo precio queda antes del final pedido y se
+      volvia a pedir en cada corrida.
+
+    Con el registro, cada tramo se pide una vez. Ademas, lo que falta por la
+    derecha se pide SOLO desde donde se quedo la ultima descarga: una
+    actualizacion mensual baja un mes, no quince anos del universo entero.
+    """
+    full: list[str] = []
+    tails: dict[pd.Period, list[str]] = {}
+    tail_from: dict[pd.Period, pd.Timestamp] = {}
+
+    for ticker in wanted:
+        entry = ledger.get(ticker)
+        if entry is None:
+            full.append(ticker)
+            continue
+        fetched_from = pd.Timestamp(entry["from"])
+        fetched_to = pd.Timestamp(entry["to"])
+        if fetched_from > start + _TOLERANCE:
+            # Nunca se pidio desde tan atras: serie completa.
+            full.append(ticker)
+            continue
+        if fetched_to < end - _TOLERANCE:
+            # Se agrupa por mes de la ultima descarga para no arrastrar a todos
+            # los tickers hasta la fecha del mas atrasado.
+            bucket = fetched_to.to_period("M")
+            tails.setdefault(bucket, []).append(ticker)
+            tail_from[bucket] = min(tail_from.get(bucket, fetched_to), fetched_to)
+
+    jobs: list[tuple[list[str], pd.Timestamp, pd.Timestamp]] = []
+    if full:
+        jobs.append((sorted(full), start, end))
+    for bucket in sorted(tails):
+        jobs.append((sorted(tails[bucket]), tail_from[bucket] - _TOLERANCE, end))
+    return jobs
+
+
+def _load_ledger(master: pd.DataFrame) -> dict[str, dict[str, str]]:
+    """Registro de lo solicitado. Si no existe, se inicializa desde la cache.
+
+    La inicializacion es conservadora: toma las fechas reales de la cache como
+    lo solicitado. Eso provoca UNA descarga extra de los tickers con historia
+    corta; a partir de ahi el registro ya sabe que se pidieron desde el inicio.
+    """
+    ledger = cache.read_json(_LEDGER) or {}
+    if not master.empty:
+        coverage = master.groupby("ticker")["date"].agg(["min", "max"])
+        for ticker, row in coverage.iterrows():
+            if ticker not in ledger:
+                ledger[ticker] = {
+                    "from": pd.Timestamp(row["min"]).strftime("%Y-%m-%d"),
+                    "to": pd.Timestamp(row["max"]).strftime("%Y-%m-%d"),
+                }
+    return ledger
+
+
+def _update_ledger(ledger: dict, tickers: Sequence[str], start, end) -> None:
+    """Anota que estos tickers se pidieron en [start, end], vinieran datos o no."""
+    s, e = pd.Timestamp(start), pd.Timestamp(end)
+    for ticker in tickers:
+        entry = ledger.get(ticker)
+        if entry is None:
+            ledger[ticker] = {"from": s.strftime("%Y-%m-%d"), "to": e.strftime("%Y-%m-%d")}
+        else:
+            entry["from"] = min(pd.Timestamp(entry["from"]), s).strftime("%Y-%m-%d")
+            entry["to"] = max(pd.Timestamp(entry["to"]), e).strftime("%Y-%m-%d")
+
+
 def _recent_failures() -> set[str]:
     """Tickers que fallaron hace menos de `_FAILURE_TTL_DAYS` dias."""
     ledger = cache.read_json(_FAILURES) or {}
@@ -156,43 +245,44 @@ def get_prices(
     if not master.empty:
         master["date"] = pd.to_datetime(master["date"])
 
-    # Que falta: tickers sin datos, o con cobertura que no llega a los extremos.
-    missing: list[str] = []
-    if master.empty:
-        missing = wanted
-    else:
-        coverage = master.groupby("ticker")["date"].agg(["min", "max"])
-        for ticker in wanted:
-            if ticker not in coverage.index:
-                missing.append(ticker)
-                continue
-            lo, hi = coverage.loc[ticker, "min"], coverage.loc[ticker, "max"]
-            # 5 dias de tolerancia: fines de semana y festivos no son huecos.
-            if lo > start + pd.Timedelta(days=5) or hi < end - pd.Timedelta(days=5):
-                missing.append(ticker)
+    ledger = _load_ledger(master)
+    jobs = [] if refresh else plan_downloads(wanted, ledger, start, end)
+    if refresh:
+        jobs = [(wanted, start, end)]
 
     # Los que ya fallaron hace poco no se vuelven a pedir.
-    if missing and not refresh:
+    if jobs and not refresh:
         recent_failures = _recent_failures()
-        skipped = [t for t in missing if t in recent_failures]
+        skipped = sorted({t for tickers, _, _ in jobs for t in tickers if t in recent_failures})
         if skipped:
-            missing = [t for t in missing if t not in recent_failures]
+            jobs = [([t for t in tickers if t not in recent_failures], s, e) for tickers, s, e in jobs]
+            jobs = [job for job in jobs if job[0]]
             if progress:
                 print(f"  precios: {len(skipped)} tickers omitidos por fallo reciente "
                       f"(se reintentan tras {_FAILURE_TTL_DAYS} dias)", flush=True)
 
-    if missing:
-        batches = [missing[i : i + _BATCH] for i in range(0, len(missing), _BATCH)]
+    if jobs:
         downloaded: list[pd.DataFrame] = []
-        for i, batch in enumerate(batches, start=1):
-            if progress:
-                print(f"  precios: lote {i}/{len(batches)} ({len(batch)} tickers)", flush=True)
-            downloaded.append(_download_batch(batch, start, end))
+        failures: list[str] = []
+        for tickers, job_start, job_end in jobs:
+            batches = [tickers[i : i + _BATCH] for i in range(0, len(tickers), _BATCH)]
+            for i, batch in enumerate(batches, start=1):
+                if progress:
+                    print(f"  precios: {job_start.date()}..{job_end.date()} "
+                          f"lote {i}/{len(batches)} ({len(batch)} tickers)", flush=True)
+                frame = _download_batch(batch, job_start, job_end)
+                downloaded.append(frame)
+                obtained = set(frame["ticker"]) if not frame.empty else set()
+                # Solo es fallo si se pidio la serie completa y no vino nada.
+                # Una cola vacia es normal: la empresa dejo de cotizar.
+                if job_start <= start + _TOLERANCE:
+                    failures.extend(t for t in batch if t not in obtained)
+                _update_ledger(ledger, batch, job_start, job_end)
+
+        _record_failures(failures)
+        cache.write_json(_LEDGER, ledger)
+
         new = pd.concat(downloaded, ignore_index=True) if downloaded else _empty_long()
-
-        obtained = set(new["ticker"]) if not new.empty else set()
-        _record_failures([t for t in missing if t not in obtained])
-
         if not new.empty:
             master = pd.concat([master, new], ignore_index=True)
             master = (

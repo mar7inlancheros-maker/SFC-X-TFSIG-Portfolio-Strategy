@@ -265,15 +265,3 @@ def build_portfolio(
     columns = [c for c in ("ticker", "name", "sector", "country", "price", score_col, "rank", "weight")
                if c in out.columns]
     return out[columns].reset_index(drop=True)
-
-
-def turnover(previous: pd.Series, target: pd.Series) -> float:
-    """Rotacion de un rebalanceo: suma de |cambio de peso| / 2.
-
-    Dividido entre dos para que un cambio completo de cartera sea 100% y no
-    200%. Es la convencion de la industria y la que se reporta al comite.
-    """
-    all_names = previous.index.union(target.index)
-    before = previous.reindex(all_names).fillna(0.0)
-    after = target.reindex(all_names).fillna(0.0)
-    return float((after - before).abs().sum() / 2.0)

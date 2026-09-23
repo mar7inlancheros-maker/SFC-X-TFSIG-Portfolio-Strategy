@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from .config import Config
-from .portfolio import build_portfolio, turnover
+from .portfolio import build_portfolio
 
 
 @dataclass

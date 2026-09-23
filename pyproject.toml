@@ -29,6 +29,21 @@ fast = ["pyarrow>=15"]
 # Graficos del reporte trimestral. Todo el analisis corre sin ellos.
 charts = ["matplotlib>=3.8"]
 
+# Motor long/short de `src/quant_engine` (`python main.py` sin argumentos).
+# statsmodels se usa solo por su OLS con errores HAC; ver `quant_engine/_sm.py`
+# sobre por que no se importa `statsmodels.api`.
+quant = [
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.4",
+    "cvxpy>=1.5",
+    "clarabel>=0.7",
+    "PyYAML>=6",
+    "rich>=13",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]

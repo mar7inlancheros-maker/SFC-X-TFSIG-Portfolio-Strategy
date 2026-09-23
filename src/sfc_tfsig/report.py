@@ -127,14 +127,29 @@ def costs_section(result: BacktestResult, perf: Performance) -> str:
     rebalances = result.rebalances
     total_cost = result.total_costs
     initial = float(rebalances["nav"].iloc[0])
+    # Rebalanceos por ano REALES, no 12 fijo. Con el 12 cableado, una corrida
+    # trimestral reportaba cuatro veces su rotacion anual y parecia la opcion
+    # cara justo cuando es la barata.
+    per_year = len(rebalances) / perf.years if perf.years else float("nan")
+    annual_turnover = float(rebalances["turnover"].sum() / perf.years) if perf.years else float("nan")
+    # Arrastre en puntos de NAV: suma de lo que cada rebalanceo le costo al NAV
+    # de ESE momento. Dividir los dolares totales entre el capital inicial -- la
+    # version anterior -- inflaba la cifra, porque los costes de 2025 se pagan
+    # sobre un NAV varias veces mayor que el de 2012. Esta es la que se resta
+    # directamente del CAGR.
+    annual_cost = (
+        float(rebalances["cost_bps_of_nav"].sum() / perf.years / 10_000.0)
+        if perf.years else float("nan")
+    )
     lines = [
         "## Costes y rotacion",
         "",
         "| Metrica | Valor |",
         "|---|---|",
-        f"| Rebalanceos | {len(rebalances)} |",
-        f"| Rotacion media | {_fmt_pct(result.average_turnover)} |",
-        f"| Rotacion anualizada | {_fmt_pct(result.average_turnover * 12)} |",
+        f"| Rebalanceos | {len(rebalances)} ({_fmt_num(per_year, 1)} por ano) |",
+        f"| Rotacion media por rebalanceo | {_fmt_pct(result.average_turnover)} |",
+        f"| Rotacion anualizada | {_fmt_pct(annual_turnover)} |",
+        f"| Arrastre anual de costes (puntos de NAV) | {_fmt_pct(annual_cost)} |",
         f"| Coste total | {_fmt_money(total_cost)} |",
         f"| Coste sobre capital inicial | {_fmt_pct(total_cost / initial if initial else float('nan'))} |",
         f"| Coste medio por rebalanceo (bps de NAV) | {_fmt_num(rebalances['cost_bps_of_nav'].mean(), 1)} |",
@@ -243,6 +258,127 @@ def validation_section(validation: Mapping[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def attribution_section(contributions: pd.DataFrame, yearly_excess: pd.DataFrame | None) -> str:
+    """Amplitud del resultado: proceso o posiciones afortunadas.
+
+    Va en el reporte y no en un analisis aparte porque es la primera pregunta
+    que un LP hace ante un buen ano: cuantos nombres lo hicieron.
+    """
+    from . import attribution as attr
+
+    if contributions is None or contributions.empty:
+        return ""
+
+    summary = attr.concentration_summary(contributions)
+    lines = [
+        "## Atribucion",
+        "",
+        "### Amplitud en toda la muestra",
+        "",
+        "| Metrica | Valor |",
+        "|---|---|",
+        f"| Nombres tenidos alguna vez | {summary['n_names_ever_held']} |",
+        f"| Nombres con contribucion positiva | {_fmt_pct(summary['pct_names_positive'])} |",
+        f"| Peso de los 5 mejores en el bruto | {_fmt_pct(summary['top5_share'])} |",
+        f"| Peso de los 10 mejores en el bruto | {_fmt_pct(summary['top10_share'])} |",
+        f"| Nombres necesarios para la mitad | {_fmt_num(summary['names_for_half'], 0)} |",
+        f"| Bruto sin los 5 mejores | {_fmt_pct(summary['total_without_top5'])} "
+        f"de {_fmt_pct(summary['total_gross_contribution'])} |",
+        "",
+        "Si quitar los cinco mejores nombres de toda la historia hace desaparecer",
+        "el resultado, el modelo no tiene un proceso: tuvo cinco aciertos.",
+        "",
+    ]
+
+    if yearly_excess is not None and not yearly_excess.empty:
+        lines += [
+            "### Exceso anual y su amplitud",
+            "",
+            "| Ano | Estrategia | Benchmark | Exceso | Top-5 del bruto | Nombres para la mitad |",
+            "|---|---|---|---|---|---|",
+        ]
+        for year, row in yearly_excess.iterrows():
+            lines.append(
+                f"| {year} | {_fmt_pct(row['strategy'])} | {_fmt_pct(row['benchmark'])} | "
+                f"{_fmt_pct(row['excess'])} | {_fmt_pct(row.get('top5_share'))} | "
+                f"{_fmt_num(row.get('names_for_half'), 0)} |"
+            )
+        excess = yearly_excess["excess"].dropna()
+        lines += [
+            "",
+            f"Anos con exceso positivo: {int((excess > 0).sum())} de {len(excess)}. "
+            f"Exceso mediano: {_fmt_pct(excess.median())}.",
+            "",
+            "Una media positiva con mediana negativa es la firma de un resultado",
+            "que depende de pocos anos. Un ano de gran exceso con top-5 alto y",
+            "pocos nombres para la mitad no se puede prometer que se repita.",
+            "",
+        ]
+
+    best = attr.top_names(contributions, n=8)
+    if not best.empty:
+        lines += ["### Mejores y peores nombres, toda la muestra", "",
+                  "| Ticker | Sector | Contribucion | Periodos | Peso medio |",
+                  "|---|---|---|---|---|"]
+        for ticker, row in best.iterrows():
+            lines.append(
+                f"| {ticker} | {row['sector']} | {_fmt_pct(row['contribution'])} | "
+                f"{int(row['periods_held'])} | {_fmt_pct(row['avg_weight'])} |"
+            )
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def decay_section(by_lag: pd.DataFrame | None, by_horizon: pd.DataFrame | None) -> str:
+    """Vida util de la senal: lo que decide la frecuencia de rebalanceo."""
+    from .validation import rebalance_signal_cost
+
+    if (by_lag is None or by_lag.empty) and (by_horizon is None or by_horizon.empty):
+        return ""
+
+    lines = ["## Decaimiento de la senal", ""]
+    if by_lag is not None and not by_lag.empty:
+        lines += [
+            "### IC con la senal retrasada k meses (retorno del mes siguiente)",
+            "",
+            "| Retraso | IC medio | t | p | Frente a fresca |",
+            "|---|---|---|---|---|",
+        ]
+        for lag, row in by_lag.iterrows():
+            lines.append(
+                f"| {lag} | {_fmt_num(row['ic_mean'], 4)} | {_fmt_num(row['t_stat'])} | "
+                f"{_fmt_num(row['p_value'], 4)} | {_fmt_pct(row['vs_fresh'])} |"
+            )
+        lines += [
+            "",
+            "Senal conservada segun la frecuencia de rebalanceo:",
+            "",
+            f"- Mensual: {_fmt_pct(rebalance_signal_cost(by_lag, 1))}",
+            f"- Bimestral: {_fmt_pct(rebalance_signal_cost(by_lag, 2))}",
+            f"- Trimestral: {_fmt_pct(rebalance_signal_cost(by_lag, 3))}",
+            "",
+            "Rebalancear menos ahorra coste solo si la senal sigue viva. Si el",
+            "trimestral conserva casi toda la senal, la rotacion mensual es",
+            "peaje sin contrapartida.",
+            "",
+        ]
+    if by_horizon is not None and not by_horizon.empty:
+        lines += [
+            "### IC por horizonte del retorno",
+            "",
+            "| Horizonte (meses) | IC medio | t (Newey-West, rezagos >= h) | IC por mes |",
+            "|---|---|---|---|",
+        ]
+        for h, row in by_horizon.iterrows():
+            lines.append(
+                f"| {h} | {_fmt_num(row['ic_mean'], 4)} | {_fmt_num(row['t_stat'])} | "
+                f"{_fmt_num(row['ic_per_month'], 4)} |"
+            )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def build_report(
     result: BacktestResult,
     perf: Performance,
@@ -251,6 +387,10 @@ def build_report(
     benchmark_nav: pd.Series | None = None,
     validation: Mapping[str, object] | None = None,
     universe_summary: Mapping[str, object] | None = None,
+    contributions: pd.DataFrame | None = None,
+    yearly_excess: pd.DataFrame | None = None,
+    decay_lag: pd.DataFrame | None = None,
+    decay_horizon: pd.DataFrame | None = None,
 ) -> str:
     """Reporte completo en Markdown."""
     title = cfg.get("meta.name")
@@ -294,8 +434,14 @@ def build_report(
     sections.append(costs_section(result, perf))
     sections.append(holdings_section(result))
 
+    if contributions is not None:
+        sections.append(attribution_section(contributions, yearly_excess))
+
     if validation:
         sections.append(validation_section(validation))
+
+    if decay_lag is not None or decay_horizon is not None:
+        sections.append(decay_section(decay_lag, decay_horizon))
 
     if result.warnings:
         unique = list(dict.fromkeys(result.warnings))[:20]

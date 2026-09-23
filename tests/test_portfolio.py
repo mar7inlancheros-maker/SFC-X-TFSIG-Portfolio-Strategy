@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sfc_tfsig.portfolio import apply_caps, build_portfolio, select_names, turnover
+from sfc_tfsig.portfolio import apply_caps, build_portfolio, select_names
 
 
 def _scored(n=40, sectors=None):
@@ -100,14 +100,3 @@ def test_score_tilt_nunca_produce_peso_negativo(make_cfg):
                       "portfolio.max_weight": 0.5})
     cartera = build_portfolio(_scored(), cfg)
     assert (cartera["weight"] > 0).all()
-
-
-def test_turnover_completo_es_uno():
-    antes = pd.Series({"A": 0.5, "B": 0.5})
-    despues = pd.Series({"C": 0.5, "D": 0.5})
-    assert turnover(antes, despues) == pytest.approx(1.0)
-
-
-def test_turnover_sin_cambios_es_cero():
-    pesos = pd.Series({"A": 0.5, "B": 0.5})
-    assert turnover(pesos, pesos) == pytest.approx(0.0)

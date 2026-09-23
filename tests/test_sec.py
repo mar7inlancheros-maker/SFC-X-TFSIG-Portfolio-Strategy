@@ -44,8 +44,8 @@ def test_extrae_conceptos_y_descarta_formularios_no_periodicos():
     assert raw["value"].iloc[0] == 1000.0
 
 
-def test_prioridad_de_etiquetas_no_mezcla_series():
-    """Si hay etiqueta moderna y antigua, se usa solo la primera de la lista."""
+def test_en_un_mismo_periodo_gana_la_etiqueta_de_mayor_prioridad():
+    """Dos etiquetas para el MISMO trimestre: se queda la de arriba de la lista."""
     payload = _facts(
         RevenueFromContractWithCustomerExcludingAssessedTax=("USD", [
             _entry("2023-01-01", "2023-03-31", 500.0, "2023-04-20"),
@@ -54,10 +54,32 @@ def test_prioridad_de_etiquetas_no_mezcla_series():
             _entry("2023-01-01", "2023-03-31", 9999.0, "2023-04-20"),
         ]),
     )
-    raw = sec.extract_raw_facts(payload)
-    revenue = raw[raw["concept"] == "revenue"]
+    elegido = sec.select_by_priority(sec.extract_raw_facts(payload))
+    revenue = elegido[elegido["concept"] == "revenue"]
     assert len(revenue) == 1
     assert revenue["value"].iloc[0] == 500.0
+
+
+def test_la_etiqueta_antigua_cubre_los_periodos_que_la_moderna_no_alcanza():
+    """El caso ASC 606, que costaba la mitad de la cobertura de ingresos.
+
+    Apple publica `RevenueFromContractWithCustomer...` desde 2017 y `Revenues`
+    antes. Elegir UNA etiqueta para toda la empresa borraba la historia previa;
+    elegir periodo a periodo la conserva.
+    """
+    payload = _facts(
+        RevenueFromContractWithCustomerExcludingAssessedTax=("USD", [
+            _entry("2018-01-01", "2018-03-31", 500.0, "2018-04-20"),
+        ]),
+        Revenues=("USD", [
+            _entry("2016-01-01", "2016-03-31", 300.0, "2016-04-20"),
+            _entry("2017-01-01", "2017-03-31", 400.0, "2017-04-20"),
+        ]),
+    )
+    elegido = sec.select_by_priority(sec.extract_raw_facts(payload))
+    revenue = elegido[elegido["concept"] == "revenue"].sort_values("end")
+    assert len(revenue) == 3
+    assert list(revenue["value"]) == [300.0, 400.0, 500.0]
 
 
 def test_facts_vacio_devuelve_marco_vacio_con_tipos():
@@ -184,3 +206,61 @@ def test_as_of_antes_de_cualquier_presentacion_no_devuelve_nada():
         "value": [1000.0],
     })
     assert sec.as_of(observations, pd.Timestamp("2023-01-01")).empty
+
+
+# ---------------------------------------------------------------------------
+#  Cache de dos niveles: crudas y observaciones versionadas
+# ---------------------------------------------------------------------------
+
+
+def _raw_de_prueba():
+    payload = _facts(Revenues=_four_quarters())
+    return sec.extract_raw_facts(payload)
+
+
+def test_con_observaciones_en_cache_no_se_recalcula_el_ttm(tmp_path, monkeypatch):
+    from sfc_tfsig.data import cache
+
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    cache.write_frame(sec._raw_name(7), _raw_de_prueba())
+    primera = sec.company_observations(7)
+
+    llamadas = []
+    monkeypatch.setattr(sec, "observations_from_raw",
+                        lambda raw: llamadas.append(1) or pd.DataFrame())
+    segunda = sec.company_observations(7)
+
+    assert llamadas == []
+    pd.testing.assert_frame_equal(primera.reset_index(drop=True),
+                                  segunda.reset_index(drop=True))
+
+
+def test_sin_observaciones_se_derivan_de_las_crudas_sin_red(tmp_path, monkeypatch):
+    from sfc_tfsig.data import cache
+
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    cache.write_frame(sec._raw_name(7), _raw_de_prueba())
+    # Si se intentara bajar de EDGAR, este fallo lo delataria.
+    monkeypatch.setattr(sec, "_session", lambda: (_ for _ in ()).throw(AssertionError("red")))
+
+    obs = sec.company_observations(7)
+    assert (obs["concept"] == "revenue").any()
+    assert cache.exists(sec._observations_name(7))
+
+
+def test_subir_la_version_invalida_las_observaciones_viejas(tmp_path, monkeypatch):
+    """Cambiar la logica sin subir la version mezclaria observaciones viejas y
+    codigo nuevo. Con la version en el nombre, eso no puede pasar."""
+    from sfc_tfsig.data import cache
+
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    cache.write_frame(sec._raw_name(7), _raw_de_prueba())
+    sec.company_observations(7)
+    vieja = sec._observations_name(7)
+
+    monkeypatch.setattr(sec, "OBSERVATIONS_VERSION", "v-siguiente")
+    assert sec._observations_name(7) != vieja
+    assert not cache.exists(sec._observations_name(7))
+
+    sec.company_observations(7)
+    assert cache.exists(sec._observations_name(7))

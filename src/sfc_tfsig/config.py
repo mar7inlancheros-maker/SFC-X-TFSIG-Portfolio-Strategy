@@ -26,10 +26,11 @@ import hashlib
 import json
 import tomllib
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
-from .paths import DEFAULT_CONFIG
+from .paths import DEFAULT_CONFIG, RISK_CONFIG
 
 _MISSING = object()
 
@@ -45,6 +46,10 @@ class Config:
     data: Mapping[str, Any]
     source: Path | None
     fingerprint: str
+    # "strategy" (config/strategy.toml) o "risk" (config/risk.toml). Decide que
+    # validador corre en `replace`: la politica de riesgo no tiene [portfolio]
+    # ni [factors], y validarla como estrategia fallaria siempre.
+    kind: str = "strategy"
 
     # -- acceso ------------------------------------------------------------
     def get(self, dotted: str, default: Any = _MISSING) -> Any:
@@ -85,8 +90,9 @@ class Config:
                     node[part] = {}
                 node = node[part]
             node[parts[-1]] = value
-        validate(data)
-        return Config(data=data, source=self.source, fingerprint=_fingerprint(data))
+        (validate_risk if self.kind == "risk" else validate)(data)
+        return Config(data=data, source=self.source, fingerprint=_fingerprint(data),
+                      kind=self.kind)
 
     @property
     def factor_weights(self) -> dict[str, float]:
@@ -296,3 +302,183 @@ def config_from_dict(data: Mapping[str, Any]) -> Config:
     payload = copy.deepcopy(dict(data))
     validate(payload)
     return Config(data=payload, source=None, fingerprint=_fingerprint(payload))
+
+
+# ---------------------------------------------------------------------------
+#  Politica de riesgo (config/risk.toml)
+#
+#  Fichero aparte porque no decide que se compra: niveles de confianza,
+#  escenarios y limites de vigilancia. Tiene su propio fingerprint. Si estuviera
+#  dentro de strategy.toml, mover un limite de VaR invalidaria la cache del
+#  panel y haria incomparables dos backtests identicos.
+# ---------------------------------------------------------------------------
+
+_RISK_SECTIONS = ("var", "montecarlo", "exposure", "stress", "limits")
+
+
+def _confidence(value: Any, name: str) -> float:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"'{name}' debe ser numerico, llego {value!r}") from None
+    if not 0.5 < num < 1.0:
+        raise ConfigError(
+            f"'{name}' = {num}: un nivel de confianza va entre 0.5 y 1 (0.99, no 99)"
+        )
+    return num
+
+
+def _positive_ints(value: Any, name: str) -> list[int]:
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"'{name}' debe ser una lista no vacia de enteros positivos")
+    out = []
+    for item in value:
+        if not isinstance(item, int) or item <= 0:
+            raise ConfigError(f"'{name}' contiene {item!r}: solo enteros positivos")
+        out.append(int(item))
+    return out
+
+
+def _fractions(value: Any, name: str) -> list[float]:
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"'{name}' debe ser una lista no vacia de fracciones")
+    return [_fraction(v, name, allow_zero=False) for v in value]
+
+
+def _iso_date(value: Any, name: str) -> str:
+    text = str(value)
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        raise ConfigError(f"'{name}' = {value!r}: debe ser una fecha AAAA-MM-DD") from None
+    return text
+
+
+def validate_risk(data: Mapping[str, Any]) -> None:
+    """Valida `config/risk.toml`. Lanza `ConfigError` con un mensaje accionable.
+
+    Los nombres de sector de los escenarios y las claves de [limits] se
+    comprueban en `risk.analysis.validate_policy`, que conoce los sectores del
+    universo y las medidas de riesgo: aqui solo se comprueban tipos y rangos.
+    """
+    for section in _RISK_SECTIONS:
+        if section not in data:
+            raise ConfigError(f"falta la seccion [{section}] en la politica de riesgo")
+
+    var = data["var"]
+    confidences = _need(var, "confidence", "var")
+    if not isinstance(confidences, list) or not confidences:
+        raise ConfigError("[var].confidence debe ser una lista, por ejemplo [0.95, 0.99]")
+    for c in confidences:
+        _confidence(c, "var.confidence")
+    _positive_ints(_need(var, "horizons_d", "var"), "var.horizons_d")
+    lam = float(_need(var, "ewma_lambda", "var"))
+    if not 0.0 < lam < 1.0:
+        raise ConfigError(f"[var].ewma_lambda = {lam}: debe estar en (0, 1); 0.94 es RiskMetrics")
+    bt = _need(var, "backtest", "var")
+    _confidence(_need(bt, "confidence", "var.backtest"), "var.backtest.confidence")
+    if int(_need(bt, "window_d", "var.backtest")) < 60:
+        raise ConfigError("[var.backtest].window_d < 60: el cuantil de la cola seria ruido")
+    if int(_need(bt, "recent_d", "var.backtest")) < 50:
+        raise ConfigError("[var.backtest].recent_d < 50: el semaforo necesita al menos 50 sesiones")
+
+    mc = data["montecarlo"]
+    _need(mc, "seed", "montecarlo")
+    boot = _need(mc, "bootstrap", "montecarlo")
+    if int(_need(boot, "n_paths", "montecarlo.bootstrap")) < 500:
+        raise ConfigError(
+            "[montecarlo.bootstrap].n_paths < 500: los percentiles de cola no se estabilizan"
+        )
+    years = _need(boot, "horizons_y", "montecarlo.bootstrap")
+    if not isinstance(years, list) or not years or any(float(y) <= 0 for y in years):
+        raise ConfigError("[montecarlo.bootstrap].horizons_y debe ser una lista de anos positivos")
+    if int(_need(boot, "mean_block_d", "montecarlo.bootstrap")) < 1:
+        raise ConfigError("[montecarlo.bootstrap].mean_block_d debe ser >= 1")
+    haircut = float(_need(boot, "return_haircut", "montecarlo.bootstrap"))
+    if not 0.0 <= haircut <= 0.20:
+        raise ConfigError(
+            f"[montecarlo.bootstrap].return_haircut = {haircut}: es un descuento ANUAL "
+            "entre 0 y 0.20 (0.02 son dos puntos de CAGR)"
+        )
+    _fractions(_need(boot, "drawdown_thresholds", "montecarlo.bootstrap"),
+               "montecarlo.bootstrap.drawdown_thresholds")
+    par = _need(mc, "parametric", "montecarlo")
+    if int(_need(par, "n_sims", "montecarlo.parametric")) < 1000:
+        raise ConfigError(
+            "[montecarlo.parametric].n_sims < 1000: el ES al 99% saldria de 10 escenarios"
+        )
+    _positive_ints(_need(par, "horizons_d", "montecarlo.parametric"),
+                   "montecarlo.parametric.horizons_d")
+    if float(_need(par, "t_dof", "montecarlo.parametric")) <= 2:
+        raise ConfigError(
+            "[montecarlo.parametric].t_dof <= 2: la t de Student no tiene varianza "
+            "finita y no se puede igualar a la covarianza estimada"
+        )
+
+    exp = data["exposure"]
+    if int(_need(exp, "cov_window_d", "exposure")) < 60:
+        raise ConfigError(
+            "[exposure].cov_window_d < 60: covarianza de 30 nombres con apenas mas datos que nombres"
+        )
+    _fraction(_need(exp, "min_coverage", "exposure"), "exposure.min_coverage")
+    if int(_need(exp, "adv_window_d", "exposure")) < 5:
+        raise ConfigError("[exposure].adv_window_d < 5: la mediana del volumen seria de un dia raro")
+    _fraction(_need(exp, "participation", "exposure"), "exposure.participation", allow_zero=False)
+
+    st = data["stress"]
+    _iso_date(_need(st, "history_start", "stress"), "stress.history_start")
+    for i, sc in enumerate(st.get("historical", []), start=1):
+        where = f"stress.historical #{i}"
+        for key in ("name", "start", "end"):
+            _need(sc, key, where)
+        start = _iso_date(sc["start"], f"{where}.start")
+        end = _iso_date(sc["end"], f"{where}.end")
+        if start >= end:
+            raise ConfigError(f"[{where}] '{sc['name']}': start debe ser anterior a end")
+    for i, sc in enumerate(st.get("hypothetical", []), start=1):
+        where = f"stress.hypothetical #{i}"
+        _need(sc, "name", where)
+        market = float(_need(sc, "market", where))
+        if market <= -1.0:
+            raise ConfigError(f"[{where}] '{sc['name']}': market <= -100% no es un escenario")
+        unknown = set(sc.get("factors", {})) - set(_KNOWN_FACTORS)
+        if unknown:
+            raise ConfigError(
+                f"[{where}] '{sc['name']}': factores desconocidos {sorted(unknown)}. "
+                f"Conocidos: {list(_KNOWN_FACTORS)}"
+            )
+    _fractions(_need(_need(st, "reverse", "stress"), "loss_thresholds", "stress.reverse"),
+               "stress.reverse.loss_thresholds")
+
+    limits = data["limits"]
+    warn = float(_need(limits, "warning_fraction", "limits"))
+    if not 0.0 < warn < 1.0:
+        raise ConfigError(f"[limits].warning_fraction = {warn}: debe estar en (0, 1)")
+    for key, value in limits.items():
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            raise ConfigError(f"[limits].{key} debe ser numerico, llego {value!r}") from None
+        if num <= 0:
+            raise ConfigError(f"[limits].{key} = {num}: un limite debe ser positivo")
+
+
+def load_risk_config(path: str | Path | None = None) -> Config:
+    """Lee `config/risk.toml`, lo valida y devuelve una `Config` de tipo riesgo."""
+    cfg_path = Path(path) if path is not None else RISK_CONFIG
+    if not cfg_path.exists():
+        raise ConfigError(
+            f"no existe {cfg_path}. El repo trae 'config/risk.toml'; si lo "
+            "renombraste, pasa la ruta con --riesgo-config"
+        )
+    with cfg_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    validate_risk(data)
+    return Config(data=data, source=cfg_path, fingerprint=_fingerprint(data), kind="risk")
+
+
+def risk_config_from_dict(data: Mapping[str, Any]) -> Config:
+    """Politica de riesgo en memoria, para tests. Valida igual que la del disco."""
+    payload = copy.deepcopy(dict(data))
+    validate_risk(payload)
+    return Config(data=payload, source=None, fingerprint=_fingerprint(payload), kind="risk")

@@ -19,6 +19,7 @@ OUTPUT_DIR = ROOT / "output"
 REPORT_DIR = OUTPUT_DIR / "reports"
 
 DEFAULT_CONFIG = CONFIG_DIR / "strategy.toml"
+RISK_CONFIG = CONFIG_DIR / "risk.toml"
 
 
 def ensure_dirs() -> None:

@@ -114,6 +114,12 @@ _SIC_RULES: tuple[tuple[range | tuple[int, ...], str], ...] = (
       7350, 7359, 7363, 7389, 8711, 8742, 8744), "Industrials"),
 )
 
+# Los once sectores, en el orden en que aparecen arriba. Lo leen quienes
+# validan nombres de sector escritos a mano (los escenarios de estres de
+# config/risk.toml): un sector mal escrito no casaria con ninguna posicion y el
+# escenario se aplicaria sin su choque sectorial, sin avisar.
+SECTORS: tuple[str, ...] = tuple(dict.fromkeys(sector for _, sector in _SIC_RULES))
+
 
 def sector_from_sic(sic: object) -> str:
     """SIC -> uno de los 11 sectores. 'Unknown' si no hay SIC o no encaja."""
@@ -301,22 +307,33 @@ def apply_liquidity_filters(
     price: pd.Series,
     dollar_volume: pd.Series,
     market_cap: pd.Series,
+    history_months: pd.Series,
 ) -> pd.DataFrame:
     """Filtros dinamicos de una fecha concreta. Devuelve el universo de ese mes.
 
-    Las tres series vienen indexadas por ticker y calculadas CON DATOS DE ESA
-    FECHA. Esta funcion no sabe que fecha es, a proposito: asi no puede colarse
-    un dato futuro por descuido.
+    Las series vienen indexadas por ticker y calculadas CON DATOS DE ESA FECHA.
+    Esta funcion no sabe que fecha es, a proposito: asi no puede colarse un
+    dato futuro por descuido.
+
+    `history_months` es obligatorio, sin valor por defecto, a proposito. Hasta
+    el 2026-09-23 `min_history_months = 24` estaba declarado en el TOML y
+    validado en `config.py`, pero esta funcion no lo recibia: el parametro
+    existia y no hacia nada. Tres salidas a bolsa de 3 a 4 meses (FRVO, MBGL,
+    QNT) encabezaban el ranking de agosto de 2026. Sin historia no tienen
+    momentum ni volatilidad; se puntuaban solo con valor y calidad, calculados
+    sobre uno o dos reportes, y esos valores extremos las ponian arriba.
     """
     df = candidates.copy()
     df["price"] = df["ticker"].map(price)
     df["dollar_volume"] = df["ticker"].map(dollar_volume)
     df["market_cap"] = df["ticker"].map(market_cap)
+    df["history_months"] = df["ticker"].map(history_months)
 
     mask = (
         (df["price"] >= float(cfg.get("universe.min_price")))
         & (df["dollar_volume"] >= float(cfg.get("universe.min_dollar_volume")))
         & (df["market_cap"] >= float(cfg.get("universe.min_market_cap")))
+        & (df["history_months"] >= float(cfg.get("universe.min_history_months")))
     )
     out = df[mask.fillna(False)].copy()
 

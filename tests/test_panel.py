@@ -115,3 +115,45 @@ def test_cobertura_ordena_de_peor_a_mejor():
     tabla = panel_mod.coverage_report(panel, ["roic", "earnings_yield"])
     assert tabla.iloc[0]["metric"] == "roic"
     assert tabla.iloc[0]["coverage"] == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+#  Historia minima de precios
+# ---------------------------------------------------------------------------
+
+
+def test_historia_en_meses_se_mide_desde_el_primer_cierre():
+    primero = pd.Series({
+        "VIEJA": pd.Timestamp("2010-01-04"),
+        "OPI": pd.Timestamp("2026-05-13"),
+        "FUTURA": pd.Timestamp("2026-10-01"),
+    })
+    meses = panel_mod.history_months_at(primero, pd.Timestamp("2026-08-31"))
+    assert meses["VIEJA"] > 190
+    assert meses["OPI"] == pytest.approx(3.6, abs=0.1)
+    # Todavia no cotizaba: negativo, y el filtro lo excluye.
+    assert meses["FUTURA"] < 0
+
+
+def test_una_opi_de_tres_meses_no_entra_al_universo(cfg):
+    """El bug: `min_history_months = 24` estaba declarado y no se aplicaba."""
+    from sfc_tfsig import universe as universe_mod
+
+    candidatas = pd.DataFrame({"ticker": ["VIEJA", "OPI"], "sector": ["Tech", "Tech"]})
+    elegibles = universe_mod.apply_liquidity_filters(
+        candidatas, cfg,
+        price=pd.Series({"VIEJA": 50.0, "OPI": 50.0}),
+        dollar_volume=pd.Series({"VIEJA": 1e8, "OPI": 1e8}),
+        market_cap=pd.Series({"VIEJA": 1e10, "OPI": 1e10}),
+        history_months=pd.Series({"VIEJA": 200.0, "OPI": 3.6}),
+    )
+    assert elegibles["ticker"].tolist() == ["VIEJA"]
+
+
+def test_el_filtro_de_historia_es_obligatorio_no_opcional(cfg):
+    """Sin valor por defecto a proposito: olvidarlo tiene que fallar, no pasar."""
+    import inspect
+    from sfc_tfsig import universe as universe_mod
+
+    parametro = inspect.signature(universe_mod.apply_liquidity_filters).parameters["history_months"]
+    assert parametro.default is inspect.Parameter.empty
