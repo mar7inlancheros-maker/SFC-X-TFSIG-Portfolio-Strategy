@@ -223,3 +223,18 @@ Trampas:
 - **Los topes por nombre deben dejar libertad.** Si `n_por_pata × max_position`
   iguala la pata, todos los métodos coinciden; `analysis.py` avisa.
 - **`ffill(limit=0)` revienta en pandas**; `cleaning._ffill` lo trata aparte.
+
+## WRDS (`src/sfc_tfsig/data/wrds.py`)
+
+- **Instalar `wrds` con `--no-deps`.** Fija `pandas<2.3`; en Python 3.14 pip
+  intenta compilar pandas 2.2 y falla pidiendo Visual Studio. Ver
+  `pyproject.toml`, grupo `wrds`.
+- **Usar `with connection() as conn:` para varias consultas.** WRDS limita las
+  conexiones simultaneas; `query`/`fetch_table` sin `conn` abren y cierran una
+  cada vez.
+- **La cache de WRDS lleva el hash del SQL en el nombre.** Cambiar el filtro con
+  el mismo `cache_name` es otra entrada, no datos viejos. `refresh=True` para
+  traer meses recientes.
+- **Sin pgpass y sin terminal, `get_connection` falla a proposito** en vez de
+  quedarse esperando la contrasena. Configurarlo una vez con
+  `db.create_pgpass_file()`.

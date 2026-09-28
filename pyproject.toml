@@ -44,6 +44,14 @@ quant = [
     "seaborn>=0.13",
 ]
 
+# WRDS. NO instalar con `pip install wrds` a secas en Python 3.14: wrds 3.5
+# fija pandas<2.3, pandas 2.2 no tiene rueda para 3.14, y pip intenta
+# compilarlo y falla pidiendo Visual Studio ("vswhere.exe"). Instalar asi:
+#   pip install "psycopg2-binary>=2.9,<2.10" "sqlalchemy>=2,<2.1"
+#   pip install wrds --no-deps
+# Funciona con pandas 2.3; `pip check` avisara del limite, y es esperado.
+wrds = ["psycopg2-binary>=2.9,<2.10", "sqlalchemy>=2,<2.1"]
+
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
