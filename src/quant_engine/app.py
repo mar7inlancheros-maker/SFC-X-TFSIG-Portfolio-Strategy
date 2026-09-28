@@ -22,7 +22,7 @@ from sfc_tfsig.console import enable_utf8_stdout
 from .analysis import AnalysisResult, run_analysis
 from .reporting import terminal
 from .settings import (CONSTRUCTIONS, LOOKBACK_YEARS, REBALANCES, EngineSettings, SettingsError,
-                       build_settings, default_values, output_dir)
+                       build_settings, default_values, output_dir, parse_tickers)
 
 MENU = """
 ============================================================
@@ -63,26 +63,56 @@ def parse_fraction(text: str) -> float:
     return float(t)
 
 
+def split_long_short(tickers: tuple[str, ...], long_text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Los que el usuario marca como LONG; el resto, SHORT. Vacio = primera mitad LONG."""
+    if not long_text.strip():
+        half = (len(tickers) + 1) // 2
+        return tickers[:half], tickers[half:]
+    longs = parse_tickers(long_text)
+    unknown = [t for t in longs if t not in tickers]
+    if unknown:
+        raise SettingsError(f"LONG que no estan en la lista de tickers: {unknown}")
+    return longs, tuple(t for t in tickers if t not in longs)
+
+
 def ask_settings(previous: EngineSettings | None = None) -> EngineSettings:
+    """Pide los tickers, cuales van LONG, y opciones avanzadas solo si se piden.
+
+    El signo LONG/SHORT lo decide research, no el motor: por eso se pregunta.
+    """
     # Defaults sin validar: una configuracion de prueba con un ticker por lado
     # no pasa la validacion de topes, y el programa moria antes de preguntar.
     base = previous if previous is not None else SimpleNamespace(**default_values())
     while True:
         try:
-            longs = _ask("Enter LONG tickers", ",".join(previous.longs) if previous else None)
-            shorts = _ask("Enter SHORT tickers", ",".join(previous.shorts) if previous else None)
-            return build_settings(
-                longs, shorts,
-                benchmark=_ask("Enter benchmark", base.benchmark),
-                lookback=_ask(f"Analysis period {list(LOOKBACK_YEARS)}", base.lookback),
-                risk_free_rate=parse_fraction(_ask("Risk-free rate", str(base.risk_free_rate))),
-                rebalance=_ask(f"Rebalancing frequency {list(REBALANCES)}", base.rebalance),
-                construction=_ask(f"Portfolio construction {list(CONSTRUCTIONS)}", base.construction),
-                initial_capital=float(_ask("Initial capital", f"{base.initial_capital:.0f}").replace(",", "")),
-                transaction_cost=parse_fraction(_ask("Transaction cost", f"{base.transaction_cost:.2%}")),
-            )
+            prev_all = ",".join(previous.longs + previous.shorts) if previous else None
+            tickers = parse_tickers(_ask("Digite los tickers, separados por coma", prev_all))
+            if len(tickers) < 2:
+                raise SettingsError("hacen falta al menos 2 tickers: uno LONG y uno SHORT")
+            half = (len(tickers) + 1) // 2
+            print(f"  (Enter = los primeros {half} LONG: {','.join(tickers[:half])})")
+            longs, shorts = split_long_short(tickers, _ask("Cuales van LONG? El resto queda SHORT", ""))
+            print(f"  LONG:  {' '.join(longs)}\n  SHORT: {' '.join(shorts)}")
+
+            options = {}
+            if _ask("Cambiar opciones avanzadas? (s/N)", "n").lower().startswith("s"):
+                options = dict(
+                    benchmark=_ask("Benchmark", base.benchmark),
+                    lookback=_ask(f"Periodo {list(LOOKBACK_YEARS)}", base.lookback),
+                    risk_free_rate=parse_fraction(_ask("Tasa libre de riesgo", str(base.risk_free_rate))),
+                    rebalance=_ask(f"Rebalanceo {list(REBALANCES)}", base.rebalance),
+                    construction=_ask(f"Construccion {list(CONSTRUCTIONS)}", base.construction),
+                    initial_capital=float(_ask("Capital", f"{base.initial_capital:.0f}").replace(",", "")),
+                    transaction_cost=parse_fraction(_ask("Coste de transaccion", f"{base.transaction_cost:.2%}")),
+                )
+            elif previous is not None:
+                options = dict(benchmark=previous.benchmark, lookback=previous.lookback,
+                               risk_free_rate=previous.risk_free_rate, rebalance=previous.rebalance,
+                               construction=previous.construction, initial_capital=previous.initial_capital,
+                               transaction_cost=previous.transaction_cost)
+            return build_settings(longs, shorts, **options)
         except (SettingsError, ValueError) as exc:
-            print(f"\n  ERROR: {exc}\n  Try again.\n")
+            print(f"\n  ERROR: {exc}\n  Intenta de nuevo.\n")
 
 
 def execute(settings: EngineSettings, console: Console, *, signals_csv: Path | None = None,

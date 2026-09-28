@@ -314,6 +314,23 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
     return 3 if args.estricto and analysis.status == "EXCEDIDO" else 0
 
 
+def cmd_wrds(args: argparse.Namespace) -> int:
+    """Configura el acceso a WRDS o comprueba que funciona."""
+    from .data import wrds
+
+    if args.setup:
+        path = wrds.setup_pgpass()
+        print(f"contrasena guardada en {path}")
+        print("a partir de ahora ninguna corrida la vuelve a pedir")
+    libraries = wrds.list_libraries()
+    print(f"conexion OK: {len(libraries)} bibliotecas en la suscripcion")
+    key = [lib for lib in ("crsp", "crsp_a_stock", "comp", "comp_na_daily_all", "ff", "ibes", "optionm")
+           if lib in libraries]
+    print("clave para el modelo: " + (", ".join(key) if key else "ninguna de las esperadas"))
+    print("todas: " + ", ".join(libraries))
+    return 0
+
+
 def cmd_limpiar(args: argparse.Namespace) -> int:
     removed = cache.clear(args.prefijo or "")
     print(f"{removed} ficheros borrados de {CACHE_DIR}")
@@ -371,6 +388,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_limpiar = sub.add_parser("limpiar", help="borra la cache de datos")
     p_limpiar.add_argument("--prefijo", help="borra solo lo que empiece por este prefijo")
     p_limpiar.set_defaults(func=cmd_limpiar)
+
+    p_wrds = sub.add_parser("wrds", help="configura o comprueba el acceso a WRDS")
+    p_wrds.add_argument("--setup", action="store_true",
+                        help="pide la contrasena una vez y la guarda (pgpass)")
+    p_wrds.set_defaults(func=cmd_wrds)
 
     from quant_engine.app import add_parser as add_research_parser
 

@@ -161,12 +161,25 @@ def build_settings(
         values[key] = value
     values["benchmark"] = str(values["benchmark"]).upper()
 
-    settings = EngineSettings(
-        longs=parse_tickers(longs) if isinstance(longs, str) else tuple(longs),
-        shorts=parse_tickers(shorts) if isinstance(shorts, str) else tuple(shorts),
-        raw=raw,
-        **values,
-    )
+    longs_t = parse_tickers(longs) if isinstance(longs, str) else tuple(longs)
+    shorts_t = parse_tickers(shorts) if isinstance(shorts, str) else tuple(shorts)
+
+    # Con pocos nombres por pata el tope no alcanza a invertir la pata: 2 nombres
+    # x 35% = 70% < 100%. En vez de rechazar la lista, el tope sube al minimo
+    # posible (pata / nombres) y queda anotado. Con esos nombres todos los
+    # metodos de construccion convergen en equiponderado, y el reporte lo avisa.
+    port = dict(raw.get("portfolio", {}) or {})
+    gross = float(port.get("gross_exposure", 2.0))
+    cap = float(port.get("max_position", 0.2))
+    fewest = min(len(longs_t), len(shorts_t)) if longs_t and shorts_t else 0
+    if fewest and fewest * cap < gross / 2 - 1e-9:
+        needed = gross / 2 / fewest
+        raw = {**raw, "portfolio": {**port, "max_position": needed},
+               "_notes": [*raw.get("_notes", []),
+                          f"tope por nombre subido de {cap:.0%} a {needed:.0%}: solo {fewest} "
+                          f"nombre(s) en una pata"]}
+
+    settings = EngineSettings(longs=longs_t, shorts=shorts_t, raw=raw, **values)
     validate(settings)
     return settings
 

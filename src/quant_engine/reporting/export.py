@@ -57,6 +57,10 @@ def to_json(r: AnalysisResult) -> dict:
         "momentum": r.momentum,
         "mean_reversion": r.mean_reversion,
         "volatility": r.volatility,
+        "data_sources": {"wrds_available": bool(r.wrds and r.wrds.available),
+                         "wrds_reason": (r.wrds.reason if r.wrds else "not requested"),
+                         "factor_model": r.factors.source},
+        "fundamentals_analysts_short_interest": r.fundamentals,
         "factor_exposures": r.factors.exposures,
         "factor_unavailable": r.factors.unavailable,
         "quant_scores": r.scores,
@@ -72,6 +76,7 @@ def to_json(r: AnalysisResult) -> dict:
         "stress": {k: v for k, v in r.stress.items()},
         "montecarlo": {k: v for k, v in r.montecarlo.items() if k != "bootstrap_terminal"},
         "robustness": {k: v for k, v in r.robustness.items()} if r.robustness else {},
+        "trade_plan": r.trade_plan.get("plan") if r.trade_plan else None,
         "warnings": r.warnings,
         "disclaimer": "Descriptive quantitative analysis. Not investment advice.",
     })
@@ -99,6 +104,10 @@ def export_all(r: AnalysisResult, console: Console, directory: Path, stamp: str,
 
     paths["risk"] = directory / f"risk_{stamp}.csv"
     r.risk.join(r.regression, rsuffix="_reg").join(r.volatility, rsuffix="_vol").to_csv(paths["risk"], index_label="ticker")
+
+    if r.trade_plan:
+        paths["trade_plan"] = directory / f"trade_plan_{stamp}.csv"
+        r.trade_plan["plan"].to_csv(paths["trade_plan"], index_label="ticker")
 
     paths["correlation"] = directory / f"correlation_{stamp}.csv"
     r.correlation["pearson"].to_csv(paths["correlation"])

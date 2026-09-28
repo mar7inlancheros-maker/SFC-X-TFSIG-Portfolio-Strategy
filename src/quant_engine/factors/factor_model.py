@@ -42,6 +42,7 @@ class FactorModelResult:
     condition_number: float = float("nan")
     vif: pd.Series = field(default_factory=pd.Series)
     factor_returns: pd.DataFrame = field(default_factory=pd.DataFrame)
+    source: str = ""
 
 
 def build_factor_returns(
@@ -78,22 +79,13 @@ def _vif(x: pd.DataFrame) -> pd.Series:
     return pd.Series(out)
 
 
-def factor_exposures(
-    returns: pd.DataFrame,
-    tickers: list[str] | tuple[str, ...],
-    benchmark: str,
-    proxies: dict[str, list[str]],
-    rf_annual: float,
-) -> FactorModelResult:
-    factors, unavailable = build_factor_returns(returns, benchmark, proxies, rf_annual)
+def _regress(excess: pd.DataFrame, factors: pd.DataFrame, source: str,
+             unavailable: dict[str, str]) -> FactorModelResult:
+    """Regresion de cada exceso de retorno sobre los factores, errores HAC."""
     factors = factors.dropna()
-    rf_d = daily_rf(rf_annual)
-
     betas, tstats, r2 = {}, {}, {}
-    for ticker in tickers:
-        if ticker not in returns.columns:
-            continue
-        joined = pd.concat([returns[ticker] - rf_d, factors], axis=1).dropna()
+    for ticker in excess.columns:
+        joined = pd.concat([excess[ticker], factors], axis=1).dropna()
         if len(joined) < 126:
             continue
         y = joined.iloc[:, 0]
@@ -105,7 +97,6 @@ def factor_exposures(
 
     x_std = (factors - factors.mean()) / factors.std()
     cond = float(np.linalg.cond(x_std.to_numpy())) if len(x_std) > len(x_std.columns) else float("nan")
-
     return FactorModelResult(
         exposures=pd.DataFrame(betas).T,
         t_stats=pd.DataFrame(tstats).T,
@@ -115,4 +106,38 @@ def factor_exposures(
         condition_number=cond,
         vif=_vif(factors) if len(factors.columns) > 1 else pd.Series(dtype=float),
         factor_returns=factors,
+        source=source,
     )
+
+
+def factor_exposures(
+    returns: pd.DataFrame,
+    tickers: list[str] | tuple[str, ...],
+    benchmark: str,
+    proxies: dict[str, list[str]],
+    rf_annual: float,
+) -> FactorModelResult:
+    """Factores construidos con spreads de ETF. Respaldo cuando no hay WRDS."""
+    factors, unavailable = build_factor_returns(returns, benchmark, proxies, rf_annual)
+    rf_d = daily_rf(rf_annual)
+    cols = [t for t in tickers if t in returns.columns]
+    return _regress(returns[cols] - rf_d, factors, "ETF spreads (proxy)", unavailable)
+
+
+FF_NAMES = {"mktrf": "market", "smb": "size", "hml": "value", "rmw": "profitability",
+            "cma": "investment", "umd": "momentum"}
+
+
+def fama_french_exposures(returns: pd.DataFrame, tickers: list[str] | tuple[str, ...],
+                          ff: pd.DataFrame) -> FactorModelResult:
+    """Fama-French 5 factores + momentum (Carhart), diarios, de WRDS.
+
+    El exceso de retorno usa la `rf` diaria de la propia tabla de Fama-French,
+    la misma con la que se construyeron los factores: mezclar una rf constante
+    con factores construidos sobre la del T-bill introduce un sesgo en el alfa.
+    """
+    cols = [t for t in tickers if t in returns.columns]
+    aligned = ff.reindex(returns.index)
+    excess = returns[cols].sub(aligned["rf"], axis=0)
+    factors = aligned[list(FF_NAMES)].rename(columns=FF_NAMES)
+    return _regress(excess, factors, "Fama-French 5 + momentum (WRDS)", {})

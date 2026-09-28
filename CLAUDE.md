@@ -223,6 +223,12 @@ Trampas:
 - **Los topes por nombre deben dejar libertad.** Si `n_por_pata × max_position`
   iguala la pata, todos los métodos coinciden; `analysis.py` avisa.
 - **`ffill(limit=0)` revienta en pandas**; `cleaning._ffill` lo trata aparte.
+- **El plan de operación reconstruye la cartera con los signos corregidos.**
+  No reutiliza los pesos de `primary`: tras un FLIP o un NO TRADE esos pesos
+  apuntan al lado equivocado. Si solo queda una pata, no hay cartera y el plan
+  da niveles sin tamaño.
+- **En `trade_plan.hit_rate`, un día que toca stop y TP cuenta como stop.** Sin
+  datos intradía no se sabe el orden; suponer el TP inflaría la tasa base.
 
 ## WRDS (`src/sfc_tfsig/data/wrds.py`)
 
@@ -237,4 +243,17 @@ Trampas:
   traer meses recientes.
 - **Sin pgpass y sin terminal, `get_connection` falla a proposito** en vez de
   quedarse esperando la contrasena. Configurarlo una vez con
-  `db.create_pgpass_file()`.
+  `python main.py wrds --setup`. No usar `wrds.Connection()` a secas para eso:
+  sin usuario explicito ofrece el de Windows por defecto, y con Enter la
+  autenticacion falla y el pgpass nunca se crea.
+- **El motor long/short usa WRDS si esta disponible** (`quant_engine/data/wrds_data.py`):
+  Fama-French 5 + momentum, GICS, fundamentales de Compustat point-in-time por
+  `rdq`, IBES y interes corto. Si WRDS falla, `load` devuelve `available=False`
+  y el motor sigue con Yahoo + ETFs + SIC; nunca lanza. Los componentes
+  `value`, `quality`, `analyst` y `short_interest` del Quant Score quedan
+  vacios y el resto se renormaliza.
+- **Las consultas de WRDS del motor llevan la fecha del analisis en el SQL**:
+  asi la cache (hash del SQL) se renueva cada dia sin `refresh`.
+- **`pd.NA` de WRDS revienta `float()`**: todo pasa por `wrds_data._numeric`.
+- **La revision de EPS compara el MISMO ejercicio fiscal** (`fpedats`) y va
+  acotada a +-100%. Con base cerca de cero explotaba (Boeing: -133%).

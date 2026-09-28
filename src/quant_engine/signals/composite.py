@@ -13,6 +13,13 @@ completa; los pesos estan en `config/quant_engine.yaml`.
 | liquidity | log(volumen medio en dolares) | + | coste de entrar y salir |
 | beta | beta frente al benchmark | - | Betting Against Beta (Frazzini-Pedersen) |
 | statistical | calidad de tendencia (signo x R2) | + | informacion continua (Da et al.) |
+| value (WRDS) | rendimiento por beneficio, flujo libre, libros, ventas | + | Fama-French HML |
+| quality (WRDS) | ROE, rentabilidad bruta, margen de caja; deuda y devengo en contra | + | QMJ, Novy-Marx, Sloan |
+| analyst (WRDS) | revision de EPS a 3m; cambio y nivel de recomendacion en contra | + | Chan-Jegadeesh-Lakonishok |
+| short_interest (WRDS) | % de acciones prestadas en corto | - | Boehmer-Jones-Zhang |
+
+Los cuatro ultimos solo existen con WRDS. Sin WRDS salen vacios y el score se
+renormaliza sobre los componentes de precio, manteniendo sus proporciones.
 
 **Con 10 activos, los z-scores son ruidosos**: media y desviacion se estiman con
 10 puntos. Un z de +1,2 frente a +0,9 no distingue nada. El score sirve para
@@ -36,6 +43,11 @@ COMPONENTS: dict[str, list[tuple[str, int]]] = {
     "liquidity": [("log_adv", 1)],
     "beta": [("beta", -1)],
     "statistical": [("trend_quality", 1)],
+    "value": [("earnings_yield", 1), ("fcf_yield", 1), ("book_to_price", 1), ("sales_to_price", 1)],
+    "quality": [("roe", 1), ("gross_profitability", 1), ("fcf_margin", 1),
+                ("debt_to_equity", -1), ("accruals", -1)],
+    "analyst": [("eps_revision_3m", 1), ("rec_change_3m", -1), ("meanrec", -1)],
+    "short_interest": [("si_pct_float", -1)],
 }
 
 # Matriz de caracteristicas estandarizadas del apartado de seccion cruzada. Sin

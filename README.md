@@ -228,7 +228,7 @@ elige acciones: recibe una lista LONG y una SHORT del equipo de equity research
 y mide si se sostienen cuantitativamente como cartera long/short.
 
 ```bash
-python main.py                                   # interactivo: pide tickers y opciones
+python modelo.py                                 # interactivo: pide tickers y corre todo
 python main.py research --long AAPL,MSFT,NVDA,AMZN,META --short TSLA,INTC,BA,PYPL,NKE
 python main.py research --long ... --short ... --signals senales.csv   # modo B
 ```
@@ -237,16 +237,37 @@ Sin argumentos abre el modo interactivo; los subcomandos del modelo
 multifactor (`universo`, `panel`, `backtest`, `ordenes`, `riesgo`) no cambian.
 Defaults en `config/quant_engine.yaml`. Todo se guarda en
 `output/quant_engine/`: reporte en texto, JSON, HTML, CSV de pesos, señales,
-riesgo y correlación, y diez gráficos.
+riesgo, correlación y plan de operación, y diez gráficos.
 
-**Qué hace, en trece secciones:** calidad de datos; rendimiento y riesgo por
+**Qué hace, en catorce secciones:** calidad de datos; rendimiento y riesgo por
 activo; beta y alfa sobre retornos en exceso con errores HAC; momentum,
 reversión a la media y régimen de volatilidad con umbrales declarados;
 correlación, clusters y cuatro estimadores de covarianza con su número de
 condición; exposición a factores construidos con ETF reales; Quant Score y
 acuerdo con research; contraste LONG frente a SHORT; cinco métodos de
 construcción con backtest walk-forward; beta y sector neutral; estrés; Monte
-Carlo; robustez.
+Carlo; robustez; plan de operación.
+
+**El plan de operación (sección 14) corrige al research.** Con el Quant Score
+alineado (score × +1 si research dice LONG, × −1 si dice SHORT):
+
+| Score alineado | Veredicto | Qué se hace |
+|---|---|---|
+| ≥ +0,15 | CONFIRM | se opera como dijo research |
+| entre −0,15 y +0,15 | REDUCE | se opera a la mitad del tamaño |
+| entre −0,50 y −0,15 | NO TRADE | el dato contradice; revisar la tesis |
+| ≤ −0,50 | FLIP | el modelo sugiere el lado contrario |
+
+Para cada nombre da la acción (BUY / SELL SHORT / NO TRADE), la entrada
+(último cierre), el stop a 2,5 × ATR(14), TP1 y TP2 a 1,5R y 3R (R = distancia
+al stop; 50% en cada uno, stop a la entrada tras TP1) y el tamaño: el peso de
+la cartera reconstruida con las direcciones corregidas, recortado para que un
+stop no cueste más del 1% del capital. Los niveles van por volatilidad, no por
+porcentajes fijos: un 5% es ruido en TSLA y mucho en MSFT. `P(TP1)` y `P(TP2)`
+son la fracción de entradas pasadas en esa acción, con los mismos múltiplos de
+ATR, que tocaron el objetivo antes que el stop en 63 sesiones: una tasa base
+histórica, no un pronóstico. Todo configurable en la sección `trade_plan` del
+YAML.
 
 **Dos modos, y la diferencia importa:**
 
@@ -279,6 +300,13 @@ Carlo; robustez.
 - **Sin `statsmodels.api`.** El Control de aplicaciones de Windows de la
   máquina del club bloquea una de sus extensiones compiladas; se usa la ruta
   directa del OLS (`quant_engine/_sm.py`).
+
+**Con WRDS** (si `python main.py wrds` conecta), el motor usa además:
+Fama-French 5 factores + momentum en vez de ETFs, sectores GICS en vez de SIC,
+valor y calidad de Compustat *point-in-time* (solo trimestres ya publicados),
+consenso y revisiones de estimaciones de IBES, e interés corto — que en los
+nombres cortos avisa de riesgo de squeeze. Sin WRDS corre igual, con Yahoo, y
+lo dice en la cabecera del reporte.
 
 El motor describe; no recomienda. Nunca dice "compra NVDA": dice "NVDA tiene el
 mayor score de momentum del universo".

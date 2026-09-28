@@ -23,7 +23,7 @@ import pandas as pd
 
 from .backtest import engine as bt
 from .backtest import metrics as btm
-from .data import cleaning, loader, validation
+from .data import cleaning, loader, validation, wrds_data
 from .factors import beta as beta_mod
 from .factors import factor_model, liquidity, mean_reversion, momentum, performance, volatility
 from .inference import correlation, covariance, tests
@@ -77,6 +77,9 @@ class AnalysisResult:
     montecarlo: dict[str, object]
     robustness: dict[str, object] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    wrds: wrds_data.WrdsData | None = None
+    fundamentals: pd.DataFrame = field(default_factory=pd.DataFrame)
+    trade_plan: dict[str, object] = field(default_factory=dict)
 
 
 def _params(settings: EngineSettings, beta_neutral: bool = False) -> ConstructionParams:
@@ -208,7 +211,7 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
 
 def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
                  progress: Progress = lambda _msg: None, run_robustness: bool = True) -> AnalysisResult:
-    warnings: list[str] = []
+    warnings: list[str] = list(settings.get("_notes", []) or [])
     as_of = pd.Timestamp.today().normalize()
     eval_start = as_of - pd.DateOffset(years=settings.lookback_years)
     data_start = eval_start - pd.DateOffset(years=1, days=10)
@@ -238,7 +241,17 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     signs = pd.Series({**{t: 1.0 for t in longs}, **{t: -1.0 for t in shorts}})
 
     progress("sectores (SEC)")
+    progress("WRDS: Fama-French, GICS, Compustat, IBES, interes corto")
+    wrds = wrds_data.load(tickers, data_start, as_of)
+    if not wrds.available:
+        warnings.append(f"WRDS no disponible, se usa Yahoo + ETFs + SIC: {wrds.reason}")
+    elif wrds.unmatched:
+        warnings.append(f"sin identificador en Compustat: {', '.join(wrds.unmatched)}")
+
     sectors, sector_source = loader.load_sectors(tickers)
+    for t, gics in wrds.sectors.items():
+        if t in sectors:
+            sectors[t], sector_source[t] = gics, "GICS (Compustat)"
 
     progress("metricas por activo")
     parts = _per_asset(settings, clean, tickers, eval_start)
@@ -249,12 +262,36 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     cov_estimates = covariance.estimate_all(r_eval[tickers], float(settings.get("portfolio.ewma_lambda", 0.94)))
 
     progress("modelo de factores")
-    fm = factor_model.factor_exposures(r_eval, tickers, settings.benchmark, proxies, settings.risk_free_rate)
+    if wrds.available and not wrds.factors.empty:
+        fm = factor_model.fama_french_exposures(r_eval, tickers, wrds.factors)
+        last_ff = wrds.factors.index.max()
+        if (as_of - last_ff).days > 45:
+            warnings.append(f"factores Fama-French hasta {last_ff.date()}: los ultimos dias quedan fuera de la regresion")
+    else:
+        fm = factor_model.factor_exposures(r_eval, tickers, settings.benchmark, proxies, settings.risk_free_rate)
     for name, reason in fm.unavailable.items():
         warnings.append(f"factor {name} no disponible: {reason}")
 
     progress("senales")
     features = _features(parts, corr_summary["pearson"], tickers)
+    fundamentals = pd.DataFrame()
+    if wrds.available:
+        last_close = clean.close[tickers].ffill().iloc[-1]
+        fundamentals = wrds_data.fundamental_metrics(wrds.fundamentals, last_close)
+        for col in ("earnings_yield", "fcf_yield", "book_to_price", "sales_to_price", "roe",
+                    "gross_profitability", "fcf_margin", "debt_to_equity", "accruals"):
+            if col in fundamentals:
+                features[col] = pd.to_numeric(fundamentals[col], errors="coerce")
+        for col in ("eps_revision_3m", "rec_change_3m", "meanrec"):
+            if col in wrds.analysts:
+                features[col] = pd.to_numeric(wrds.analysts[col], errors="coerce")
+        if not wrds.short_interest.empty and not wrds.fundamentals.empty:
+            adv_shares = clean.volume[tickers].iloc[-63:].median()
+            si = wrds_data.short_interest_metrics(wrds.short_interest.astype({"shortint": float}),
+                                                  wrds.fundamentals["shares_mm"].astype(float), adv_shares)
+            features["si_pct_float"] = pd.to_numeric(si["si_pct_float"], errors="coerce")
+            fundamentals = fundamentals.join(si[["si_pct_float", "days_to_cover", "si_date"]], how="outer")
+        fundamentals = fundamentals.join(wrds.analysts, how="outer") if not wrds.analysts.empty else fundamentals
     weights = settings.get("signal_weights", {}) or {}
     scores = composite.quant_score(features, weights)
     agree = agreement.agreement_table(scores, signs.astype(int).to_dict(), settings.get("agreement", {}) or {})
@@ -372,6 +409,7 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         rolling_betas=parts["rolling_betas"], momentum=parts["momentum"], mean_reversion=parts["mean_reversion"],
         volatility=parts["volatility"], liquidity=parts["liquidity"], correlation=corr_summary,
         covariances=cov_estimates, factors=fm, scores=scores, feature_matrix=composite.feature_matrix(features),
+        wrds=wrds, fundamentals=fundamentals,
         agreement=agree, rank_stability=stability, long_vs_short=pd.DataFrame(lvs_rows).T, spread=spread,
         portfolios=portfolios, beta_comparison=beta_cmp, sector_neutral=sector_block, primary=primary,
         historical=historical, stress=stress_block, montecarlo=mc_block, warnings=warnings,
@@ -379,6 +417,13 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     for block in portfolios.values():
         if "backtest" in block:
             warnings.extend(f"[{block['method']}] {w}" for w in block["backtest"].warnings[:3])
+
+    progress("plan de operacion")
+    from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415
+
+    result.trade_plan = build_plan(result, params_from_settings(settings))
+    if result.trade_plan.get("note"):
+        warnings.append(result.trade_plan["note"])
 
     if run_robustness:
         from .robustness import run_robustness as rr

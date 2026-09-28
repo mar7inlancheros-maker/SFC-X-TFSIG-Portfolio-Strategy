@@ -81,6 +81,13 @@ def header(console: Console, r: AnalysisResult) -> None:
                   f"Capital: {money(s.initial_capital)} | TC: {pct(s.transaction_cost, 2)} | "
                   f"Borrow: {pct(s.borrow_cost, 2)}/yr | rf: {pct(s.risk_free_rate, 2)}")
     console.print(f"Config fingerprint: {s.fingerprint}")
+    w = r.wrds
+    if w is not None and w.available:
+        console.print("Data: prices Yahoo | WRDS: Fama-French 5+UMD, GICS, Compustat fundamentals (point-in-time "
+                      "by report date), IBES consensus and revisions, short interest")
+    else:
+        why = escape(w.reason) if w is not None else "not requested"
+        console.print(f"Data: prices Yahoo | factors from ETF spreads | sectors from SEC SIC | WRDS unavailable: {why}")
     console.print("-" * 60)
 
 
@@ -182,8 +189,12 @@ def factor_exposure(console: Console, r: AnalysisResult) -> None:
     exp["R2"] = f.r2
     exp["sector"] = pd.Series(r.sectors)
     console.print(table(exp, {c: signed for c in f.exposures.columns} | {"R2": num}, index_name="Ticker"))
-    console.print("Factors built from ETF spreads: size IWM-SPY, value IWD-IWF, momentum MTUM-SPY, "
-                  "low_volatility USMV-SPY, quality QUAL-SPY. Not academic Fama-French factors.")
+    if f.source.startswith("Fama-French"):
+        console.print("Factors: Fama-French 5 (market, size, value, profitability, investment) + momentum, daily, "
+                      "from WRDS. Excess returns use the Fama-French daily risk-free rate.")
+    else:
+        console.print("Factors built from ETF spreads: size IWM-SPY, value IWD-IWF, momentum MTUM-SPY, "
+                      "low_volatility USMV-SPY, quality QUAL-SPY. Not academic Fama-French factors.")
     if f.unavailable:
         for k, why in f.unavailable.items():
             console.print(f"[yellow]Factor {k} UNAVAILABLE: {escape(why)}[/]")
@@ -198,14 +209,30 @@ def signals(console: Console, r: AnalysisResult) -> None:
     w = r.settings.get("signal_weights", {}) or {}
     console.print("Quant Score weights: " + ", ".join(f"{k} {v:.0%}" for k, v in w.items()))
     a = r.agreement.copy()
-    comps = r.scores[["momentum", "risk_adjusted_return", "volatility", "mean_reversion", "liquidity",
-                      "beta", "statistical"]]
-    a = a.join(comps)
-    console.print(table(a[["research", "quant_score", "rank", "agreement", "momentum", "risk_adjusted_return",
-                           "volatility", "mean_reversion", "liquidity", "beta", "statistical"]],
-                        {c: signed for c in ["quant_score", "momentum", "risk_adjusted_return", "volatility",
-                                             "mean_reversion", "liquidity", "beta", "statistical"]}
-                        | {"rank": lambda v: str(v)}, index_name="Ticker"))
+    comp_cols = [c for c in ["momentum", "value", "quality", "analyst", "risk_adjusted_return", "short_interest",
+                             "volatility", "mean_reversion", "beta", "liquidity", "statistical"]
+                 if c in r.scores.columns and r.scores[c].notna().any()]
+    a = a.join(r.scores[comp_cols])
+    console.print(table(a[["research", "quant_score", "rank", "agreement", *comp_cols]],
+                        {c: signed for c in ["quant_score", *comp_cols]} | {"rank": lambda v: str(v)},
+                        index_name="Ticker"))
+    fund = r.fundamentals
+    if fund is not None and not fund.empty:
+        cols = [c for c in ["earnings_yield", "fcf_yield", "book_to_price", "roe", "gross_profitability",
+                            "debt_to_equity", "accruals", "eps_revision_3m", "rec_change_3m", "meanrec",
+                            "si_pct_float", "days_to_cover"] if c in fund.columns]
+        show = fund[cols].apply(pd.to_numeric, errors="coerce")
+        pcts = {c: pct for c in ["earnings_yield", "fcf_yield", "roe", "gross_profitability", "accruals",
+                                 "eps_revision_3m", "si_pct_float"]}
+        console.print(table(show, pcts | {"book_to_price": num, "debt_to_equity": num, "rec_change_3m": signed,
+                                          "meanrec": num, "days_to_cover": lambda v: num(v, 1)},
+                            title="Fundamentals, analysts and short interest (WRDS)", index_name="Ticker"))
+        if "report_date" in fund:
+            dates = pd.to_datetime(fund["report_date"]).dropna()
+            if len(dates):
+                console.print(f"Fundamentals: trailing 4 quarters published by {dates.max().date()} "
+                              "(point-in-time by report date). meanrec: 1 = strong buy ... 5 = sell; "
+                              "rec_change < 0 = upgrades. EPS revision: same fiscal year, 3 months, capped at +-100%.")
     th = r.settings.get("agreement", {}) or {}
     counts = a["agreement"].value_counts().to_dict()
     console.print("Agreement counts: " + ", ".join(f"{k}: {v}" for k, v in counts.items()))
@@ -345,6 +372,16 @@ def stress_test(console: Console, r: AnalysisResult) -> None:
                   f"{money(liq.loc[slowest, 'position_usd'])} vs ADV {money(liq.loc[slowest, 'adv_usd'])}) at "
                   f"{pct(r.settings.get('stress.liquidity_participation', 0.1), 0)} participation. Forced-exit cost "
                   f"(TC x {r.settings.get('stress.liquidity_spread_multiplier', 3)}): {pct(r.stress['exit_cost'], 2)} of capital.")
+    fund = r.fundamentals
+    if fund is not None and "si_pct_float" in fund.columns:
+        shorts = [t for t in r.shorts if t in fund.index]
+        si = fund.loc[shorts, ["si_pct_float", "days_to_cover"]].apply(pd.to_numeric, errors="coerce")
+        crowded = si[(si["si_pct_float"] > 0.10) | (si["days_to_cover"] > 5)]
+        console.print("Short interest on SHORT names: " + ", ".join(
+            f"{t} {pct(row['si_pct_float'])} ({num(row['days_to_cover'], 1)}d to cover)" for t, row in si.iterrows()))
+        if len(crowded):
+            console.print(f"[bold]Crowded shorts (>10% of shares or >5 days to cover): {', '.join(crowded.index)}.[/] "
+                          "Squeeze risk and expensive borrow; the flat borrow cost in the backtest understates it.")
     mc = r.montecarlo
     console.print(f"[bold yellow]SIMULATED[/] - 1 year, {int(mc['bootstrap_neutral']['paths'])} paths, "
                   f"seed {r.settings.get('montecarlo.seed')}")
@@ -371,6 +408,54 @@ def robustness(console: Console, r: AnalysisResult) -> None:
     console.print(f"Sharpe range across variants: {num(rob['sharpe_min'])} to {num(rob['sharpe_max'])} "
                   f"(dispersion {num(rob['sharpe_dispersion'])}). Read the dispersion, not the best row: "
                   "picking the best variant is overfitting.")
+
+
+def trade_plan(console: Console, r: AnalysisResult) -> None:
+    section(console, 14, "TRADE PLAN")
+    tp = r.trade_plan
+    if not tp:
+        return
+    plan = tp["plan"]
+    p = tp["params"]
+    corr = tp["corrections"]
+    if len(corr):
+        console.print("[bold]CORRECTIONS TO THE RESEARCH SIGNAL[/]")
+        for t, row in corr.iterrows():
+            if row["verdict"] == "FLIP":
+                msg = (f"research says {row['research']}, data points the other way (aligned score "
+                       f"{signed(row['aligned_score'])}): model suggests {row['action']}")
+            elif row["verdict"] == "NO TRADE":
+                msg = (f"research says {row['research']}, data contradicts it (aligned score "
+                       f"{signed(row['aligned_score'])}): do not trade until the thesis is reviewed")
+            else:
+                msg = (f"research says {row['research']}, data is neutral (aligned score "
+                       f"{signed(row['aligned_score'])}): trade at {p.reduce_size:.0%} size")
+            console.print(f"  {t:6} {row['verdict']:9} {msg}")
+    else:
+        console.print("No corrections: the data supports every research signal.")
+    console.print()
+    order = plan.assign(_o=plan["action"].map({"BUY": 0, "SELL SHORT": 1, "NO TRADE": 2})).sort_values("_o")
+    price = lambda v: f"{v:,.2f}"  # noqa: E731
+    console.print(table(order[["action", "verdict", "entry", "stop", "tp1", "tp2", "stop_pct"]],
+                        {"entry": price, "stop": price, "tp1": price, "tp2": price, "stop_pct": pct},
+                        title="Levels", index_name="Ticker"))
+    size = order[["shares", "notional", "weight", "risk_capital_pct", "p_tp1_before_stop", "p_tp2_before_stop"]]
+    size = size.rename(columns={"risk_capital_pct": "risk_cap", "p_tp1_before_stop": "P(TP1)",
+                                "p_tp2_before_stop": "P(TP2)"})
+    console.print(table(size, {"shares": lambda v: f"{int(v):,}", "notional": money,
+                               "weight": lambda v: signed(v * 100, 1) + "%", "risk_cap": lambda v: pct(v, 2),
+                               "P(TP1)": lambda v: pct(v, 0), "P(TP2)": lambda v: pct(v, 0)},
+                        title="Size and historical base rate", index_name="Ticker"))
+    capped = list(plan.index[plan["size_capped_by_risk"]])
+    console.print(f"Entry: last close. Stop: {p.stop_atr} x ATR(14). TP1 = {p.tp_r[0]}R, TP2 = {p.tp_r[1]}R "
+                  f"(R = entry-to-stop distance); exit 50% at each, move stop to entry after TP1. "
+                  f"Size: portfolio weight with the corrected directions ({r.primary['method']}), capped so a "
+                  f"stop costs at most {p.max_risk_per_trade:.0%} of capital (risk_cap)"
+                  + (f" (capped: {', '.join(capped)})" if capped else "") + ".")
+    console.print(f"Book after corrections: gross {num(tp['gross'])}, net {signed(tp['net'])}. "
+                  f"P(TP): share of past entries in this stock ({p.horizon_d}-session horizon, "
+                  "same ATR multiples) that hit the target before the stop. A historical base rate, not a "
+                  "forecast. Review at the next rebalance or before earnings.")
 
 
 def summary(console: Console, r: AnalysisResult) -> None:
@@ -415,5 +500,5 @@ def summary(console: Console, r: AnalysisResult) -> None:
 def render(r: AnalysisResult, console: Console) -> None:
     header(console, r)
     for fn in (data_quality, performance, risk, momentum, beta_alpha, correlation, factor_exposure, signals,
-               long_vs_short, portfolio_construction, risk_analysis, stress_test, robustness, summary):
+               long_vs_short, portfolio_construction, risk_analysis, stress_test, robustness, trade_plan, summary):
         fn(console, r)

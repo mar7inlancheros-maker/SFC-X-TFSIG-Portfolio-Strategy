@@ -40,13 +40,21 @@ portfolio:
 # seccion cruzada con signo tal que MAS ALTO = MAS FAVORABLE PARA UN LARGO.
 # La definicion exacta de cada uno esta en src/quant_engine/signals/composite.py.
 signal_weights:
-  momentum: 0.25             # 12-1, 6M, 3M y distancia a medias moviles
-  risk_adjusted_return: 0.20 # Sharpe de 1 ano
-  volatility: 0.15           # volatilidad anual, invertida (menos = mejor)
-  mean_reversion: 0.10       # z-score de 20 dias, invertido (estirado = peor)
-  liquidity: 0.10            # log del volumen medio en dolares
-  beta: 0.10                 # beta, invertida (anomalia de baja beta, BAB)
-  statistical: 0.10          # calidad de tendencia: signo(pendiente) x R2
+  # Mas peso a lo que mas respaldo tiene en la literatura: momentum,
+  # fundamentales y revisiones de analistas. value, quality, analyst y
+  # short_interest salen de WRDS; sin WRDS quedan vacios y el resto se
+  # renormaliza manteniendo sus proporciones.
+  momentum: 0.20             # 12-1, 6M, 3M y distancia a medias moviles
+  value: 0.15                # rendimientos: beneficio, flujo libre, libros, ventas
+  quality: 0.15              # ROE, rentabilidad bruta, margen; deuda y devengo en contra
+  analyst: 0.15              # revision de EPS a 3 meses y recomendaciones (IBES)
+  risk_adjusted_return: 0.10 # Sharpe de 1 ano
+  short_interest: 0.05       # % en corto, invertido (mucho corto = peor)
+  volatility: 0.05           # volatilidad anual, invertida (menos = mejor)
+  mean_reversion: 0.05       # z-score de 20 dias, invertido (estirado = peor)
+  beta: 0.05                 # beta, invertida (anomalia de baja beta, BAB)
+  liquidity: 0.025           # log del volumen medio en dolares
+  statistical: 0.025         # calidad de tendencia: signo(pendiente) x R2
 
 # Umbrales de acuerdo entre research y cuantitativo, en unidades de z-score del
 # Quant Score ALINEADO: score si el research dice LONG, -score si dice SHORT.
@@ -99,3 +107,12 @@ robustness:
 output:
   directory: output/quant_engine
   charts: true
+
+# Plan de operacion. Ver src/quant_engine/trade_plan.py.
+trade_plan:
+  stop_atr: 2.5              # stop a 2,5 x ATR(14) de la entrada
+  take_profit_r: [1.5, 3.0]  # TP1 y TP2 en multiplos del riesgo R (50% en cada uno)
+  max_risk_per_trade: 0.01   # perdida maxima por operacion si salta el stop: 1% del capital
+  reduce_size: 0.5           # veredicto REDUCE (senal neutral): mitad de tamano
+  flip_threshold: -0.5       # score alineado por debajo: el modelo sugiere el lado contrario
+  horizon_d: 63              # horizonte de la tasa base historica (TP antes que stop)

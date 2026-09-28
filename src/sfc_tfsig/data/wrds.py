@@ -16,8 +16,8 @@ Uso:
 Configuracion, una sola vez por maquina:
 
     1. `.env` en la raiz del repo:  WRDS_USERNAME=tu_usuario
-    2. pip install wrds
-    3. python -c "import wrds; db = wrds.Connection(); db.create_pgpass_file()"
+    2. instalar wrds (ver `pyproject.toml`, grupo `wrds`)
+    3. python main.py wrds --setup
 
 El paso 3 guarda la contrasena en el fichero pgpass de PostgreSQL. Sin el,
 WRDS la pide por teclado en cada conexion, y un proceso sin terminal (un
@@ -43,8 +43,8 @@ from .sec import _read_env_file
 SETUP_HELP = (
     "Configuracion de WRDS, una vez por maquina:\n"
     "  1. en .env (raiz del repo):  WRDS_USERNAME=tu_usuario\n"
-    "  2. pip install wrds\n"
-    '  3. python -c "import wrds; db = wrds.Connection(); db.create_pgpass_file()"\n'
+    "  2. instalar wrds (ver pyproject.toml, grupo wrds)\n"
+    "  3. python main.py wrds --setup   (pide la contrasena y la guarda; create_pgpass_file)\n"
     "El paso 3 guarda la contrasena para que las corridas sin terminal no se cuelguen."
 )
 
@@ -67,8 +67,14 @@ def _read_env_value(name: str) -> str | None:
     """
     value = os.getenv(name)
     if value:
-        return value.strip().strip('"').strip("'")
-    return _read_env_file(_env_file()).get(name) or None
+        value = value.strip().strip('"').strip("'")
+    else:
+        value = _read_env_file(_env_file()).get(name) or None
+    # PostgreSQL distingue mayusculas en el usuario y WRDS los crea en
+    # minusculas: "Armaankumar006" fallaba con "PAM authentication failed".
+    if value and name == "WRDS_USERNAME":
+        value = value.lower()
+    return value
 
 
 def _pgpass_path() -> Path:
@@ -123,6 +129,38 @@ def connection() -> Iterator[Any]:
         yield conn
     finally:
         conn.close()
+
+
+def setup_pgpass(password: str | None = None) -> Path:
+    """Conecta una vez con la contrasena escrita por teclado y la guarda en pgpass.
+
+    Por que no basta `wrds.Connection(); db.create_pgpass_file()` a secas: sin
+    usuario explicito, wrds lo PREGUNTA ofreciendo como valor por defecto el
+    usuario de Windows ("usuario"). Quien pulsa Enter se autentica con un
+    usuario que no existe en WRDS, la conexion falla y el pgpass nunca se crea.
+    Aqui el usuario sale de `.env` y la contrasena se pide una sola vez.
+
+    WRDS puede pedir ademas la aprobacion de Duo en el movil la primera vez.
+    """
+    import getpass  # noqa: PLC0415
+
+    username = _read_env_value("WRDS_USERNAME")
+    if not username:
+        raise RuntimeError(f"WRDS_USERNAME no esta definido.\n{SETUP_HELP}")
+    if password is None:
+        # WRDS_PASSWORD en .env evita escribirla en la terminal. Tras crear el
+        # pgpass conviene borrarla de .env: pgpass vive fuera del repo.
+        password = _read_env_value("WRDS_PASSWORD")
+    if not password:
+        password = getpass.getpass(f"Contrasena de WRDS para {username} (no se ve al escribir): ")
+
+    wrds = _import_wrds()
+    db = wrds.Connection(wrds_username=username, wrds_password=password)
+    try:
+        db.create_pgpass_file()
+    finally:
+        db.close()
+    return _pgpass_path()
 
 
 def _cache_key(cache_name: str, sql: str) -> str:
@@ -194,4 +232,5 @@ def list_libraries(conn: Any | None = None) -> list[str]:
         return sorted(own.list_libraries())
 
 
-__all__ = ["connection", "get_connection", "fetch_table", "query", "list_libraries", "SETUP_HELP"]
+__all__ = ["connection", "get_connection", "fetch_table", "query", "list_libraries",
+           "setup_pgpass", "SETUP_HELP"]

@@ -201,3 +201,25 @@ def test_limit_se_fuerza_a_entero(monkeypatch):
     monkeypatch.setattr(wrds_mod, "get_connection", lambda: conn)
     wrds_mod.fetch_table("crsp.msf", limit="5")
     assert conn.calls[0].endswith("LIMIT 5")
+
+
+# ---------------------------------------------------------------------------
+#  Configuracion inicial
+# ---------------------------------------------------------------------------
+
+
+def test_setup_usa_el_usuario_del_env_no_el_de_windows(monkeypatch, tmp_path):
+    """wrds.Connection() a secas ofrece el usuario de Windows por defecto; aqui no."""
+    monkeypatch.setenv("WRDS_USERNAME", "demo_user")
+    monkeypatch.setattr(wrds_mod, "_pgpass_path", lambda: tmp_path / "pgpass.conf")
+    created = {}
+
+    class FakeDB(FakeConnection):
+        def create_pgpass_file(self):
+            created["done"] = True
+
+    db = FakeDB()
+    captured = _patch_wrds(monkeypatch, db)
+    wrds_mod.setup_pgpass(password="secreto")
+    assert captured == {"wrds_username": "demo_user", "wrds_password": "secreto"}
+    assert created["done"] and db.closed

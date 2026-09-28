@@ -37,9 +37,10 @@ def test_el_benchmark_no_puede_estar_en_la_cartera():
         build_settings("SPY,AAPL", "TSLA")
 
 
-def test_topes_que_impiden_invertir_la_pata_se_rechazan():
-    with pytest.raises(SettingsError, match="no alcanza"):
-        build_settings("AAPL", "TSLA")  # 1 nombre x 35% < 100% de pata
+def test_con_pocos_nombres_el_tope_sube_al_minimo_y_se_anota():
+    s = build_settings("AAPL,MSFT", "TSLA,INTC")  # 2 x 35% < 100% de pata
+    assert s.get("portfolio.max_position") == pytest.approx(0.5)
+    assert "subido" in s.get("_notes")[0]
 
 
 def test_coste_en_unidades_equivocadas_se_rechaza():
@@ -182,3 +183,29 @@ def test_un_corto_con_score_alto_es_conflicto_y_no_se_sobrescribe():
     assert t.loc["SHT", "agreement"] == "STRONG AGREEMENT"
     # La senal de research se conserva tal cual.
     assert (t["research"] == "SHORT").all()
+
+
+# ---------------------------------------------------------------------------
+#  Entrada: tickers y cuales van LONG
+# ---------------------------------------------------------------------------
+
+
+def test_los_marcados_van_long_y_el_resto_short():
+    from quant_engine.app import split_long_short
+
+    longs, shorts = split_long_short(("AAPL", "MSFT", "TSLA", "INTC"), "msft, aapl")
+    assert longs == ("MSFT", "AAPL")
+    assert shorts == ("TSLA", "INTC")
+
+
+def test_sin_marcar_la_primera_mitad_va_long():
+    from quant_engine.app import split_long_short
+
+    assert split_long_short(("A", "B", "C"), "") == (("A", "B"), ("C",))
+
+
+def test_long_fuera_de_la_lista_se_rechaza():
+    from quant_engine.app import split_long_short
+
+    with pytest.raises(SettingsError, match="no estan en la lista"):
+        split_long_short(("A", "B"), "Z")
