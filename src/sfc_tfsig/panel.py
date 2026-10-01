@@ -43,7 +43,9 @@ from .data import prices as prices_mod, sec
 #         capitalizacion; volumen en dolares con el cierre ajustado solo por
 #         splits. Auditoria #1.
 #   v4 -- 2026-10-01: fundamentales en CAD convertidos a USD. Auditoria #2.
-PANEL_VERSION = "v4"
+#   v5 -- 2026-10-01: sectores pequenos puntuados contra la seccion cruzada
+#         global. Auditoria #6.
+PANEL_VERSION = "v5"
 
 # Tipo de cambio para los emisores que reportan en CAD: USD por CAD, de Yahoo.
 # Desde 2007 para cubrir los periodos contables mas viejos que puede ver la

@@ -134,3 +134,27 @@ def test_build_scores_produce_las_columnas_esperadas(cfg):
     assert out.loc[mejor_x, "score_composite"] == pytest.approx(
         out.loc[mejor_y, "score_composite"]
     )
+
+
+def test_un_sector_pequeno_se_puntua_contra_toda_la_seccion_cruzada():
+    # Auditoria #6. El TOML dice que un sector con menos de `min_sector_names`
+    # "cae a z-score global". El codigo estandarizaba a esos nombres SOLO entre
+    # ellos: dos nombres salian siempre a -1 y +1, aunque los dos fueran los
+    # mejores del universo. Paso en 18 de 177 fechas (RealEstate con 3-4).
+    panel = pd.DataFrame({
+        "date": pd.to_datetime(["2023-01-31"] * 8),
+        "ticker": list("ABCDEFGH"),
+        "sector": ["Grande"] * 6 + ["Chico"] * 2,
+        "roic": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 10.0, 11.0],
+    })
+    scores = factor_score(
+        panel, {"roic": +1}, winsorize_pct=0.0, min_coverage=0.5,
+        sector_neutral=True, min_sector_names=5,
+    )
+    valores = panel["roic"]
+    global_z = (valores - valores.mean()) / valores.std(ddof=0)
+    assert scores.iloc[6] == pytest.approx(global_z.iloc[6])
+    assert scores.iloc[7] == pytest.approx(global_z.iloc[7])
+    assert scores.iloc[6] > 1.0 and scores.iloc[7] > 1.0
+    # El sector grande sigue estandarizado dentro de si mismo.
+    assert scores.iloc[:6].mean() == pytest.approx(0.0)
