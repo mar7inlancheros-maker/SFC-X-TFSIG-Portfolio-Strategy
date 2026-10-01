@@ -17,6 +17,7 @@ al hacerlo.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
@@ -24,7 +25,7 @@ from typing import Mapping
 import pandas as pd
 
 from .backtest import BacktestResult
-from .config import Config
+from .config import Config, provenance_line
 from .metrics import Performance, yearly_returns
 from .paths import REPORT_DIR
 
@@ -391,6 +392,7 @@ def build_report(
     yearly_excess: pd.DataFrame | None = None,
     decay_lag: pd.DataFrame | None = None,
     decay_horizon: pd.DataFrame | None = None,
+    provenance: Mapping[str, str] | None = None,
 ) -> str:
     """Reporte completo en Markdown."""
     title = cfg.get("meta.name")
@@ -402,6 +404,7 @@ def build_report(
         f"- Generado: {generated}",
         f"- Configuracion: `{cfg.source.name if cfg.source else 'en memoria'}` "
         f"(fingerprint `{cfg.fingerprint}`)",
+        provenance_line(provenance),
         f"- Universo: {cfg.get('universe.exchanges')} | "
         f"rebalanceo {cfg.get('calendar.rebalance')} | "
         f"{cfg.get('portfolio.n_positions')} posiciones | "
@@ -411,7 +414,8 @@ def build_report(
         "",
         "> Dos resultados con el mismo fingerprint son comparables. Con",
         "> fingerprint distinto, no lo son: ha cambiado alguna decision de",
-        "> inversion entre una corrida y otra.",
+        "> inversion entre una corrida y otra. El fingerprint no cubre el",
+        "> codigo: compara tambien el commit y las versiones de cache.",
         "",
     ]
 
@@ -482,7 +486,8 @@ def save_report(text: str, name: str = "backtest", stamp: str | None = None) -> 
 
 
 def save_artifacts(result: BacktestResult, name: str = "backtest",
-                   stamp: str | None = None) -> dict[str, Path]:
+                   stamp: str | None = None,
+                   provenance: Mapping[str, str] | None = None) -> dict[str, Path]:
     """Guarda NAV, operaciones, posiciones y rebalanceos para poder auditarlos.
 
     Un reporte sin los datos que lo sustentan obliga a creerselo. Con estos
@@ -504,6 +509,12 @@ def save_artifacts(result: BacktestResult, name: str = "backtest",
         frame.to_csv(path, index=False)
         paths[label] = path
 
+    # Los CSV no llevan cabecera: sin esto, un fichero suelto no dice de que
+    # configuracion ni de que codigo sale.
+    meta_path = REPORT_DIR / f"{name}_{stamp}_meta.json"
+    meta = {"config_fingerprint": result.config_fingerprint, **dict(provenance or {})}
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    paths["meta"] = meta_path
     return paths
 
 

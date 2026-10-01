@@ -24,13 +24,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
-from .paths import DEFAULT_CONFIG, RISK_CONFIG
+from .paths import DEFAULT_CONFIG, RISK_CONFIG, ROOT
 
 _MISSING = object()
 
@@ -490,3 +491,45 @@ def risk_config_from_dict(data: Mapping[str, Any]) -> Config:
     payload = copy.deepcopy(dict(data))
     validate_risk(payload)
     return Config(data=payload, source=None, fingerprint=_fingerprint(payload), kind="risk")
+
+
+# ---------------------------------------------------------------------------
+#  Procedencia del codigo
+#
+#  El fingerprint firma la configuracion, no el codigo que la aplica. Dos
+#  corridas con el mismo fingerprint y distinto codigo (o distinta version de
+#  las caches del panel y de las observaciones) no son comparables. Cada
+#  reporte estampa las dos cosas.
+# ---------------------------------------------------------------------------
+
+
+def code_revision(root: str | Path | None = None) -> str:
+    """Hash corto del commit de git, con "-dirty" si hay cambios sin commitear.
+
+    Solo cuentan los ficheros versionados: una salida nueva en `output/` no
+    cambia el codigo. Fuera de un repositorio devuelve "sin-git".
+    """
+    where = str(root if root is not None else ROOT)
+    try:
+        head = subprocess.run(
+            ["git", "-C", where, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=10,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "-C", where, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, check=True, timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "sin-git"
+    return f"{head}-dirty" if status else head
+
+
+def provenance_line(provenance: Mapping[str, str] | None) -> str:
+    """Linea de reporte con el commit y las versiones de cache."""
+    if not provenance:
+        return "- Codigo: procedencia no registrada"
+    return (
+        f"- Codigo: commit `{provenance.get('commit', '?')}` | "
+        f"PANEL_VERSION `{provenance.get('panel_version', '?')}` | "
+        f"OBSERVATIONS_VERSION `{provenance.get('observations_version', '?')}`"
+    )

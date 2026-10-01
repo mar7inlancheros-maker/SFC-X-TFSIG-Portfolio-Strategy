@@ -21,9 +21,9 @@ import pandas as pd
 from . import attribution as attribution_mod, panel as panel_mod, report as report_mod, validation as validation_mod
 from . import risk_report as risk_report_mod
 from .backtest import benchmark_nav, run_backtest
-from .config import Config, ConfigError, load_config, load_risk_config
+from .config import Config, ConfigError, code_revision, load_config, load_risk_config
 from .console import enable_utf8_stdout
-from .data import cache, prices as prices_mod
+from .data import cache, prices as prices_mod, sec as sec_mod
 from .factors.composite import build_scores
 from .metrics import evaluate
 from .orders import build_orders, load_positions, render_orders, save_orders
@@ -33,6 +33,15 @@ from .risk import analysis as risk_mod
 from .universe import build_universe, summarize
 
 PANEL_CACHE = "panel_scored"
+
+
+def provenance() -> dict[str, str]:
+    """Commit y versiones de las caches: lo que el fingerprint no cubre."""
+    return {
+        "commit": code_revision(),
+        "panel_version": panel_mod.PANEL_VERSION,
+        "observations_version": sec_mod.OBSERVATIONS_VERSION,
+    }
 
 
 def _load(config_path: str | None) -> Config:
@@ -183,6 +192,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     scored = _require_panel(cfg, rebuild=args.rebuild)
     close = _close_prices(scored, cfg)
 
+    prov = provenance()
     print("\ncorriendo backtest...")
     result = run_backtest(scored, close, cfg)
 
@@ -211,11 +221,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     text = report_mod.build_report(
         result, perf, cfg, benchmark_nav=bench, validation=validation,
         contributions=contributions, yearly_excess=yearly_excess,
-        decay_lag=decay_lag, decay_horizon=decay_horizon,
+        decay_lag=decay_lag, decay_horizon=decay_horizon, provenance=prov,
     )
     stamp = report_mod.run_stamp("backtest")
     path = report_mod.save_report(text, stamp=stamp)
-    artifacts = report_mod.save_artifacts(result, stamp=stamp)
+    artifacts = report_mod.save_artifacts(result, stamp=stamp, provenance=prov)
     chart = report_mod.save_charts(result, bench, stamp=stamp) if cfg.get("reporting.charts") else None
 
     print(text)
@@ -253,7 +263,7 @@ def cmd_ordenes(args: argparse.Namespace) -> int:
     # traen precio en `target`, y sin el la orden de venta no se puede generar.
     current_prices = _latest_close(list(current.index)) if not current.empty else None
     orders = build_orders(target, current, nav, cfg, current_prices=current_prices)
-    text = render_orders(orders, target, nav, cfg, last_date)
+    text = render_orders(orders, target, nav, cfg, last_date, provenance=provenance())
 
     if not args.sin_riesgo and not target.empty:
         # Antes de operar, no despues: si la cartera propuesta excede un limite,
@@ -310,7 +320,7 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
         strategy_fingerprint=cfg.fingerprint,
     )
 
-    text = risk_report_mod.build_risk_report(analysis, cfg, risk_cfg)
+    text = risk_report_mod.build_risk_report(analysis, cfg, risk_cfg, provenance=provenance())
     stamp = report_mod.run_stamp("riesgo")
     path = risk_report_mod.save_risk_report(text, stamp=stamp)
     artifacts = risk_report_mod.save_risk_artifacts(analysis, stamp=stamp)

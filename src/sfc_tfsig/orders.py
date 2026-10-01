@@ -18,10 +18,11 @@ del proceso de gobierno, no un obstaculo tecnico que haya que automatizar.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 import pandas as pd
 
-from .config import Config
+from .config import Config, provenance_line
 from .paths import DATA_DIR, REPORT_DIR
 from .report import run_stamp
 
@@ -127,12 +128,14 @@ def build_orders(
 
 
 def render_orders(orders: pd.DataFrame, target: pd.DataFrame, nav: float,
-                  cfg: Config, as_of: pd.Timestamp) -> str:
+                  cfg: Config, as_of: pd.Timestamp,
+                  provenance: Mapping[str, str] | None = None) -> str:
     """Hoja de ordenes legible, para llevar al comite."""
     lines = [
         f"# Rebalanceo propuesto -- {pd.Timestamp(as_of).date()}",
         "",
         f"- Configuracion: fingerprint `{cfg.fingerprint}`",
+        provenance_line(provenance),
         f"- Valor de la cuenta: {nav:,.2f} {cfg.get('meta.base_currency')}",
         f"- Posiciones objetivo: {len(target)}",
         f"- Ordenes: {len(orders)}",

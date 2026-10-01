@@ -17,11 +17,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 
-from .config import Config
+from .config import Config, provenance_line
 from .metrics import TRADING_DAYS
 from .paths import REPORT_DIR
 from .report import run_stamp
@@ -462,7 +463,8 @@ def liquidity_section(analysis: RiskAnalysis, top: int = 5) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config) -> str:
+def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config,
+                      provenance: Mapping[str, str] | None = None) -> str:
     """Reporte de riesgo completo en Markdown."""
     header = [
         f"# Reporte de riesgo -- {cfg.get('meta.name')}",
@@ -474,6 +476,7 @@ def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config) -> 
         f"(fingerprint `{cfg.fingerprint}`)",
         f"- Politica de riesgo: `{risk_cfg.source.name if risk_cfg.source else 'en memoria'}` "
         f"(fingerprint `{risk_cfg.fingerprint}`)",
+        provenance_line(provenance),
         f"- Estado general: **{analysis.status}**",
         "",
         "> Dos reportes de riesgo son comparables si coinciden los DOS",
