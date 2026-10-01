@@ -61,8 +61,9 @@ min_market_cap       = 750_000_000  # USD. Micro caps: datos peores, costes peor
 min_history_months   = 24           # necesario para momentum 12-1 y vol de 12m
 max_names            = 1200         # techo del panel, por coste de descarga
 
-# Antiguedad maxima de la ultima presentacion. Por encima de esto la empresa se
-# cae del panel: 550 dias son mas de cuatro trimestres de retraso, y una empresa
+# Antiguedad maxima del ultimo cierre contable visible (`period_end` del dato
+# mas reciente ya presentado, no la fecha de presentacion). Por encima de esto
+# la empresa se cae del panel: 550 dias son mas de cuatro trimestres de retraso, y una empresa
 # que no reporta en ese plazo o esta en problemas o ya no informa. Comprarla con
 # los numeros de hace dos anos es comprar a ciegas.
 max_fundamental_staleness_d = 550
