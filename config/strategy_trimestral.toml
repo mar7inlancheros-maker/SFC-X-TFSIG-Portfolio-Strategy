@@ -173,9 +173,11 @@ risk_free_rate  = 0.04        # anual, para Sharpe. Aproximacion de T-bill.
 # ---------------------------------------------------------------------------
 #  VALIDACION
 #
-#  Walk-forward: el modelo solo se juzga fuera de muestra. `train_years` se usa
-#  para calibrar; `test_years` es el tramo que cuenta. La ventana avanza y nunca
-#  mira hacia atras.
+#  Walk-forward: el IC se mide en ventanas de `train_years` y en el tramo
+#  siguiente de `test_years`. OJO: no se calibra nada en el tramo de
+#  entrenamiento. Pesos y parametros son fijos y se eligieron con la muestra
+#  entera, asi que esto mide estabilidad de la senal, no un fuera de muestra de
+#  las decisiones de diseno (auditoria #18).
 # ---------------------------------------------------------------------------
 [validation]
 train_years    = 4
