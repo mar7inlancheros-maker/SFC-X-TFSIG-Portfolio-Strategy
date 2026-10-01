@@ -24,6 +24,15 @@ se cae al anual. Si tampoco, el dato falta: falta, no se inventa.
 son domesticos a efectos de la ley) presentan bajo la taxonomia IFRS. Por eso
 cada concepto tiene candidatos en `us-gaap` Y en `ifrs-full`. Los exclusivos de
 TSX no estan en EDGAR en absoluto: ver README, "Limitaciones declaradas".
+
+**Moneda.** Casi todos los canadienses grandes (Royal Bank, Enbridge, CN,
+Suncor, BCE) reportan en CAD. Antes solo se leia USD y esos emisores se
+quedaban sin valor ni calidad, asi que `require_fundamental_score` los sacaba
+del modelo en silencio. Ahora se leen USD y CAD y lo canadiense se convierte a
+USD: los flujos al tipo MEDIO de su periodo, los saldos al tipo de CIERRE. Solo
+con tipos de cambio de fechas iguales o anteriores al cierre del periodo (y por
+tanto a la presentacion). Si un periodo trae cifra en USD y en CAD, manda USD.
+Otras monedas siguen fuera.
 """
 
 from __future__ import annotations
@@ -143,14 +152,20 @@ def _get_json(session: requests.Session, url: str) -> Any:
 #  la transicion contable de ASC 606 en 2018.
 # ---------------------------------------------------------------------------
 
-_USD = ("USD",)
+# Unidades monetarias que se leen. El orden no decide nada: si un periodo trae
+# las dos, `select_by_priority` prefiere USD.
+_MONEY = ("USD", "CAD")
 _SHARES = ("shares",)
+
+# Dias que puede tener de antiguedad el ultimo tipo de cambio antes del cierre
+# de un saldo: fines de semana y festivos, no mas.
+_FX_STALE_DAYS = 7
 
 CONCEPTS: dict[str, dict[str, Any]] = {
     # -- flujos (cuenta de resultados y flujo de caja) --------------------
     "revenue": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
             ("us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax"),
@@ -163,7 +178,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "cogs": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "CostOfGoodsAndServicesSold"),
             ("us-gaap", "CostOfRevenue"),
@@ -173,12 +188,12 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "gross_profit": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [("us-gaap", "GrossProfit"), ("ifrs-full", "GrossProfit")],
     },
     "operating_income": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "OperatingIncomeLoss"),
             ("ifrs-full", "ProfitLossFromOperatingActivities"),
@@ -186,7 +201,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "net_income": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "NetIncomeLoss"),
             ("us-gaap", "ProfitLoss"),
@@ -197,7 +212,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "interest_expense": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "InterestExpense"),
             ("us-gaap", "InterestExpenseDebt"),
@@ -207,7 +222,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "tax_expense": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "IncomeTaxExpenseBenefit"),
             ("ifrs-full", "IncomeTaxExpenseContinuingOperations"),
@@ -215,7 +230,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "pretax_income": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"),
             ("us-gaap", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"),
@@ -224,7 +239,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "ocf": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "NetCashProvidedByUsedInOperatingActivities"),
             ("us-gaap", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
@@ -233,7 +248,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "capex": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment"),
             ("us-gaap", "PaymentsToAcquireProductiveAssets"),
@@ -242,7 +257,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "dividends_paid": {
         "kind": "flow",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "PaymentsOfDividendsCommonStock"),
             ("us-gaap", "PaymentsOfDividends"),
@@ -252,27 +267,27 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     # -- saldos (balance) -------------------------------------------------
     "assets": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [("us-gaap", "Assets"), ("ifrs-full", "Assets")],
     },
     "current_assets": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [("us-gaap", "AssetsCurrent"), ("ifrs-full", "CurrentAssets")],
     },
     "liabilities": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [("us-gaap", "Liabilities"), ("ifrs-full", "Liabilities")],
     },
     "current_liabilities": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [("us-gaap", "LiabilitiesCurrent"), ("ifrs-full", "CurrentLiabilities")],
     },
     "equity": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "StockholdersEquity"),
             ("us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"),
@@ -282,7 +297,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "cash": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "CashAndCashEquivalentsAtCarryingValue"),
             ("us-gaap", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"),
@@ -291,7 +306,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "debt_long": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "LongTermDebtNoncurrent"),
             ("us-gaap", "LongTermDebt"),
@@ -301,7 +316,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "debt_short": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [
             ("us-gaap", "DebtCurrent"),
             ("us-gaap", "ShortTermBorrowings"),
@@ -312,7 +327,7 @@ CONCEPTS: dict[str, dict[str, Any]] = {
     },
     "inventory": {
         "kind": "point",
-        "units": _USD,
+        "units": _MONEY,
         "tags": [("us-gaap", "InventoryNet"), ("ifrs-full", "Inventories")],
     },
     "shares": {
@@ -344,7 +359,7 @@ _ACCEPTED_FORMS = {"10-K", "10-Q", "20-F", "40-F", "10-K/A", "10-Q/A", "20-F/A",
 def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
     """JSON de companyfacts -> filas tidy de TODAS las etiquetas candidatas.
 
-    Columnas: concept, tag, priority, start, end, filed, value, form, kind.
+    Columnas: concept, tag, priority, start, end, filed, value, unit, form, kind.
 
     No elige entre etiquetas: eso lo hace `select_by_priority`, periodo a
     periodo. Guardar todas las candidatas es lo que permite cambiar el orden de
@@ -381,6 +396,7 @@ def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
                             "end": end,
                             "filed": filed,
                             "value": float(value),
+                            "unit": unit_name,
                             "form": form,
                             "kind": spec["kind"],
                         }
@@ -415,10 +431,17 @@ def select_by_priority(raw: pd.DataFrame) -> pd.DataFrame:
     """
     if raw.empty:
         return raw
+    raw = raw.copy()
+    if "unit" not in raw.columns:
+        raw["unit"] = "USD"
+    # Dentro de la misma etiqueta, la cifra en USD manda sobre la de CAD: es
+    # la que no necesita tipo de cambio.
+    raw["_unit_rank"] = raw["unit"].eq("CAD").astype(int)
     return (
-        raw.sort_values(["priority", "filed"])
+        raw.sort_values(["priority", "_unit_rank", "filed"])
         .groupby(["concept", "start", "end"], as_index=False, dropna=False)
         .first()
+        .drop(columns="_unit_rank")
     )
 
 
@@ -432,10 +455,54 @@ def _empty_raw() -> pd.DataFrame:
             "end": pd.Series(dtype="datetime64[ns]"),
             "filed": pd.Series(dtype="datetime64[ns]"),
             "value": pd.Series(dtype="float64"),
+            "unit": pd.Series(dtype="object"),
             "form": pd.Series(dtype="object"),
             "kind": pd.Series(dtype="object"),
         }
     )
+
+
+def to_usd_factor(rows: pd.DataFrame, fx: pd.Series | None, *, average: bool) -> pd.Series:
+    """USD por unidad de cada fila: 1 si ya es USD, NaN si no se puede convertir.
+
+    `fx` es el tipo diario en USD por CAD. Con `average`, la media del periodo
+    [start, end] (flujos); sin el, el ultimo tipo en o antes de `end` (saldos).
+    Nunca se mira un tipo posterior a `end` ni a `filed`: el dato tiene que
+    poder calcularse con lo que se sabia el dia que se presento.
+    """
+    factor = pd.Series(1.0, index=rows.index)
+    if rows.empty or "unit" not in rows.columns:
+        return factor
+    foreign = rows["unit"].eq("CAD")
+    if not foreign.any():
+        return factor
+    if fx is None or fx.dropna().empty:
+        factor[foreign] = float("nan")
+        return factor
+    fx = fx.dropna().sort_index()
+    first_rate = fx.index[0]
+    for idx in rows.index[foreign]:
+        cutoff = min(pd.Timestamp(rows.at[idx, "end"]), pd.Timestamp(rows.at[idx, "filed"]))
+        if average:
+            start = pd.Timestamp(rows.at[idx, "start"])
+            window = fx.loc[start:cutoff]
+            covered = first_rate <= start + pd.Timedelta(days=_FX_STALE_DAYS)
+            factor[idx] = float(window.mean()) if len(window) and covered else float("nan")
+        else:
+            window = fx.loc[:cutoff]
+            fresh = len(window) and (cutoff - window.index[-1]).days <= _FX_STALE_DAYS
+            factor[idx] = float(window.iloc[-1]) if fresh else float("nan")
+    return factor
+
+
+def _in_usd(rows: pd.DataFrame, fx: pd.Series | None, *, average: bool) -> pd.DataFrame:
+    """Filas con `value` en USD; las que no se pueden convertir se descartan."""
+    if rows.empty:
+        return rows
+    out = rows.copy()
+    out["value"] = out["value"] * to_usd_factor(out, fx, average=average)
+    out["unit"] = "USD"
+    return out.dropna(subset=["value"])
 
 
 def _first_reported(df: pd.DataFrame, keys: Sequence[str]) -> pd.DataFrame:
@@ -478,8 +545,13 @@ def quarterly_segments(flows: pd.DataFrame) -> pd.DataFrame:
     # de duracion larga. El primer trimestre del año fiscal se publica como
     # "3 meses desde el inicio", y es a la vez trimestre nativo y el acumulado
     # contra el que se resta el semestre. Excluirlo dejaba Q2 sin calcular.
+    if "unit" not in df.columns:
+        df["unit"] = "USD"
+        native = native.assign(unit="USD")
     pieces: list[pd.DataFrame] = [native]
-    for (concept, start), group in df.groupby(["concept", "start"], dropna=False):
+    # Por unidad tambien: restar un acumulado en CAD de uno en USD no es un
+    # trimestre.
+    for (concept, start, unit), group in df.groupby(["concept", "start", "unit"], dropna=False):
         group = group.sort_values("end")
         if len(group) < 2 or group["duration"].max() <= 115:
             continue
@@ -495,6 +567,7 @@ def quarterly_segments(flows: pd.DataFrame) -> pd.DataFrame:
                 # Se pudo conocer cuando estaban presentados AMBOS acumulados.
                 "filed": pd.concat([group["filed"], prior_filed], axis=1).max(axis=1),
                 "value": group["value"].to_numpy() - prior_value,
+                "unit": unit,
                 "form": group["form"].to_numpy(),
                 "kind": "flow",
             }
@@ -517,12 +590,14 @@ def quarterly_segments(flows: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["concept", "end"]).reset_index(drop=True)
 
 
-def trailing_twelve_months(flows: pd.DataFrame) -> pd.DataFrame:
+def trailing_twelve_months(flows: pd.DataFrame, fx: pd.Series | None = None) -> pd.DataFrame:
     """Suma movil de cuatro trimestres, con respaldo anual.
 
-    Devuelve columnas: concept, period_end, filed, value.
+    Devuelve columnas: concept, period_end, filed, value, en USD. Cada trimestre
+    en CAD se convierte al tipo medio de SU trimestre antes de sumar, y el
+    anual de respaldo al tipo medio de su ano.
     """
-    quarters = quarterly_segments(flows)
+    quarters = _in_usd(quarterly_segments(flows), fx, average=True)
     results: list[dict[str, Any]] = []
 
     for concept, group in quarters.groupby("concept", dropna=False):
@@ -551,6 +626,7 @@ def trailing_twelve_months(flows: pd.DataFrame) -> pd.DataFrame:
         annual["duration"] = (annual["end"] - annual["start"]).dt.days
         annual = annual[annual["duration"].between(350, 385)]
         annual = _first_reported(annual, ["concept", "end"])
+        annual = _in_usd(annual, fx, average=True)
         annual = annual.rename(columns={"end": "period_end"})[
             ["concept", "period_end", "filed", "value"]
         ]
@@ -575,8 +651,11 @@ def trailing_twelve_months(flows: pd.DataFrame) -> pd.DataFrame:
     return ttm.sort_values(["concept", "period_end"]).reset_index(drop=True)
 
 
-def point_in_time_balances(points: pd.DataFrame) -> pd.DataFrame:
-    """Saldos de balance, primera publicacion de cada cierre."""
+def point_in_time_balances(points: pd.DataFrame, fx: pd.Series | None = None) -> pd.DataFrame:
+    """Saldos de balance, primera publicacion de cada cierre, en USD.
+
+    Un saldo en CAD se convierte al tipo de cierre de su fecha.
+    """
     if points.empty:
         return pd.DataFrame(
             {
@@ -586,7 +665,7 @@ def point_in_time_balances(points: pd.DataFrame) -> pd.DataFrame:
                 "value": pd.Series(dtype="float64"),
             }
         )
-    df = _first_reported(points, ["concept", "end"])
+    df = _in_usd(_first_reported(points, ["concept", "end"]), fx, average=False)
     return (
         df.rename(columns={"end": "period_end"})[["concept", "period_end", "filed", "value"]]
         .sort_values(["concept", "period_end"])
@@ -594,16 +673,18 @@ def point_in_time_balances(points: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def facts_to_observations(facts_json: Mapping[str, Any]) -> pd.DataFrame:
+def facts_to_observations(facts_json: Mapping[str, Any],
+                          fx: pd.Series | None = None) -> pd.DataFrame:
     """companyfacts -> observaciones listas para el panel.
 
     Columnas: concept, period_end, filed, value. Los flujos vienen en TTM, los
-    saldos en su valor de cierre.
+    saldos en su valor de cierre, todo en USD. `fx` es el tipo USD por CAD
+    diario; sin el, las cifras en CAD no entran.
     """
-    return observations_from_raw(extract_raw_facts(facts_json))
+    return observations_from_raw(extract_raw_facts(facts_json), fx=fx)
 
 
-def observations_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
+def observations_from_raw(raw: pd.DataFrame, fx: pd.Series | None = None) -> pd.DataFrame:
     """Filas crudas cacheadas -> observaciones listas para el panel.
 
     Se separa de `facts_to_observations` para poder recalcular desde la cache
@@ -615,7 +696,7 @@ def observations_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
     flows = raw[raw["kind"] == "flow"]
     points = raw[raw["kind"] == "point"]
     out = pd.concat(
-        [trailing_twelve_months(flows), point_in_time_balances(points)],
+        [trailing_twelve_months(flows, fx), point_in_time_balances(points, fx)],
         ignore_index=True,
     )
     return out.sort_values(["concept", "period_end"]).reset_index(drop=True)
@@ -661,26 +742,30 @@ def listed_companies(max_age_days: float = 7) -> pd.DataFrame:
 # `trailing_twelve_months` o `point_in_time_balances` sube esta version. Si no
 # se sube, el panel mezcla observaciones de la logica vieja con codigo nuevo y
 # nada falla ni avisa.
-OBSERVATIONS_VERSION = "v2"
+#   v3 -- 2026-10-01: cifras en CAD convertidas a USD (auditoria #2).
+OBSERVATIONS_VERSION = "v3"
 
 
 def _raw_name(cik: int) -> str:
-    return f"facts_raw/cik_{cik:010d}"
+    # v2: las filas crudas guardan tambien las unidades CAD. Las de `facts_raw/`
+    # se extrajeron solo en USD y no sirven para convertir: hay que volver a
+    # EDGAR una vez.
+    return f"facts_raw_v2/cik_{cik:010d}"
 
 
 def _observations_name(cik: int) -> str:
     return f"facts_obs_{OBSERVATIONS_VERSION}/cik_{cik:010d}"
 
 
-def _derive_and_cache(cik: int, raw: pd.DataFrame) -> pd.DataFrame:
-    observations = observations_from_raw(raw)
+def _derive_and_cache(cik: int, raw: pd.DataFrame, fx: pd.Series | None = None) -> pd.DataFrame:
+    observations = observations_from_raw(raw, fx=fx)
     observations.insert(0, "cik", cik)
     cache.write_frame(_observations_name(cik), observations)
     return observations
 
 
 def company_observations(cik: int, *, session: requests.Session | None = None,
-                         refresh: bool = False) -> pd.DataFrame:
+                         refresh: bool = False, fx: pd.Series | None = None) -> pd.DataFrame:
     """Observaciones de una empresa, con dos niveles de cache por CIK.
 
     1. **Observaciones** (`facts_obs_<version>/`): el resultado final. Leerlo es
@@ -703,7 +788,7 @@ def company_observations(cik: int, *, session: requests.Session | None = None,
             return observations
         raw = cache.read_frame(_raw_name(cik))
         if raw is not None:
-            return _derive_and_cache(cik, raw)
+            return _derive_and_cache(cik, raw, fx)
 
     own_session = session is None
     session = session or _session()
@@ -720,7 +805,7 @@ def company_observations(cik: int, *, session: requests.Session | None = None,
     # EDGAR. Con las crudas en disco, ese cambio se recalcula sin red.
     raw = extract_raw_facts(payload or {})
     cache.write_frame(_raw_name(cik), raw)
-    return _derive_and_cache(cik, raw)
+    return _derive_and_cache(cik, raw, fx)
 
 
 def download_fundamentals(
@@ -728,6 +813,7 @@ def download_fundamentals(
     *,
     refresh: bool = False,
     progress: bool = True,
+    fx: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Descarga (o lee de cache) los fundamentales de varias empresas.
 
@@ -741,7 +827,7 @@ def download_fundamentals(
     try:
         for i, cik in enumerate(ciks, start=1):
             try:
-                frames.append(company_observations(cik, session=session, refresh=refresh))
+                frames.append(company_observations(cik, session=session, refresh=refresh, fx=fx))
             except SECError as exc:
                 failures += 1
                 if failures > max(10, len(ciks) // 10):

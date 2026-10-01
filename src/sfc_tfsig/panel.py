@@ -42,7 +42,14 @@ from .data import prices as prices_mod, sec
 #   v3 -- 2026-10-01: precio real (no ajustado) para el filtro de precio y la
 #         capitalizacion; volumen en dolares con el cierre ajustado solo por
 #         splits. Auditoria #1.
-PANEL_VERSION = "v3"
+#   v4 -- 2026-10-01: fundamentales en CAD convertidos a USD. Auditoria #2.
+PANEL_VERSION = "v4"
+
+# Tipo de cambio para los emisores que reportan en CAD: USD por CAD, de Yahoo.
+# Desde 2007 para cubrir los periodos contables mas viejos que puede ver la
+# primera fecha del panel.
+_FX_TICKER = "CADUSD=X"
+_FX_START = pd.Timestamp("2007-01-01")
 
 # Conceptos crudos que viajan al panel desde la SEC.
 _CONCEPT_COLUMNS = tuple(sec.CONCEPTS.keys())
@@ -146,7 +153,8 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
 
     if progress:
         print("[4/6] fundamentales point-in-time (XBRL)...", flush=True)
-    observations = sec.download_fundamentals(tradable["cik"], progress=progress)
+    fx = _cad_usd(end, progress=progress)
+    observations = sec.download_fundamentals(tradable["cik"], progress=progress, fx=fx)
 
     if progress:
         print("[5/6] factores de precio...", flush=True)
@@ -232,6 +240,18 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
     panel = _add_shares_growth(panel)
     panel = financials.compute_all(panel)
     return panel.sort_values(["date", "ticker"]).reset_index(drop=True)
+
+
+def _cad_usd(end: pd.Timestamp, *, progress: bool = True) -> pd.Series | None:
+    """Tipo diario USD por CAD, o None si no hay (y se avisa)."""
+    long = prices_mod.get_prices([_FX_TICKER], _FX_START, end, progress=False)
+    wide = prices_mod.to_wide(long, "close")
+    if _FX_TICKER not in wide.columns or wide[_FX_TICKER].dropna().empty:
+        if progress:
+            print(f"      aviso: sin {_FX_TICKER}; las cifras en CAD no entran al panel",
+                  flush=True)
+        return None
+    return wide[_FX_TICKER].dropna()
 
 
 def _add_shares_growth(panel: pd.DataFrame) -> pd.DataFrame:

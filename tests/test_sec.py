@@ -264,3 +264,66 @@ def test_subir_la_version_invalida_las_observaciones_viejas(tmp_path, monkeypatc
 
     sec.company_observations(7)
     assert cache.exists(sec._observations_name(7))
+
+
+# ---------------------------------------------------------------------------
+#  Emisores que reportan en dolares canadienses (auditoria #2)
+#
+#  Royal Bank, Enbridge, CN, Suncor y BCE presentan sus cifras en CAD. Solo se
+#  leian las unidades USD: se quedaban sin valor ni calidad y
+#  `require_fundamental_score` los expulsaba. Flujos al tipo medio del periodo,
+#  saldos al tipo de cierre, y nunca un tipo posterior al cierre del periodo.
+# ---------------------------------------------------------------------------
+
+
+def _fx(cambio="2022-07-01", antes=0.80, despues=0.75, desde="2021-12-01", hasta="2023-12-31"):
+    """USD por CAD diario: `antes` hasta `cambio`, `despues` desde `cambio`."""
+    dias = pd.bdate_range(desde, hasta)
+    return pd.Series([antes if d < pd.Timestamp(cambio) else despues for d in dias], index=dias)
+
+
+def _cad_quarters():
+    periods = [
+        ("2022-01-01", "2022-03-31", "2022-04-25"),
+        ("2022-04-01", "2022-06-30", "2022-07-25"),
+        ("2022-07-01", "2022-09-30", "2022-10-25"),
+        ("2022-10-01", "2022-12-31", "2023-02-20"),
+    ]
+    return [_entry(s, e, 100.0, f) for s, e, f in periods]
+
+
+def test_flujos_en_cad_se_convierten_al_tipo_medio_de_cada_trimestre():
+    payload = _facts(Revenues=("CAD", _cad_quarters()))
+    out = sec.facts_to_observations(payload, fx=_fx())
+    ttm = out[out["concept"] == "revenue"]
+    # Dos trimestres a 0,80 y dos a 0,75: 80 + 80 + 75 + 75.
+    assert ttm["value"].iloc[-1] == pytest.approx(310.0)
+
+
+def test_saldos_en_cad_se_convierten_al_tipo_de_cierre_del_periodo():
+    payload = _facts(Assets=("CAD", [_entry(None, "2022-12-31", 1000.0, "2023-02-20", form="40-F")]))
+    out = sec.facts_to_observations(payload, fx=_fx())
+    assert out.set_index("concept").loc["assets", "value"] == pytest.approx(750.0)
+
+
+def test_si_hay_cifra_en_usd_y_en_cad_manda_la_de_usd():
+    payload = _facts(Assets=("USD", [_entry(None, "2022-12-31", 700.0, "2023-02-20", form="40-F")]))
+    payload["facts"]["us-gaap"]["Assets"]["units"]["CAD"] = [
+        _entry(None, "2022-12-31", 1000.0, "2023-02-20", form="40-F")
+    ]
+    out = sec.facts_to_observations(payload, fx=_fx())
+    assert out.set_index("concept").loc["assets", "value"] == pytest.approx(700.0)
+
+
+def test_sin_tipo_de_cambio_las_cifras_en_cad_no_entran():
+    payload = _facts(Revenues=("CAD", _cad_quarters()))
+    out = sec.facts_to_observations(payload)
+    assert out[out["concept"] == "revenue"].empty
+
+
+def test_nunca_se_usa_un_tipo_de_cambio_posterior_al_cierre():
+    # Solo hay tipos desde 2023: el saldo de diciembre de 2022 no se puede
+    # convertir con lo que se sabia, y no se convierte con lo que vino despues.
+    payload = _facts(Assets=("CAD", [_entry(None, "2022-12-31", 1000.0, "2023-02-20", form="40-F")]))
+    out = sec.facts_to_observations(payload, fx=_fx(desde="2023-01-02"))
+    assert out[out["concept"] == "assets"].empty
