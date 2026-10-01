@@ -17,13 +17,13 @@ del proceso de gobierno, no un obstaculo tecnico que haya que automatizar.
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
 from .config import Config
 from .paths import DATA_DIR, REPORT_DIR
+from .report import run_stamp
 
 POSITIONS_FILE = DATA_DIR / "positions.csv"
 
@@ -174,7 +174,7 @@ def render_orders(orders: pd.DataFrame, target: pd.DataFrame, nav: float,
 def save_orders(orders: pd.DataFrame, text: str, as_of: pd.Timestamp) -> dict[str, Path]:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = pd.Timestamp(as_of).strftime("%Y%m%d")
-    generated = datetime.now().strftime("%H%M")
+    generated = run_stamp(f"ordenes_{stamp}", REPORT_DIR)
     csv_path = REPORT_DIR / f"ordenes_{stamp}_{generated}.csv"
     md_path = REPORT_DIR / f"ordenes_{stamp}_{generated}.md"
     orders.to_csv(csv_path, index=False)

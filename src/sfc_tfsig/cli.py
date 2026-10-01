@@ -214,9 +214,10 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         contributions=contributions, yearly_excess=yearly_excess,
         decay_lag=decay_lag, decay_horizon=decay_horizon,
     )
-    path = report_mod.save_report(text)
-    artifacts = report_mod.save_artifacts(result)
-    chart = report_mod.save_charts(result, bench) if cfg.get("reporting.charts") else None
+    stamp = report_mod.run_stamp("backtest")
+    path = report_mod.save_report(text, stamp=stamp)
+    artifacts = report_mod.save_artifacts(result, stamp=stamp)
+    chart = report_mod.save_charts(result, bench, stamp=stamp) if cfg.get("reporting.charts") else None
 
     print(text)
     print(f"\nreporte: {path}")
@@ -311,9 +312,10 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
     )
 
     text = risk_report_mod.build_risk_report(analysis, cfg, risk_cfg)
-    path = risk_report_mod.save_risk_report(text)
-    artifacts = risk_report_mod.save_risk_artifacts(analysis)
-    chart = risk_report_mod.save_risk_charts(analysis) if cfg.get("reporting.charts") else None
+    stamp = report_mod.run_stamp("riesgo")
+    path = risk_report_mod.save_risk_report(text, stamp=stamp)
+    artifacts = risk_report_mod.save_risk_artifacts(analysis, stamp=stamp)
+    chart = risk_report_mod.save_risk_charts(analysis, stamp=stamp) if cfg.get("reporting.charts") else None
 
     print(text)
     print(f"\nreporte de riesgo: {path}")

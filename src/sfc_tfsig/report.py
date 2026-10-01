@@ -455,22 +455,41 @@ def build_report(
     return "\n".join(sections)
 
 
-def save_report(text: str, name: str = "backtest") -> Path:
+def run_stamp(name: str, directory: Path | None = None) -> str:
+    """Marca de tiempo de una corrida, unica en `directory` para ese `name`.
+
+    Al segundo, y con sufijo si aun asi ya existe un fichero con ella. Con la
+    hora al minuto, dos corridas lanzadas seguidas (mensual y trimestral)
+    escribian los mismos nombres y la segunda borraba la primera sin avisar.
+    Se calcula una vez por comando y se pasa a todos los `save_*`, para que
+    reporte, CSV y graficos de una corrida compartan nombre.
+    """
+    directory = directory if directory is not None else REPORT_DIR
+    base = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp, n = base, 1
+    while directory.exists() and any(directory.glob(f"{name}_{stamp}*")):
+        n += 1
+        stamp = f"{base}_{n}"
+    return stamp
+
+
+def save_report(text: str, name: str = "backtest", stamp: str | None = None) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    stamp = stamp or run_stamp(name, REPORT_DIR)
     path = REPORT_DIR / f"{name}_{stamp}.md"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def save_artifacts(result: BacktestResult, name: str = "backtest") -> dict[str, Path]:
+def save_artifacts(result: BacktestResult, name: str = "backtest",
+                   stamp: str | None = None) -> dict[str, Path]:
     """Guarda NAV, operaciones, posiciones y rebalanceos para poder auditarlos.
 
     Un reporte sin los datos que lo sustentan obliga a creerselo. Con estos
     ficheros, cualquiera del equipo puede recalcular las metricas por su cuenta.
     """
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    stamp = stamp or run_stamp(name, REPORT_DIR)
     paths: dict[str, Path] = {}
 
     nav_path = REPORT_DIR / f"{name}_{stamp}_nav.csv"
@@ -489,7 +508,7 @@ def save_artifacts(result: BacktestResult, name: str = "backtest") -> dict[str, 
 
 
 def save_charts(result: BacktestResult, benchmark_nav: pd.Series | None = None,
-                name: str = "backtest") -> Path | None:
+                name: str = "backtest", stamp: str | None = None) -> Path | None:
     """Curva de NAV y drawdown. Opcional: requiere matplotlib."""
     try:
         import matplotlib
@@ -501,7 +520,7 @@ def save_charts(result: BacktestResult, benchmark_nav: pd.Series | None = None,
     from .metrics import drawdown_series
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    stamp = stamp or run_stamp(name, REPORT_DIR)
     path = REPORT_DIR / f"{name}_{stamp}_curva.png"
 
     fig, (ax_nav, ax_dd) = plt.subplots(
