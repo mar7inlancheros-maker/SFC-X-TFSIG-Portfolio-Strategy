@@ -23,7 +23,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, asdict
 
-import numpy as np
 import pandas as pd
 
 TRADING_DAYS = 252

@@ -104,7 +104,6 @@ def run_backtest(
     rebalance_rows: list[dict] = []
     warnings: list[str] = []
 
-    previous_weights = pd.Series(dtype="float64")
     previous_execution: pd.Timestamp | None = None
 
     for i, signal_date in enumerate(signal_dates, start=1):
@@ -250,7 +249,6 @@ def run_backtest(
                 }
             )
 
-        previous_weights = realized_weights
         previous_execution = execution_date
 
         if progress and (i % 12 == 0 or i == len(signal_dates)):
