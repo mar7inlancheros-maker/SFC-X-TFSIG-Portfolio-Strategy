@@ -51,14 +51,18 @@ base_currency = "USD"
 #  UNIVERSO INVESTIBLE
 #
 #  US + Canada, pero via listado en EE.UU.: emisores estadounidenses mas
-#  canadienses cross-listed (NYSE/Nasdaq/NYSE American). Razon: los
+#  canadienses cross-listed (NYSE y Nasdaq; ver `exchanges`). Razon: los
 #  fundamentales point-in-time salen del XBRL de la SEC, que cubre a los
 #  canadienses que presentan 40-F o 10-K y NO a los exclusivos de TSX. Todo
 #  cotiza en USD, asi que el book no carga riesgo de divisa.
 #
-#  El tramo TSX-only se activa con `include_tsx_only` y HOY degrada a factores
-#  solo-precio (momentum y baja volatilidad): sin fundamentales no hay value ni
-#  quality. Ver README, "Limitaciones declaradas".
+#  El tramo TSX-only NO esta implementado: `include_tsx_only = true` es un
+#  error de configuracion (auditoria 2026-10, #15). Sin fundamentales no habria
+#  value ni quality. Ver README, "Limitaciones declaradas".
+#
+#  Los canadienses que reportan en CAD (Royal Bank, Enbridge, Suncor, BCE...)
+#  se convierten a USD: flujos al tipo medio del periodo, saldos al de cierre
+#  (auditoria #2). Antes se quedaban sin fundamentales y fuera del modelo.
 # ---------------------------------------------------------------------------
 [universe]
 # Valores que la SEC emite de verdad en company_tickers_exchange.json:
@@ -123,7 +127,7 @@ lowvol   = 0.10
 [factors.processing]
 winsorize_pct    = 0.02   # recorta el 2% de cada cola antes de estandarizar
 sector_neutral   = true   # z-score DENTRO del sector, no contra todo el panel
-min_sector_names = 5      # sector con menos nombres: cae a z-score global
+min_sector_names = 5      # sector con menos nombres: se puntua contra toda la fecha
 min_coverage     = 0.60   # metrica con menos cobertura que esto se descarta
 
 # Exige que la empresa tenga score de VALOR y de CALIDAD para recibir un score
@@ -206,6 +210,6 @@ newey_west_lag = 6     # rezagos para los errores estandar de Fama-MacBeth
 #  REPORTE
 # ---------------------------------------------------------------------------
 [reporting]
-cadence   = "Q"                # trimestral, para el comite conjunto
+cadence   = "Q"                # trimestral, para el comite. Ningun modulo lo lee aun
 charts    = true
-decimals  = 2
+decimals  = 2                  # ningun modulo lo lee: los reportes usan 2 fijos

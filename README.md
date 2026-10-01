@@ -122,7 +122,7 @@ Los topes impiden invertir el 100% del capital
 │   │   └── analysis.py           junta todo sobre una cartera           [puro]
 │   ├── risk_report.py            reporte de riesgo y control previo a operar
 │   └── cli.py                    los seis comandos
-└── tests/                        50+ tests, sin red, con datos sintéticos
+└── tests/                        242 tests del modelo (346 con el motor long/short), sin red
 ```
 
 `[puro]` significa funciones sin red, sin disco y sin estado: entra un DataFrame
@@ -147,7 +147,13 @@ que todo lo demás sea decorativo.
    opera al cierre de `d+1`. Hay un test dedicado: si el precio salta el día
    siguiente a la señal, el modelo compra *después* del salto.
 
-4. **Los filtros de liquidez usan los datos de esa fecha**, no los de hoy.
+4. **Los filtros de liquidez usan los datos de esa fecha**, no los de hoy, y con
+   el **precio que cotizaba ese día**. El cierre ajustado por splits y
+   dividendos depende de lo que la empresa hizo después: hasta la auditoría de
+   octubre de 2026 el filtro de precio y la capitalización lo usaban, y NVDA
+   (20,05 USD a cierre de 2014, 0,48 ajustado) quedaba fuera del universo hasta
+   2017. Ahora el precio y la capitalización usan el cierre real; retornos,
+   momentum y volatilidad siguen con el ajustado.
 
 5. **El retorno futuro vive en una columna con nombre explícito** y solo lo
    consume `validation.py`. El backtest no lo mira: ejecuta operaciones y
@@ -326,9 +332,13 @@ cada reporte, no en un anexo.
 2. **Cobertura canadiense parcial.** Los fundamentales salen del XBRL de la SEC,
    que cubre a los emisores canadienses inscritos (40-F, 20-F, 10-K) y **no** a
    los exclusivos de TSX. El tramo canadiense es el de las grandes con presencia
-   en EE.UU. — Royal Bank, Enbridge, Canadian National, BCE, Suncor. Todo cotiza
-   en USD, así que el libro no carga riesgo de divisa. Cubrir TSX puro exige un
-   proveedor de pago y es una decisión del comité, no un pendiente técnico.
+   en EE.UU. — Royal Bank, TD, Enbridge, BCE, Suncor. Casi todos reportan en
+   CAD: sus cifras se convierten a USD (flujos al tipo medio del periodo, saldos
+   al de cierre, solo con tipos ya conocidos al presentar). Otras monedas no se
+   convierten. Canadian National sigue fuera: presenta sus estados en 6-K, que
+   el modelo no lee. Todo cotiza en USD, así que el libro no carga riesgo de
+   divisa. Cubrir TSX puro exige un proveedor de pago y es una decisión del
+   comité, no un pendiente técnico.
 
 3. **Clasificación sectorial por SIC.** El SIC es de 1987 y no distingue bien el
    software moderno. La neutralización sectorial hereda ese ruido. Es el único
@@ -359,7 +369,7 @@ cada reporte, no en un anexo.
 
 ## Estado
 
-Motor completo y probado (136 tests). Historial de iteraciones, con lo que cada
+Motor completo y probado (242 tests del modelo). Historial de iteraciones, con lo que cada
 una cambió y por qué:
 
 | Iteración | Cambio | Efecto |
@@ -381,13 +391,6 @@ puntos (mensual) y 2,3 (trimestral) *antes* de descontar ese sesgo de 1-2
 puntos: el exceso honesto está entre cero y un punto.
 
 Pendiente, por orden:
-| v3 | Auditoría 2026-10: precio real en filtros y capitalización (#1), canadienses en CAD convertidos (#2), fallback sectorial global (#6), topes tras quitar nombres sin precio (#7) | Mensual: CAGR 15,98% vs SPY 14,63%; exceso 1,34 puntos; IR 0,18; drawdown −44,1%; rotación 365%; costes 1,46% del NAV al año. Trimestral: CAGR 16,52%; exceso 2,28; IR 0,24; drawdown −47,0%; costes 0,84%. Commit `2d3d996`, fingerprints `d196a3534431f142` y `9bf0316cace36bdf`. Detalle en `docs/audit_2026-10.md` |
-
-Las cifras de v1 a v2-Q se midieron con precios ajustados en los filtros de
-nivel (el fallo #1 de la auditoría) y no son comparables con v3. Con los mismos
-datos de octubre de 2026, el código anterior a la auditoría daba un CAGR del
-20,03% (mensual) y el posterior un 15,98%: unos 4 puntos del exceso de v2 venían
-de capitalizaciones mal medidas en nombres que después hicieron splits.
 
 - [ ] Decidir con el comité la cadencia de rebalanceo. Evidencia tras la
       auditoría (v3): la señal conserva el 85% de su poder predictivo con
