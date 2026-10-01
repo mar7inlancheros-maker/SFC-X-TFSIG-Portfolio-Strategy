@@ -99,8 +99,10 @@ equivocado.
 
 - **`require_fundamental_score` exige score de valor Y de calidad.** Sin eso,
   un nombre sin ingresos ni patrimonio entra en cartera puntuado solo por
-  precio. Solo quitaba el 2,8% del panel, pero el 12,6% del top-30, y esos
-  nombres rendían +0,67% al mes frente al +1,96% de sus reemplazos.
+  precio. Hoy quita el 1,8% del panel y el 10,6% del top-30 (auditoría
+  2026-10, commit `2d3d996`; antes de las correcciones, 2,8% y 13,5%). La
+  cifra de rendimiento de 2026-09-23 (+0,67% al mes frente al +1,96% de sus
+  reemplazos) no se recalculó.
 
 - **El panel se cachea por fingerprint de configuración**
   (`panel_scored_<fingerprint>`). Varias configuraciones conviven. No volver a

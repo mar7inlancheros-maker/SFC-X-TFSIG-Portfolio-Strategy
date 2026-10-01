@@ -60,8 +60,12 @@ max_fundamental_staleness_d = 550
 # materias primas y divisas: GBTC y ETHE (bitcoin y ether), GLD, SLV, CEF y
 # OUNZ (metales), USO, UNG y BNO (energia), DBA y DBC (cestas), FXC y FXF
 # (divisas). El modelo los venia comprando por momentum, con el peso maximo.
-# GBTC aporto 4,86 puntos en 2024 y el bloque entero devolvio 4,6 en 2025 y 5,4
-# en 2026. Son 28 tickers, ninguno una empresa.
+# Cifras originales (2026-09-23): GBTC aporto 4,86 puntos en 2024. Recalculadas
+# en la auditoria 2026-10 con el codigo final (commit 2d3d996) y una variante de
+# esta config sin 6221 ni require_fundamental_score (fingerprint
+# ba825ded59884c6f): GBTC +4,96 puntos en 2024; el bloque entero +6,8 en 2024,
+# -1,6 en 2025 y -3,2 en 2026. 65 de los perfiles descargados tienen SIC 6221;
+# ninguno es una empresa.
 exclude_sic = [6189, 6199, 6221, 6726, 6770, 6798]
 
 # ---------------------------------------------------------------------------
@@ -95,8 +99,10 @@ min_coverage     = 0.60   # metrica con menos cobertura que esto se descarta
 # compuesto. Sin esto, un nombre sin fundamentales entra por momentum y baja
 # volatilidad, que es como el Grayscale Bitcoin Trust acabo con el peso maximo
 # de la cartera: cero cobertura en ingresos y en patrimonio, y aun asi un score
-# compuesto en el 100% de las fechas. Solo quita el 2,8% del panel, pero el
-# 13,1% de los nombres que entraban al top-30. Este es un modelo multifactor
+# compuesto en el 100% de las fechas. Solo quita el 1,8% del panel, pero el
+# 10,6% de los nombres que entraban al top-30 (auditoria 2026-10, commit
+# 2d3d996, fingerprint d196a3534431f142; antes de las correcciones #1 y #2 era
+# 2,8% y 13,5%). Este es un modelo multifactor
 # FUNDAMENTAL: si no se pueden puntuar los fundamentales, no se compra.
 require_fundamental_score = true
 

@@ -376,26 +376,44 @@ solo explica unos 2 de los 3,9 puntos de CAGR ganados; el resto es dependencia
 de trayectoria. La diferencia tiene p = 0,08. Y la regla se diseñó después de
 ver el resultado de v1, así que v2 **no es fuera de muestra** para esa
 decisión. Exceso honesto estimado, descontando el sesgo de supervivencia: 2-3
-puntos anuales, no 6.
+puntos anuales, no 6. **Tras la auditoría (v3)** el exceso medido es de 1,3
+puntos (mensual) y 2,3 (trimestral) *antes* de descontar ese sesgo de 1-2
+puntos: el exceso honesto está entre cero y un punto.
 
 Pendiente, por orden:
+| v3 | Auditoría 2026-10: precio real en filtros y capitalización (#1), canadienses en CAD convertidos (#2), fallback sectorial global (#6), topes tras quitar nombres sin precio (#7) | Mensual: CAGR 15,98% vs SPY 14,63%; exceso 1,34 puntos; IR 0,18; drawdown −44,1%; rotación 365%; costes 1,46% del NAV al año. Trimestral: CAGR 16,52%; exceso 2,28; IR 0,24; drawdown −47,0%; costes 0,84%. Commit `2d3d996`, fingerprints `d196a3534431f142` y `9bf0316cace36bdf`. Detalle en `docs/audit_2026-10.md` |
 
-- [ ] Decidir con el comité la cadencia de rebalanceo. Evidencia: la señal
-      conserva el 89% de su poder predictivo con rebalanceo trimestral, y el
-      backtest lo confirma — mismo exceso neto, 0,44 puntos menos de costes al
-      año, 2,5 puntos más de drawdown máximo. `config/strategy_trimestral.toml`.
-- [ ] Validar cada factor por separado. Calidad (t = 0,93) y baja volatilidad
-      (t = −0,07) no aportan en Fama-MacBeth con esta muestra.
+Las cifras de v1 a v2-Q se midieron con precios ajustados en los filtros de
+nivel (el fallo #1 de la auditoría) y no son comparables con v3. Con los mismos
+datos de octubre de 2026, el código anterior a la auditoría daba un CAGR del
+20,03% (mensual) y el posterior un 15,98%: unos 4 puntos del exceso de v2 venían
+de capitalizaciones mal medidas en nombres que después hicieron splits.
+
+- [ ] Decidir con el comité la cadencia de rebalanceo. Evidencia tras la
+      auditoría (v3): la señal conserva el 85% de su poder predictivo con
+      rebalanceo trimestral (antes se citaba 89%), pero con tres meses de
+      retraso el IC ya no es significativo (t = 1,68). Backtest: el trimestral
+      ahorra 0,62 puntos de costes al año y gana 0,9 puntos de exceso, con 2,9
+      puntos más de drawdown máximo. `config/strategy_trimestral.toml`.
+- [ ] Validar cada factor por separado. En Fama-MacBeth (v3, mensual) solo
+      momentum es significativo (t = 2,46); valor (t = 0,34), calidad
+      (t = 0,35) y baja volatilidad (t = −0,45) no aportan con esta muestra.
+      Valor caía de t = 1,78 a 0,34 al corregir la capitalización.
 - [ ] Decidir presupuesto para datos con deslistadas: sin ellos, el sesgo de
       supervivencia (1-2 puntos) es del mismo orden que el exceso.
 - [ ] Revisar unidades de acciones en emisores con ADR (BTI sale con una
       capitalización absurda).
 - [ ] Fijar con el comité la política de riesgo (`config/risk.toml`). Con los
-      valores propuestos, la cartera del 23-sep-2026 excede seis de diez
-      límites: tracking error ex-ante del 19,9%, el 48% del riesgo en
-      tecnología con el 23% del peso (memoria y almacenamiento: SNDK, MU, WDC,
-      STX), SNDK sola con el 15% del riesgo, y −52% en el escenario tipo 2008.
-      El bootstrap da un drawdown p95 del −34% a un año. El VaR FHS es el único
-      de los tres que pasa Kupiec (p = 0,06); el histórico y el normal EWMA se
-      exceden de más.
+      valores propuestos, la cartera del 23-sep-2026 excedía seis de diez
+      límites. La cartera de v3 al 1-oct-2026 no excede ninguno y está en
+      ALERTA en tres: tracking error ex-ante del 13,3% (límite 15%), un nombre
+      con el 9,5% del riesgo (límite 10%) y −40,2% en el escenario tipo 2008
+      (límite 45%). Volatilidad ex-ante 17,0%, beta 0,84, VaR 99% t de Student
+      2,8%. El bootstrap da un drawdown p95 del −37% a un año. Ningún VaR pasa
+      Kupiec sobre la historia (histórico p = 0,001, FHS p = 0,008).
+- [ ] Revisar la prioridad de etiquetas de ingresos: `RevenueFromContractWithCustomer…`
+      gana a `Revenues` y en emisores con ventas fuera de ASC 606 recoge solo una
+      parte (Enbridge: 29 B CAD frente a 65 B CAD en 2025).
+- [ ] Enlazar la historia de los CIK anteriores a una reorganización (Broadcom
+      2018, Alphabet 2015 entran tarde al panel).
 - [ ] Registro de decisiones del comité.

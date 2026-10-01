@@ -225,14 +225,18 @@ loss_thresholds = [0.10, 0.20, 0.30]
 [limits]
 warning_fraction      = 0.80
 
-# El backtest realizo 22.8% de volatilidad con SPY en torno al 17%.
+# El backtest realizo 23.7% de volatilidad con SPY en torno al 17% (auditoria
+# 2026-10, commit 2d3d996, fingerprint d196a3534431f142; antes de las
+# correcciones, 22.5%). Con warning_fraction = 0.80 la ALERTA salta en el 20%:
+# por debajo de la volatilidad realizada historica.
 max_ex_ante_vol       = 0.25
 # VaR 99% a un dia de la cartera actual, t de Student. Fraccion de NAV.
 max_var_99_1d         = 0.040
 max_beta              = 1.30
 max_tracking_error    = 0.15
 # Caida desde el maximo del NAV a partir de la cual el comite revisa el
-# modelo. El backtest toco -37.7%; SPY en el mismo periodo, -33.7%.
+# modelo. El backtest toco -44.1%; SPY en el mismo periodo, -33.7% (auditoria
+# 2026-10, commit 2d3d996; antes de las correcciones, -37.7%).
 max_current_drawdown  = 0.25
 # Contribucion de un solo nombre, o un solo sector, a la varianza total. El
 # tope de peso no basta: un 6% de peso muy volatil puede ser el 15% del riesgo.

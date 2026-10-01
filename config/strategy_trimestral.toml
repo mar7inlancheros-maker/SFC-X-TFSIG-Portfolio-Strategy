@@ -13,6 +13,17 @@
 #  las dos corridas: elegir la frecuencia por su CAGR seria elegir el parametro
 #  con el resultado delante.
 #
+#  NOTA DE LA AUDITORIA 2026-10. Las cifras de arriba (76%, t = 2,65, 89%) se
+#  midieron con precios ajustados en los filtros de nivel (fallo #1) y sin los
+#  canadienses en CAD (#2). Recalculadas con el codigo final (commit 2d3d996,
+#  fingerprint mensual d196a3534431f142): con un mes de retraso la senal
+#  conserva el 82% del IC (t = 1,93), con dos el 74% (t = 1,82), con tres el
+#  66% (t = 1,68, ya no significativa al 5%), y un rebalanceo trimestral
+#  conserva el 85% de la senal. El IC fresco es 0,0183 (t = 2,39). La rotacion
+#  mensual es ahora del 365% anual, ~12 bps de NAV por rebalanceo. Backtest:
+#  mensual 15,98% de CAGR (exceso 1,34 puntos, costes 1,46% del NAV al ano);
+#  trimestral 16,52% (exceso 2,28, costes 0,84%). Ver docs/audit_2026-10.md.
+#
 #  La cadencia es parametro de mandato. La fija el comite conjunto.
 #
 #      python main.py --config config/strategy_trimestral.toml backtest
@@ -80,8 +91,12 @@ max_fundamental_staleness_d = 550
 # materias primas y divisas: GBTC y ETHE (bitcoin y ether), GLD, SLV, CEF y
 # OUNZ (metales), USO, UNG y BNO (energia), DBA y DBC (cestas), FXC y FXF
 # (divisas). El modelo los venia comprando por momentum, con el peso maximo.
-# GBTC aporto 4,86 puntos en 2024 y el bloque entero devolvio 4,6 en 2025 y 5,4
-# en 2026. Son 28 tickers, ninguno una empresa.
+# Cifras originales (2026-09-23): GBTC aporto 4,86 puntos en 2024. Recalculadas
+# en la auditoria 2026-10 con el codigo final (commit 2d3d996) y una variante de
+# esta config sin 6221 ni require_fundamental_score (fingerprint
+# ba825ded59884c6f): GBTC +4,96 puntos en 2024; el bloque entero +6,8 en 2024,
+# -1,6 en 2025 y -3,2 en 2026. 65 de los perfiles descargados tienen SIC 6221;
+# ninguno es una empresa.
 exclude_sic = [6189, 6199, 6221, 6726, 6770, 6798]
 
 # ---------------------------------------------------------------------------
@@ -115,8 +130,10 @@ min_coverage     = 0.60   # metrica con menos cobertura que esto se descarta
 # compuesto. Sin esto, un nombre sin fundamentales entra por momentum y baja
 # volatilidad, que es como el Grayscale Bitcoin Trust acabo con el peso maximo
 # de la cartera: cero cobertura en ingresos y en patrimonio, y aun asi un score
-# compuesto en el 100% de las fechas. Solo quita el 2,8% del panel, pero el
-# 13,1% de los nombres que entraban al top-30. Este es un modelo multifactor
+# compuesto en el 100% de las fechas. Solo quita el 1,8% del panel, pero el
+# 10,6% de los nombres que entraban al top-30 (auditoria 2026-10, commit
+# 2d3d996, fingerprint d196a3534431f142; antes de las correcciones #1 y #2 era
+# 2,8% y 13,5%). Este es un modelo multifactor
 # FUNDAMENTAL: si no se pueden puntuar los fundamentales, no se compra.
 require_fundamental_score = true
 
