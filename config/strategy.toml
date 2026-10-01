@@ -47,9 +47,12 @@ max_names            = 1200         # techo del panel, por coste de descarga
 # los numeros de hace dos anos es comprar a ciegas.
 max_fundamental_staleness_d = 550
 
-# SIC excluidos: fondos cerrados, REITs hipotecarios, blank checks y vehiculos
-# de inversion. Sus estados financieros no son comparables con los de una
-# empresa operativa: el "margen" y el "ROIC" de un fondo no significan nada.
+# SIC excluidos: 6189 y 6199 (vehiculos de activos y financieros varios), 6221
+# (ETF y fideicomisos de materias primas, abajo), 6726 (fondos cerrados), 6770
+# (blank checks) y 6798, que son TODOS los REIT, no solo los hipotecarios. Sus
+# estados financieros no son comparables con los de una empresa operativa: el
+# "margen" y el "ROIC" de un fondo no significan nada. Consecuencia de 6798:
+# RealEstate queda con 3-4 nombres en algunas fechas (auditoria #12).
 #
 # 6221 (Commodity Contracts Brokers & Dealers) se anadio el 2026-09-23 tras la
 # atribucion del primer backtest. Ahi viven TODOS los ETF y fideicomisos de
