@@ -379,6 +379,13 @@ una cambió y por qué:
 | v1.2 | Prefiltro de liquidez por mediana, no máximo | 30% menos descargas de EDGAR |
 | v2 | Excluir SIC 6221 y exigir fundamentales | CAGR 20,7%; IR 0,50 (ver advertencia abajo) |
 | v2-Q | Rebalanceo trimestral (alternativa, no oficial) | Mismo exceso (6,05% vs 6,07%) e IR (0,50); costes 1,09% → 0,65% del NAV al año; drawdown −37,7% → −40,3% |
+| v3 | Auditoría 2026-10: precio real en filtros y capitalización (#1), canadienses en CAD convertidos (#2), fallback sectorial global (#6), topes tras quitar nombres sin precio (#7) | Mensual: CAGR 15,98% vs SPY 14,63%; exceso 1,34 puntos; IR 0,18; drawdown −44,1%; rotación 365%; costes 1,46% del NAV al año. Trimestral: CAGR 16,52%; exceso 2,28; IR 0,24; drawdown −47,0%; costes 0,84%. Commit `2d3d996`, fingerprints `d196a3534431f142` y `9bf0316cace36bdf`. Detalle en `docs/audit_2026-10.md` |
+
+Las cifras de v1 a v2-Q se midieron con precios ajustados en los filtros de
+nivel (el fallo #1 de la auditoría) y no son comparables con v3. Con los mismos
+datos de octubre de 2026, el código anterior a la auditoría daba un CAGR del
+20,03% (mensual) y el posterior un 15,98%: unos 4 puntos del exceso de v2 venían
+de capitalizaciones mal medidas en nombres que después hicieron splits.
 
 **Advertencia sobre v2.** La mejora es direccionalmente real — los nombres sin
 fundamentales rendían +0,67% al mes frente al +1,96% de sus reemplazos — pero
