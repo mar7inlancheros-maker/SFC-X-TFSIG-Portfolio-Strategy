@@ -15,7 +15,10 @@ requires-python = ">=3.11"
 # `requests` es para la capa de la SEC. `yfinance` es para precios y se importa
 # de forma perezosa dentro de `data/prices.py`.
 dependencies = [
-    "pandas>=2.2",
+    # Techo en 3: con pandas 3.0 fallan 8 tests de backtest e integracion
+    # (Series.combine_first y copy-on-write cambian de semantica). Se quita
+    # el techo cuando el codigo se adapte, no antes.
+    "pandas>=2.2,<3",
     "numpy>=1.26",
     "requests>=2.31",
     "yfinance>=0.2",
