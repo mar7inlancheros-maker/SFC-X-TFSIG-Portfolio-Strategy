@@ -181,6 +181,14 @@ def validate(data: Mapping[str, Any]) -> None:
         )
     if int(_need(uni, "max_names", "universe")) < 50:
         raise ConfigError("[universe].max_names < 50: el panel no da para seccion cruzada")
+    # El tramo TSX-only no esta implementado: ningun modulo lee esta clave. Un
+    # parametro que se activa y no hace nada es peor que no tenerlo.
+    if bool(uni.get("include_tsx_only", False)):
+        raise ConfigError(
+            "[universe].include_tsx_only = true no esta implementado: el universo "
+            "solo cubre emisores con listado en EE.UU. Dejalo en false; activar "
+            "TSX exige una fuente de precios y fundamentales canadienses"
+        )
 
     # -- calendario -------------------------------------------------------
     cal = data["calendar"]
