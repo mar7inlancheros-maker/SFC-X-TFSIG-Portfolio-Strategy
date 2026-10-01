@@ -268,7 +268,9 @@ class Window:
     test_end: pd.Timestamp
 
     def __str__(self) -> str:
-        return (f"train {self.train_start.date()}..{self.train_end.date()} | "
+        # Sin "|": la etiqueta va dentro de una tabla Markdown del reporte y lo
+        # partia en una celda de mas.
+        return (f"train {self.train_start.date()}..{self.train_end.date()} / "
                 f"test {self.test_start.date()}..{self.test_end.date()}")
 
 
