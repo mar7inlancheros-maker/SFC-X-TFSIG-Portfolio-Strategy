@@ -93,6 +93,15 @@ def _price_frames(scored: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.D
     return prices_mod.to_wide(long, "close"), prices_mod.to_wide(long, "volume")
 
 
+def _latest_close(tickers: list[str]) -> pd.Series:
+    """Ultimo cierre conocido de cada ticker, de la cache de precios."""
+    end = pd.Timestamp.today().normalize()
+    long = prices_mod.get_prices(tickers, end - pd.DateOffset(days=15), end, progress=False)
+    if long.empty:
+        return pd.Series(dtype="float64")
+    return prices_mod.to_wide(long, "close").ffill().iloc[-1]
+
+
 def _load_risk(path: str | None) -> Config:
     """Politica de riesgo validada, incluidos sectores de escenarios y limites."""
     try:
@@ -240,7 +249,10 @@ def cmd_ordenes(args: argparse.Namespace) -> int:
                   "(pasa --capital para incluir la caja)")
 
     target = build_portfolio(cross_section, cfg, held=set(current.index))
-    orders = build_orders(target, current, nav, cfg)
+    # Precio de lo que ya se tiene: las posiciones que salen del objetivo no
+    # traen precio en `target`, y sin el la orden de venta no se puede generar.
+    current_prices = _latest_close(list(current.index)) if not current.empty else None
+    orders = build_orders(target, current, nav, cfg, current_prices=current_prices)
     text = render_orders(orders, target, nav, cfg, last_date)
 
     if not args.sin_riesgo and not target.empty:

@@ -57,11 +57,16 @@ def build_orders(
     cfg: Config,
     *,
     min_order_notional: float = 100.0,
+    current_prices: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Cartera objetivo + posiciones actuales -> ordenes.
 
     `target` viene de `portfolio.build_portfolio` y trae `ticker`, `weight` y
     `price`. `nav` es el valor total de la cuenta HOY, incluida la caja.
+
+    `current_prices` da precio a las posiciones que salen del objetivo:
+    `build_portfolio` solo devuelve los nombres seleccionados, asi que sin
+    esto cada nombre que rota fuera dejaba la orden de venta sin precio.
 
     Las ordenes por debajo de `min_order_notional` se descartan: mover 40
     dolares para corregir un peso del 0.02% paga comision y no cambia nada.
@@ -75,10 +80,13 @@ def build_orders(
 
     universe = prices.index.union(current_shares.index)
     prices = prices.reindex(universe)
+    if current_prices is not None:
+        prices = prices.fillna(pd.Series(current_prices, dtype="float64").reindex(universe))
     held = current_shares.reindex(universe).fillna(0.0)
 
     # Una posicion que ya no esta en el objetivo se vende entera; su precio sale
-    # de la cartera actual si el modelo ya no la cubre.
+    # de `current_prices` si el modelo ya no la cubre. Sin precio en ninguno de
+    # los dos sitios, error explicito: vender a precio inventado no es opcion.
     missing_price = prices.isna() & (held != 0)
     if missing_price.any():
         raise ValueError(
