@@ -394,9 +394,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="pide la contrasena una vez y la guarda (pgpass)")
     p_wrds.set_defaults(func=cmd_wrds)
 
-    from quant_engine.app import add_parser as add_research_parser
-
-    add_research_parser(sub)
+    # El motor long/short es opcional (extra [quant]: rich, statsmodels...). Si
+    # no esta instalado, los subcomandos del modelo multifactor tienen que
+    # seguir funcionando: antes este import era incondicional y
+    # `python main.py backtest` moria con "No module named 'rich'".
+    try:
+        from quant_engine.app import add_parser as add_research_parser
+    except ImportError:
+        pass
+    else:
+        add_research_parser(sub)
     return parser
 
 
@@ -407,8 +414,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.comando is None:
-            from quant_engine.app import interactive
-
+            try:
+                from quant_engine.app import interactive
+            except ImportError as exc:
+                print(
+                    f"el motor long/short no esta disponible ({exc}). Instala el extra "
+                    "con: pip install -e \".[quant]\", o usa un subcomando del modelo "
+                    "multifactor (python main.py --help)",
+                    file=sys.stderr,
+                )
+                return 2
             return interactive()
         return args.func(args)
     except KeyboardInterrupt:

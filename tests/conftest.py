@@ -13,6 +13,16 @@ if str(SRC) not in sys.path:
 
 from sfc_tfsig.config import config_from_dict  # noqa: E402
 
+# Los tests del motor long/short necesitan el extra [quant]. Sin el, su import
+# rompia la coleccion de TODA la suite y `pytest` no corria ni los tests del
+# modelo multifactor, que solo necesitan pandas y numpy.
+_QUANT_DEPS = ("rich", "statsmodels", "scipy", "sklearn", "cvxpy", "yaml")
+try:
+    for _module in _QUANT_DEPS:
+        __import__(_module)
+except ImportError:
+    collect_ignore_glob = ["test_qe_*.py"]
+
 
 BASE_CONFIG = {
     "meta": {"name": "test", "version": "0", "base_currency": "USD"},
