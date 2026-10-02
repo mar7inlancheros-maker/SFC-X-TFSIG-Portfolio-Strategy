@@ -5,6 +5,7 @@ Se vuelve a correr el backtest del modo A cambiando UNA cosa cada vez:
 - ventana de evaluacion (1, 3, 5 anos);
 - frecuencia de rebalanceo;
 - coste de transaccion;
+- coste de prestamo de los cortos;
 - metodo de construccion;
 - estimador de volatilidad (muestral frente a EWMA).
 
@@ -24,6 +25,13 @@ import pandas as pd
 
 from .backtest import engine as bt
 from .backtest import metrics as btm
+
+# Sensibilidad al coste de prestamo, anual sobre el nocional corto. 0,25% es el
+# default del YAML (general collateral); 1% y 3% cubren nombres mas dificiles
+# de prestar. Fijo en el codigo y no en el YAML a proposito: el comite pidio la
+# fila sin tocar config/quant_engine.yaml. Si se quiere otra rejilla, la clave
+# `robustness.borrow_costs` del YAML la sustituye.
+BORROW_COSTS = (0.0025, 0.01, 0.03)
 
 
 def run_robustness(result) -> dict[str, object]:
@@ -60,6 +68,9 @@ def run_robustness(result) -> dict[str, object]:
 
     for tc in rob.get("transaction_costs", [0.0005, 0.0015, 0.003]):
         record("transaction_cost", f"{float(tc):.2%}", backtest_config(s, transaction_cost=float(tc)), result.eval_start)
+
+    for bc in rob.get("borrow_costs", BORROW_COSTS):
+        record("borrow_cost", f"{float(bc):.2%}", backtest_config(s, borrow_cost=float(bc)), result.eval_start)
 
     for method in rob.get("constructions", ["equal_weight", "inverse_vol", "risk_parity", "min_variance"]):
         record("construction", method, backtest_config(s, method=method), result.eval_start)

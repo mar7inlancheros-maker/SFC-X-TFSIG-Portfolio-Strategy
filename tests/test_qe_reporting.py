@@ -67,3 +67,34 @@ def test_json_rotula_cada_trayectoria_del_modo_a():
     assert out["risk_parity"]["path"] == MODE_A_LABEL
     assert export.robustness_json({"table": pd.DataFrame()})["path"] == MODE_A_LABEL
     assert export.robustness_json({}) == {}
+
+
+def test_robustez_incluye_sensibilidad_al_coste_de_prestamo():
+    # La fila de borrow_cost pedida por el comite: 0,25% / 1% / 3% anual sobre
+    # el nocional corto, sin cambiar el default del YAML. Mas prestamo, menos
+    # Sharpe: los cortos pagan mas y nada mas cambia.
+    import numpy as np
+
+    from quant_engine.data import cleaning
+    from quant_engine.data.loader import MarketData
+    from quant_engine.robustness import run_robustness
+    from quant_engine.settings import build_settings
+
+    rng = np.random.default_rng(5)
+    cal = pd.bdate_range("2021-01-04", periods=900)
+    names = ["L1", "L2", "S1", "S2", "SPY"]
+    data = {}
+    for t in names:
+        close = 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.012, len(cal))))
+        c = pd.Series(close, index=cal)
+        data[t] = pd.DataFrame({"Open": c, "High": c, "Low": c, "Close": c, "Volume": 1e6})
+    clean = cleaning.align(MarketData(ohlcv=data), "SPY")
+    settings = build_settings(("L1", "L2"), ("S1", "S2"), construction="equal_weight", lookback="1y")
+    result = SimpleNamespace(settings=settings, clean=clean, longs=["L1", "L2"], shorts=["S1", "S2"],
+                             as_of=cal[-1], eval_start=cal[-1] - pd.DateOffset(years=1),
+                             rank_stability={})
+    table = run_robustness(result)["table"]
+    rows = table[table["dimension"] == "borrow_cost"].set_index("variant")
+    assert list(rows.index) == ["0.25%", "1.00%", "3.00%"]
+    assert rows.loc["0.25%", "sharpe"] > rows.loc["1.00%", "sharpe"] > rows.loc["3.00%", "sharpe"]
+    assert settings.borrow_cost == 0.0025

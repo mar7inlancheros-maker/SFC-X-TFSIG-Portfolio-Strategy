@@ -430,3 +430,34 @@ por cerrado (ver "Pendiente" al final de esta entrada).
   - Si la consulta falla dentro de una transacción, puede que las consultas
     de IBES que van detrás fallen también. Hay que comprobar que el aviso
     aparece y que IBES sigue llegando.
+
+### Fila de sensibilidad de `borrow_cost` en la robustez (#19)
+
+Aprobada por el comité, sin cambiar el default del YAML.
+
+- **Por qué:** el motor cobra un préstamo plano del 0,25% anual sobre el
+  nocional corto, que es lo típico de un nombre "general collateral". Los
+  nombres difíciles de prestar cuestan bastante más, y hasta ahora no había
+  forma de ver cuánto pesa ese supuesto.
+- **Cambio:**
+  - `robustness.py` añade la dimensión `borrow_cost` con 0,25% / 1% / 3%
+    (`BORROW_COSTS`).
+  - La rejilla está en el código y no en el YAML porque el comité pidió no
+    tocar `config/quant_engine.yaml`. La clave `robustness.borrow_costs`, si
+    se añade al YAML, la sustituye.
+  - `borrow_cost` sigue en 0,0025.
+- **Test:** `test_robustez_incluye_sensibilidad_al_coste_de_prestamo`.
+  Comprueba las tres filas, que el Sharpe baja al subir el préstamo y que el
+  default no cambia.
+- **Impacto:** el resto de la robustez no cambia. Las filas nuevas
+  (trayectoria del Modo A, `risk_parity`, tras #12):
+
+  | Préstamo | Sharpe | CAGR | Max DD |
+  |---|---|---|---|
+  | 0,25% | 1,10 | 29,3% | −21,1% |
+  | 1,00% | 1,07 | 28,4% | −21,4% |
+  | 3,00% | 0,98 | 26,0% | −22,1% |
+
+  Con patas de 100%, cada punto de préstamo cuesta alrededor de un punto de
+  CAGR. Para estos nombres pesa menos que la ventana de evaluación (1 año:
+  0,47) o la frecuencia de rebalanceo (trimestral: 0,90).
