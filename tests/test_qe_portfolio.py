@@ -250,3 +250,44 @@ def test_normal_neutral_rinde_rf_sobre_el_capital_no_bruta_por_rf():
                                          drift=daily_rf(0.04))
     out = montecarlo.summarize(paths, [0.1])
     assert out["expected_terminal_wealth"] == pytest.approx(1.04, abs=0.002)
+
+
+# ---------------------------------------------------------------------------
+#  Metricas del backtest
+# ---------------------------------------------------------------------------
+
+
+def _bt_result(returns: pd.Series, rf: float):
+    from types import SimpleNamespace
+
+    nav = 1e6 * (1.0 + returns).cumprod()
+    return SimpleNamespace(nav=nav, config=SimpleNamespace(risk_free_rate=rf), rebalances=pd.DataFrame(),
+                           trades=pd.DataFrame(), contributions=pd.DataFrame())
+
+
+def test_sortino_del_backtest_usa_la_definicion_del_motor():
+    # Auditoria #4. El backtest usaba sfc_tfsig.metrics.sortino (desviacion
+    # estandar de solo los excesos negativos), no la declarada en
+    # factors/performance.py (semidesviacion sobre todas las sesiones). Con los
+    # mismos datos daban -0,070 y -0,042.
+    from quant_engine.backtest import metrics as btm
+    from quant_engine.factors import performance
+
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2022-01-03", periods=400)
+    r = pd.Series(rng.normal(0.0002, 0.012, 400), index=idx)
+    out = btm.summary(_bt_result(r, 0.04), None)
+    ref = performance.risk_adjusted(out_r := _bt_result(r, 0.04).nav.pct_change().dropna(), 0.04)
+    assert out["sortino"] == pytest.approx(ref["sortino"], rel=1e-12)
+    assert out["downside_deviation"] == pytest.approx(performance.risk_metrics(out_r, 0.04)["downside_vol"], rel=1e-12)
+
+
+def test_desviacion_a_la_baja_es_sobre_el_exceso():
+    # Una cartera plana (retorno 0) queda cada dia rf_d por debajo del
+    # objetivo. Con el retorno bruto la desviacion a la baja salia 0.
+    from quant_engine.backtest import metrics as btm
+
+    idx = pd.bdate_range("2022-01-03", periods=100)
+    r = pd.Series(0.0, index=idx)
+    out = btm.summary(_bt_result(r, 0.04), None)
+    assert out["downside_deviation"] == pytest.approx(daily_rf(0.04) * np.sqrt(252), rel=1e-9)

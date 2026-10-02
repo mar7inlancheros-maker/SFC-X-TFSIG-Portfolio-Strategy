@@ -4,6 +4,12 @@ Reutiliza las de `sfc_tfsig.metrics` (CAGR, Sharpe, drawdown) y el VaR de
 `sfc_tfsig.risk.var`, para que un Sharpe signifique lo mismo en los dos motores
 del repo. Anade las de operativa.
 
+**Sortino y desviacion a la baja son las del motor** (`factors/performance.py`),
+no las de `sfc_tfsig.metrics`: aquella usa la desviacion estandar de solo los
+excesos negativos y este motor declara la semidesviacion sobre todas las
+sesiones. Mezclarlas daba Sortinos distintos para el mismo activo segun la
+seccion del reporte.
+
 **Tasa de acierto, dos definiciones, las dos reportadas:**
 
 - por PERIODO: fraccion de periodos entre rebalanceos con retorno positivo;
@@ -16,14 +22,13 @@ Factor de beneficio = suma de periodos ganadores / |suma de perdedores|.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pandas as pd
 
 from sfc_tfsig import metrics as sm
 from sfc_tfsig.risk.var import historical_es, historical_var
 
+from ..factors import performance
 from .engine import BacktestResult
 
 TD = 252
@@ -44,10 +49,10 @@ def summary(result: BacktestResult, benchmark_nav: pd.Series | None) -> dict[str
         "cumulative_return": sm.total_return(nav),
         "cagr": sm.cagr(nav),
         "volatility": sm.volatility(nav),
-        "downside_deviation": float(math.sqrt((np.minimum(r, 0.0) ** 2).mean()) * math.sqrt(TD)),
+        "downside_deviation": performance.downside_deviation(r, rf),
         "max_drawdown": sm.max_drawdown(nav),
         "sharpe": sm.sharpe(nav, rf),
-        "sortino": sm.sortino(nav, rf),
+        "sortino": performance.sortino_ratio(r, rf),
         "calmar": sm.calmar(nav),
         "var_95_1d": historical_var(r, 0.95),
         "cvar_95_1d": historical_es(r, 0.95),

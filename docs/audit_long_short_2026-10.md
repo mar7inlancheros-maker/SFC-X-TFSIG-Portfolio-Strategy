@@ -261,3 +261,35 @@ resumen final como evidencia.
   cierre. Es decir: el resultado ya no depende de la hora de la corrida. Dos
   corridas seguidas tras el cambio dan una salida idéntica (0 líneas de
   diferencia).
+
+### #4 — Sortino del backtest con otra definición
+
+- **Qué estaba mal:** `backtest/metrics.py:47-50` calculaba el Sortino de
+  carteras y backtests con `sfc_tfsig.metrics.sortino`. Esa función usa la
+  desviación estándar de solo los excesos negativos. El motor declara otra
+  definición en `factors/performance.py:8-13`: la semidesviación del exceso,
+  promediada sobre todas las sesiones. Las secciones [3] (activos) y [10]-[11]
+  (carteras) daban así Sortinos no comparables; con datos sintéticos, −0,070
+  frente a −0,042. Además, `downside_deviation` usaba el retorno bruto y no el
+  exceso sobre rf: una cartera plana salía con desviación a la baja 0.
+- **Cambio:**
+  - `factors/performance.py` expone `downside_deviation` y `sortino_ratio`.
+  - Activos, carteras y backtest usan esas dos funciones.
+  - `sfc_tfsig.metrics` no se toca (es compartido; ver #24).
+- **Tests:**
+  - `test_sortino_del_backtest_usa_la_definicion_del_motor`;
+  - `test_desviacion_a_la_baja_es_sobre_el_exceso`.
+- **Impacto.** Antes es `f58c2b5` y después este commit, con la misma caché.
+  Sharpe, CAGR y drawdown no cambian. Las métricas por activo de [3] tampoco
+  (diferencia máxima 0,0):
+
+  | Método (Modo A) | Sortino antes → después | Desv. a la baja antes → después |
+  |---|---|---|
+  | equal_weight | 1,506 → 1,435 | 15,72% → 15,85% |
+  | inverse_vol | 1,785 → 1,690 | 14,23% → 14,36% |
+  | risk_parity | 2,095 → 1,969 | 13,76% → 13,89% |
+  | min_variance | 2,363 → 2,219 | 13,35% → 13,48% |
+  | max_sharpe | 1,129 → 1,284 | 24,38% → 24,49% |
+
+  La definición anterior inflaba el Sortino de las carteras de menor
+  volatilidad y desinflaba el de `max_sharpe`, que tiene colas más largas.
