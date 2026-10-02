@@ -293,3 +293,33 @@ resumen final como evidencia.
 
   La definición anterior inflaba el Sortino de las carteras de menor
   volatilidad y desinflaba el de `max_sharpe`, que tiene colas más largas.
+
+### #15 — El plan con `max_sharpe` siempre caía a `equal_weight`
+
+- **Qué estaba mal:** `trade_plan.py:148` reconstruía la cartera con las
+  direcciones corregidas usando `mu = 0`. En `max_sharpe` (Charnes-Cooper),
+  la restricción `mu'y = 1` es entonces infactible, así que el plan caía
+  siempre a `equal_weight` con el aviso "max_sharpe fallo con las direcciones
+  corregidas".
+- **Cambio:**
+  - La cartera principal guarda sus medias contraídas (`primary["mu"]`, de
+    James-Stein sobre la ventana de estimación).
+  - El plan las usa en la nueva función `trade_plan.plan_weights`.
+  - Si el método falla igualmente, la caída a `equal_weight` sigue avisada.
+- **Test:** `test_plan_con_max_sharpe_usa_las_medias_contraidas`. Con
+  `mu=None` (el comportamiento anterior), la misma llamada devuelve el aviso
+  de caída.
+- **Impacto.** Antes es `793a822` y después este commit, con
+  `--construction max_sharpe`. Con el default `risk_parity` no cambia nada (0
+  líneas de diferencia en el resumen de métricas). Con `max_sharpe`:
+
+  | | Antes | Después |
+  |---|---|---|
+  | Aviso de caída a `equal_weight` | sí | no |
+  | Pesos del plan, largos (AAPL, MSFT, NVDA, AMZN, META) | 0,167 / 0,167 / 0,083 / 0,083 / 0,083 | 0,182 / 0,103 / 0,028 / 0,087 / 0,030 |
+  | PYPL | −0,125 | −0,052 |
+  | Bruta / neta del plan | 1,17 / +0,155 | 0,94 / +0,075 |
+
+  Los nombres con el tope de riesgo activo (TSLA, BA, NKE e INTC tras el FLIP)
+  no cambian. La bruta baja porque `max_sharpe` concentra en pocos nombres y
+  el tope de riesgo recorta los de stop ancho. El aviso de #16 lo dice.

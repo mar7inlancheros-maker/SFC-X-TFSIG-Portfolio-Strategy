@@ -189,8 +189,8 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
     vol = pd.Series(np.sqrt(np.diag(cov.to_numpy()) * 252), index=cov.index)
     betas = pd.Series({t: beta_mod.regression(window[t], window[clean.benchmark], settings.risk_free_rate).get("beta", 1.0)
                        for t in names})
-    built = construction.build(method, signs, cov=cov, vol=vol, params=params,
-                               mu=construction.shrink_means(window[names]), betas=betas)
+    mu = construction.shrink_means(window[names])
+    built = construction.build(method, signs, cov=cov, vol=vol, params=params, mu=mu, betas=betas)
     block: dict[str, object] = {"method": method, "status": built.status, "note": built.note,
                                 "covariance": cov_name, "weights": built.weights}
     if built.status != "ok":
@@ -204,6 +204,7 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
     block["ex_ante"] = ex
     block["betas"] = betas
     block["cov"] = cov
+    block["mu"] = mu
 
     cfg = backtest_config(settings, method=method, params=params)
     result = bt.run(clean.returns, clean.benchmark, bt.constant_schedule(signs), cfg,
