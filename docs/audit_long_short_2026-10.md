@@ -461,3 +461,159 @@ Aprobada por el comité, sin cambiar el default del YAML.
   Con patas de 100%, cada punto de préstamo cuesta alrededor de un punto de
   CAGR. Para estos nombres pesa menos que la ventana de evaluación (1 año:
   0,47) o la frecuencia de rebalanceo (trimestral: 0,90).
+
+## Resumen de métricas por etapa
+
+Corrida de referencia con el default (`risk_parity`). Todas las cifras de
+cartera son de la trayectoria del Modo A, que es hipotética (ver #8).
+
+| Etapa | Commit | Última sesión | Neta | Sharpe | Sortino | CAGR | Max DD | Rango robustez |
+|---|---|---|---|---|---|---|---|---|
+| Referencia (caché tras el cierre) | `d49f706` | 2026-10-01 | +0,234 | 1,263 | 2,095 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Referencia con mercado abierto | `e45334c` | 2026-10-02 (intradía) | +0,227 | 1,271 | 2,109 | 33,61% | −17,3% | 0,863 – 1,405 |
+| Tras #7 | `f58c2b5` | 2026-10-01 | +0,234 | 1,263 | 2,095 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Tras #4 | `793a822` | 2026-10-01 | +0,234 | 1,263 | 1,969 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Tras #15 | `dd3881e` | 2026-10-01 | +0,234 | 1,263 | 1,969 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Tras #12 | `af1eba0` | 2026-10-01 | 0,000 | 1,102 | 1,685 | 29,33% | −21,1% | 0,471 – 1,395 |
+| Tras #6 y la fila de préstamo | `f431572` | 2026-10-01 | 0,000 | 1,102 | 1,685 | 29,33% | −21,1% | 0,471 – 1,395 |
+
+- #23, #21, #22, #16 y #8 no cambian números.
+- #15 solo cambia algo con `max_sharpe`.
+- #6 solo cambia algo con WRDS.
+
+## Propuestas sin aplicar (requieren aprobación)
+
+### #25 — Robustez sobre la trayectoria A
+
+- **Problema:** `run_robustness` vuelve a correr el backtest del Modo A
+  (`bt.constant_schedule` con la cesta de hoy, `robustness.py:33`) en todas
+  las variantes. Mide la sensibilidad de la *construcción* a decisiones
+  arbitrarias, pero toda variante hereda la selección hecha con información
+  de hoy. Su Sharpe no es evidencia de nada sobre la selección.
+- **Ya aplicado** (dentro de #8): la tabla va rotulada y su rango salió del
+  resumen final.
+- **Propuesta:**
+  1. Si el usuario da señales con fecha (Modo B), correr las mismas
+     variantes sobre el calendario del Modo B y mostrar esa tabla como la
+     robustez válida.
+  2. Sin Modo B, mantener la tabla A rotulada, renombrada a "Sensibilidad de
+     la construcción (hipotética)", y reportar solo la dispersión, no los
+     niveles.
+  3. Ninguna de las dos tablas vuelve al resumen salvo la de B.
+
+### #26 — El plan de operación cruza la línea de la sección 34
+
+- **Problema:** la sección 34 dice que el motor no recomienda: "is a research
+  and risk-analysis tool, NOT an investment adviser". El plan
+  (`trade_plan.py`, sección [14] y `trade_plan_*.csv`) emite:
+  - una columna `action` con `BUY` / `SELL SHORT` / `NO TRADE`;
+  - número de acciones (`shares`) y nocional en dólares;
+  - instrucciones en imperativo: "model suggests SELL SHORT", "do not trade
+    until the thesis is reviewed", "trade at 50% size", "exit 50% at each,
+    move stop to entry after TP1", "Review at the next rebalance or before
+    earnings".
+
+  Además, el veredicto FLIP propone operar el lado contrario al research,
+  que es justo lo que la sección 17 prohíbe ("must NOT overwrite the external
+  BUY/SELL research signal"). Stop y TP, tal como se presentan, son órdenes.
+- **Propuesta:** convertir [14] en un "perfil de riesgo por nombre",
+  descriptivo:
+  - `verdict` pasa a `alignment`: CONFIRM → aligned, REDUCE → neutral,
+    NO TRADE → contradicts, FLIP → strongly contradicts. Son los mismos
+    umbrales y es la misma información que [8], sin verbo de acción.
+  - Fuera `action`, `shares`, `notional` y la cartera "corregida". El peso de
+    referencia es el de la cartera principal, que no cambia el signo del
+    research.
+  - Stop y TP pasan a ser una banda de volatilidad: "±2,5 × ATR(14) =
+    ±X% del último cierre".
+  - P(TP) pasa a ser una tasa base: "en los últimos 3 años, una subida de
+    +1,5 × banda antes de una caída de −1 × banda ocurrió en el Y% de los
+    días".
+  - El tope de riesgo por operación pasa a ser una cifra descriptiva: "con el
+    peso actual, un movimiento de una banda cuesta Z% del capital".
+  - Textos sin imperativos.
+
+  Esto haría que #15 y #16 dejen de aplicar (no habría cartera corregida ni
+  libro del plan). Son commits pequeños y se pueden revertir limpiamente.
+
+### #27 — Entrada por defecto
+
+- **Problema:** `app.py:88-95` asigna como LONG la primera mitad de los
+  tickers si el usuario pulsa Enter. La sección 2 dice: "The first half of
+  the tickers will NOT automatically be assumed to be BUYs". Además,
+  benchmark, periodo, rf, rebalanceo, construcción, capital y coste solo se
+  preguntan bajo "opciones avanzadas".
+- **Propuesta:** pedir "Enter LONG tickers" y "Enter SHORT tickers" por
+  separado, sin default. Preguntar las demás opciones con su default
+  visible, como en la especificación.
+
+### #28 — Retornos anuales y mensuales del backtest
+
+- **Problema:** `backtest/metrics.annual_returns` y `monthly_returns` existen
+  pero nadie las llama. La sección 22 las pide para backtests válidos.
+- **Propuesta:** mostrarlas en [11] cuando hay Modo B y exportarlas a CSV.
+
+### #30 — Mediana en LONG vs SHORT
+
+- **Problema:** `compare_groups` calcula `long_median` y `short_median`, pero
+  [9] no las muestra; solo están en el JSON.
+- **Propuesta:** añadir las dos columnas a la tabla de [9].
+
+## Recomendaciones de parámetros para el comité (no aplicadas)
+
+Por decisión del comité, ninguna se aplica; quedan aquí para discutirlas.
+
+- **`max_position` 0,35 frente al 20% de la especificación (#18).**
+  - Con 5 nombres por pata, el 20% obliga a equiponderar y los cinco métodos
+    dan la misma cartera. Por eso el YAML usa 0,35, y el razonamiento se
+    sostiene.
+  - Pero en `min_variance` y `max_sharpe` el tope se alcanza: un nombre es el
+    35% del capital. Tras #12, `risk_parity` tiene AAPL en 0,307.
+  - Opciones: bajar a 0,30, o añadir un tope de contribución al riesgo por
+    nombre (por ejemplo, 20% del riesgo de su pata).
+- **`borrow_cost` 0,25% (#19).**
+  - Razonable como tasa general.
+  - La fila nueva de robustez muestra unos −0,12 de Sharpe con un préstamo
+    del 3%.
+  - Con WRDS, el interés corto ya se descarga: se podría aproximar un coste
+    por nombre (por ejemplo, más caro si `si_pct_float` > 10% o los días para
+    cubrir > 5).
+- **Construcción por defecto `risk_parity`.**
+  - Tras #12 cumple neta 0, pero queda con beta ex-ante −0,25, porque la pata
+    corta tiene más beta.
+  - Si el objetivo es neutralidad de mercado (§14), conviene valorar
+    `risk_parity` con beta neutral, o `min_variance`, que tiene la beta más
+    baja y el Sharpe más alto en la trayectoria A. Ese Sharpe es hipotético y
+    no debe decidir.
+- **Constantes al YAML (#17):**
+  - `history_d = 756` del plan;
+  - los umbrales de calidad de datos (126 sesiones, 5% de huecos, 1%);
+  - el corte de clusters (ρ 0,6);
+  - la profundidad mínima de episodios de estrés (7%);
+  - `max_ffill = 2`;
+  - la rejilla de `borrow_costs`.
+
+  Moverlas cambia el fingerprint de la configuración.
+
+## Código compartido (no editado, #24)
+
+- `cli.py` importa el motor sin condición y `pyproject.toml` no tiene techo
+  para pandas. Ambos van en el PR de la auditoría del multifactor
+  (`audit/multifactor-review`).
+- `sfc_tfsig.metrics.sortino` sigue con su propia definición. El motor ya no
+  la usa (#4), pero el multifactor sí. Si se quiere una sola definición en el
+  repo, es una decisión del modelo multifactor.
+
+## Pruebas al cierre
+
+- `pytest`: 346 passed. Del motor long/short, 129 (eran 104; 25 tests nuevos).
+- `ruff check --select E9,F` limpio en `src/quant_engine` y en sus tests.
+- Los `.py` modificados no tienen caracteres fuera de ASCII.
+- Corrida interactiva completa de `python main.py` con `COLUMNS=80`.
+  - Opciones del menú: [3] robustez, [5] exportar, [2] `min_variance`,
+    [4] Modo B con CSV, [1] cambio de universo (2 + 2 nombres),
+    [2] `max_sharpe`, una entrada inválida "9" y [6] salir.
+  - Termina con código 0 en 121 s.
+  - Ninguna tabla cortada. El resumen del Modo B cita su CAGR (34,1%) y su
+    Sharpe (1,31).
+- Determinismo: dos corridas seguidas tras #7 dan una salida idéntica.
