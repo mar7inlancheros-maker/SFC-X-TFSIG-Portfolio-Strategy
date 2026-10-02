@@ -162,6 +162,30 @@ def test_componente_desconocido_se_rechaza():
         composite.normalized_weights({"momentum": 1.0, "suerte": 1.0})
 
 
+def test_pesos_efectivos_excluyen_componentes_sin_datos():
+    # Auditoria #22. Sin WRDS, value/quality/analyst/short_interest no tienen
+    # datos y el score se renormaliza sobre el resto; el reporte mostraba los
+    # pesos nominales del YAML como si se usaran.
+    f = _features()
+    weights = {"momentum": 0.20, "value": 0.15, "liquidity": 0.025, "statistical": 0.025}
+    scores = composite.quant_score(f, weights)
+    eff = composite.effective_weights(scores, weights)
+    assert "value" not in eff.index
+    assert eff.sum() == pytest.approx(1.0)
+    assert eff["momentum"] == pytest.approx(0.20 / 0.25)
+    assert eff["liquidity"] == pytest.approx(0.025 / 0.25)
+
+
+def test_linea_de_pesos_muestra_decimales_y_los_inactivos():
+    from quant_engine.reporting.terminal import weights_line
+
+    line = weights_line({"momentum": 0.2, "value": 0.775, "liquidity": 0.025},
+                        pd.Series({"momentum": 0.2 / 0.225, "liquidity": 0.025 / 0.225}))
+    assert "liquidity 2.5% -> 11.1%" in line
+    assert "momentum 20.0% -> 88.9%" in line
+    assert "no data, weight 0: value" in line
+
+
 def test_estabilidad_del_ranking_es_alta_cuando_un_activo_domina_todo():
     f = _features()
     for col, sign in [(c, s) for comp in composite.COMPONENTS.values() for c, s in comp]:

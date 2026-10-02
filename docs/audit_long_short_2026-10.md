@@ -119,3 +119,23 @@ así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
 - **Impacto:** ninguno en los resultados.
   - Antes: la salida de la corrida interactiva de la Fase 1 tenía 429 "…".
   - Después: con `COLUMNS=80`, el txt exportado tiene 0.
+
+### #22 — Pesos del Quant Score mostrados como nominales
+
+- **Qué estaba mal:** la sección [8] imprimía los pesos del YAML. Sin WRDS,
+  los componentes `value`, `quality`, `analyst` y `short_interest` no tienen
+  datos, y `quant_score` renormaliza sobre el resto. El reporte decía
+  "momentum 20%" cuando en realidad pesaba el 40%. Además, `:.0%` convertía
+  el 2,5% en "2%" (`reporting/terminal.py:210`).
+- **Cambio:**
+  - Nueva función `composite.effective_weights`: los pesos del YAML,
+    renormalizados sobre los componentes que tienen algún dato.
+  - Nueva función `terminal.weights_line`: muestra "YAML → efectivo" con un
+    decimal y lista aparte los componentes sin datos.
+- **Tests:**
+  - `test_pesos_efectivos_excluyen_componentes_sin_datos`;
+  - `test_linea_de_pesos_muestra_decimales_y_los_inactivos`.
+- **Impacto:** el score no cambia; solo cambia el texto.
+  - Antes: `momentum 20%, value 15%, … liquidity 2%, statistical 2%`.
+  - Después: `momentum 20.0% -> 40.0%, … liquidity 2.5% -> 5.0%`, más la
+    lista de componentes sin datos (`value, quality, analyst, short_interest`).

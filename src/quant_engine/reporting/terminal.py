@@ -17,6 +17,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from ..analysis import AnalysisResult
+from ..signals import composite
 
 Fmt = Callable[[object], str]
 LINE = "=" * 60
@@ -204,10 +205,21 @@ def factor_exposure(console: Console, r: AnalysisResult) -> None:
                       + ". VIF > 5: that factor's individual beta is unreliable.")
 
 
+def weights_line(nominal: dict[str, float], effective: pd.Series) -> str:
+    """Pesos del YAML y pesos efectivos. Con un decimal: 2,5% no es 2%."""
+    total = sum(float(v) for v in nominal.values() if float(v) > 0)
+    used = [f"{k} {float(v) / total:.1%} -> {effective[k]:.1%}" for k, v in nominal.items() if k in effective.index]
+    idle = [k for k, v in nominal.items() if float(v) > 0 and k not in effective.index]
+    line = "Quant Score weights (YAML -> effective): " + ", ".join(used) + "."
+    if idle:
+        line += f" Components with no data, weight 0: {', '.join(idle)}; the rest keep their proportions."
+    return line
+
+
 def signals(console: Console, r: AnalysisResult) -> None:
     section(console, 8, "QUANTITATIVE SIGNALS")
     w = r.settings.get("signal_weights", {}) or {}
-    console.print("Quant Score weights: " + ", ".join(f"{k} {v:.0%}" for k, v in w.items()))
+    console.print(weights_line(w, composite.effective_weights(r.scores, w)))
     a = r.agreement.copy()
     comp_cols = [c for c in ["momentum", "value", "quality", "analyst", "risk_adjusted_return", "short_interest",
                              "volatility", "mean_reversion", "beta", "liquidity", "statistical"]
