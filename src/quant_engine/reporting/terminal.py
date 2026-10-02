@@ -17,6 +17,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from ..analysis import AnalysisResult
+from ..backtest.engine import MODE_A_LABEL, MODE_A_TAG
 from ..signals import composite
 
 Fmt = Callable[[object], str]
@@ -313,7 +314,7 @@ def portfolio_construction(console: Console, r: AnalysisResult) -> None:
                         {"long": num, "short": num, "gross": num, "net": signed, "beta": signed}, index_name=""))
     bn = r.sector_neutral.get("beta_neutral_backtest", {})
     if bn.get("summary"):
-        console.print(f"Beta-neutral backtest: Sharpe {num(bn['summary'].get('sharpe'))}, "
+        console.print(f"Beta-neutral backtest ({MODE_A_TAG}): Sharpe {num(bn['summary'].get('sharpe'))}, "
                       f"realized beta {signed(bn['summary'].get('beta_realized'))}, "
                       f"max DD {pct(bn['summary'].get('max_drawdown'))}.")
 
@@ -327,6 +328,8 @@ def portfolio_construction(console: Console, r: AnalysisResult) -> None:
 
 def risk_analysis(console: Console, r: AnalysisResult) -> None:
     section(console, 11, f"RISK ANALYSIS ({r.primary['method']})")
+    console.print(f"[bold yellow]{MODE_A_LABEL}.[/] Return, drawdown, VaR and trading metrics below come from "
+                  "that path. Risk contribution is ex-ante, from current weights.")
     sm = r.primary.get("summary", {})
     rows = {
         "CAGR": pct(sm.get("cagr")), "Cumulative return": pct(sm.get("cumulative_return")),
@@ -364,7 +367,7 @@ def stress_test(console: Console, r: AnalysisResult) -> None:
     if not h.empty:
         console.print(table(h.set_index("scenario"),
                             {c: pct for c in ["portfolio", "benchmark", "long_leg_pnl", "short_leg_pnl"]},
-                            title="Historical episodes: today's weights held through past prices",
+                            title=f"Historical episodes: today's weights held through past prices ({MODE_A_TAG})",
                             index_name="Scenario"))
         console.print("portfolio = long_leg_pnl + short_leg_pnl, as a fraction of capital. Only episodes inside "
                       "the downloaded data are shown.")
@@ -396,7 +399,7 @@ def stress_test(console: Console, r: AnalysisResult) -> None:
                           "Squeeze risk and expensive borrow; the flat borrow cost in the backtest understates it.")
     mc = r.montecarlo
     console.print(f"[bold yellow]SIMULATED[/] - 1 year, {int(mc['bootstrap_neutral']['paths'])} paths, "
-                  f"seed {r.settings.get('montecarlo.seed')}")
+                  f"seed {r.settings.get('montecarlo.seed')}. Bootstrap columns resample the Mode A hypothetical path.")
     labels = {"bootstrap_neutral": "bootstrap (neutral drift)", "parametric_neutral": "normal (neutral drift)",
               "bootstrap_historical_drift": "bootstrap (hist. drift)"}
     t = pd.DataFrame({labels[k]: {m: v for m, v in mc[k].items() if m != "paths"} for k in labels})
@@ -412,6 +415,8 @@ def robustness(console: Console, r: AnalysisResult) -> None:
     if not rob:
         console.print("Not run. Select [3] in the menu.")
         return
+    console.print(f"[bold yellow]{MODE_A_LABEL}.[/] Every variant re-runs today's basket over the past: "
+                  "it measures sensitivity to construction choices, not evidence for the selection.")
     t = rob["table"].copy()
     t.index = t["dimension"] + " | " + t["variant"].astype(str)
     cols = [c for c in ["sharpe", "cagr", "max_drawdown", "turnover_annual", "cost_drag_annual"] if c in t.columns]
@@ -477,14 +482,11 @@ def summary(console: Console, r: AnalysisResult) -> None:
     console.print(LINE)
     console.print("FINAL QUANTITATIVE SUMMARY")
     console.print(LINE)
-    sm = r.primary.get("summary", {})
     ex = r.primary.get("ex_ante", {})
     counts = r.agreement["agreement"].value_counts().to_dict()
     lines = [
         f"- The {r.primary['method']} LONG/SHORT portfolio has an ex-ante beta of {signed(ex.get('beta'))}, "
         f"net exposure {signed(ex.get('net'))} and ex-ante annualized volatility of {pct(ex.get('vol_annual'))}.",
-        f"- On the hypothetical path (Mode A) its Sharpe was {num(sm.get('sharpe'))} with max drawdown "
-        f"{pct(sm.get('max_drawdown'))}; the basket selection is in-sample.",
         "- Research/quant agreement: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items()) + ".",
     ]
     if r.spread:
@@ -496,9 +498,15 @@ def summary(console: Console, r: AnalysisResult) -> None:
     conflicts = list(r.agreement.index[r.agreement["agreement"] == "SIGNAL CONFLICT"])
     if conflicts:
         lines.append(f"- Quantitative data contradicts the research signal for: {', '.join(conflicts)}.")
-    if r.robustness:
-        lines.append(f"- Sharpe across robustness variants ranges {num(r.robustness['sharpe_min'])} to "
-                     f"{num(r.robustness['sharpe_max'])}.")
+    if r.historical:
+        hs = r.historical["summary"]
+        lines.append(f"- Mode B (historical signals, dated): CAGR {pct(hs.get('cagr'))}, Sharpe "
+                     f"{num(hs.get('sharpe'))}, max drawdown {pct(hs.get('max_drawdown'))}, "
+                     f"IR {num(hs.get('information_ratio'))}.")
+    # Seccion 21: la trayectoria del modo A (secciones 10 a 13, robustez
+    # incluida) no entra aqui como evidencia.
+    lines.append("- Mode A hypothetical-path metrics (sections 10-13, robustness included) apply today's basket "
+                 "to the past: they are not evidence and are left out of this summary.")
     for line in lines:
         console.print(line)
     if r.warnings:

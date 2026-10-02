@@ -160,3 +160,54 @@ así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
 - **Impacto:** ninguno en los resultados. Aparecen dos avisos nuevos:
   - "net +0.21 vs target +0.00";
   - "gross 1.17 vs target 2.00".
+
+### #8 — Trayectoria del Modo A: rótulo en todas las salidas y fuera del resumen
+
+Decisión del comité: el Modo A se mantiene, pero cumpliendo la sección 21. La
+trayectoria va rotulada como hipotética en todas las salidas y no alimenta el
+resumen final como evidencia.
+
+- **Qué estaba mal:** solo la sección [10] y el gráfico 1 avisaban de que la
+  cesta de hoy se aplica al pasado. Lo demás salía sin rótulo:
+  - [11] RISK ANALYSIS: CAGR, Sharpe, drawdown, VaR y operativa del Modo A;
+  - el backtest beta neutral de [10];
+  - los episodios históricos de [12], con los pesos de hoy;
+  - el bootstrap de Monte Carlo, que remuestrea la trayectoria A;
+  - la robustez de [13] (ver #25);
+  - los gráficos de drawdown, volatilidad móvil y cestas;
+  - en el JSON, `portfolios.*.summary` y `robustness`.
+
+  Además, el resumen final citaba el Sharpe y el drawdown del Modo A y el
+  rango de Sharpe de la robustez (`reporting/terminal.py:472,488`).
+- **Cambio:**
+  - Un único rótulo, `MODE_A_LABEL`, definido en `backtest/engine.py`, junto
+    a la definición del modo.
+  - Terminal (y por tanto txt y html): rótulo en [11] y [13] y etiqueta
+    "Mode A, hypothetical" en el beta neutral, los episodios y Monte Carlo.
+  - Resumen final: se quitan las dos líneas del Modo A. Se añade una línea
+    que dice que esas métricas no son evidencia y quedan fuera, y otra con el
+    Modo B (CAGR, Sharpe, drawdown, IR) cuando hay señales con fecha.
+  - Gráficos 1, 2, 3 y 7: título rotulado y nota al pie "hypothetical, not
+    evidence".
+  - JSON: añade `mode_a_notice`, `path` en cada cartera y en `robustness`,
+    `historical_path` en `stress` y `bootstrap_source` en `montecarlo`. Añade
+    también `mode_b_historical`, que antes no se exportaba.
+  - CSV: ninguno lleva la trayectoria. Se revisaron las columnas:
+    - `portfolio_*.csv` son pesos actuales;
+    - `signals`, `risk` y `correlation` son datos por activo;
+    - `trade_plan` es el plan.
+
+    No hay nada que rotular.
+- **Qué se deja en el resumen y por qué:** el spread diario LONG − SHORT con
+  su p-valor (Newey-West) también usa las cestas de hoy. Se mantiene, porque
+  es la comparación que pide la sección 19 y la sección 34 lo pone de ejemplo
+  ("the statistical difference between the LONG and SHORT baskets has a
+  p-value of X%"). Sigue rotulado "in-sample".
+- **Tests** (`tests/test_qe_reporting.py`):
+  - `test_resumen_final_no_usa_la_trayectoria_del_modo_a`;
+  - `test_resumen_final_cita_el_modo_b_cuando_existe`;
+  - `test_analisis_de_riesgo_rotula_el_modo_a`;
+  - `test_json_rotula_cada_trayectoria_del_modo_a`.
+- **Impacto:** ningún número cambia. El resumen pierde dos líneas:
+  - "Sharpe was 1.26 with max drawdown −17.3%";
+  - "Sharpe across robustness variants ranges 0.82 to 1.40".

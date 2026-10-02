@@ -18,6 +18,7 @@ import pandas as pd
 from rich.console import Console
 
 from ..analysis import AnalysisResult
+from ..backtest.engine import MODE_A_LABEL
 
 
 def _clean(value):
@@ -36,6 +37,20 @@ def _clean(value):
     if isinstance(value, (list, tuple)):
         return [_clean(v) for v in value]
     return value
+
+
+def portfolios_json(portfolios: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    """Cada `summary` sale del backtest del modo A: se rotula en el propio bloque."""
+    return {m: {"status": b.get("status"), "note": b.get("note"), "weights": b.get("weights"),
+                "path": MODE_A_LABEL, "summary": b.get("summary"),
+                "ex_ante": {k: v for k, v in (b.get("ex_ante") or {}).items()}}
+            for m, b in portfolios.items()}
+
+
+def robustness_json(robustness: dict[str, object]) -> dict[str, object]:
+    if not robustness:
+        return {}
+    return {"path": MODE_A_LABEL, **robustness}
 
 
 def to_json(r: AnalysisResult) -> dict:
@@ -68,14 +83,14 @@ def to_json(r: AnalysisResult) -> dict:
         "rank_stability": r.rank_stability,
         "long_vs_short": r.long_vs_short,
         "spread_test": r.spread,
-        "portfolios": {m: {"status": b.get("status"), "note": b.get("note"), "weights": b.get("weights"),
-                           "summary": b.get("summary"),
-                           "ex_ante": {k: v for k, v in (b.get("ex_ante") or {}).items()}}
-                       for m, b in r.portfolios.items()},
+        "mode_a_notice": MODE_A_LABEL,
+        "portfolios": portfolios_json(r.portfolios),
+        "mode_b_historical": r.historical["summary"] if r.historical else None,
         "beta_comparison": r.beta_comparison,
-        "stress": {k: v for k, v in r.stress.items()},
-        "montecarlo": {k: v for k, v in r.montecarlo.items() if k != "bootstrap_terminal"},
-        "robustness": {k: v for k, v in r.robustness.items()} if r.robustness else {},
+        "stress": {"historical_path": MODE_A_LABEL, **{k: v for k, v in r.stress.items()}},
+        "montecarlo": {"bootstrap_source": MODE_A_LABEL,
+                       **{k: v for k, v in r.montecarlo.items() if k != "bootstrap_terminal"}},
+        "robustness": robustness_json(r.robustness),
         "trade_plan": r.trade_plan.get("plan") if r.trade_plan else None,
         "warnings": r.warnings,
         "disclaimer": "Descriptive quantitative analysis. Not investment advice.",

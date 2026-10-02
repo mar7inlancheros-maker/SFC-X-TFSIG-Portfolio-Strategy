@@ -43,6 +43,12 @@ from ..portfolio.constraints import ConstructionParams
 
 log = logging.getLogger(__name__)
 
+# Rotulo unico de la trayectoria del modo A en todas las salidas (terminal, txt,
+# html, json y graficos). La seccion 21 de la especificacion exige que no se
+# presente como si la cesta de hoy se hubiera conocido en el pasado.
+MODE_A_LABEL = "MODE A - HYPOTHETICAL PATH: today's basket applied to the past; not evidence"
+MODE_A_TAG = "Mode A, hypothetical"
+
 SignalSchedule = Callable[[pd.Timestamp], pd.Series | None]
 
 
