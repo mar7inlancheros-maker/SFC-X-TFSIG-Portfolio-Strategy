@@ -17,13 +17,14 @@ del proceso de gobierno, no un obstaculo tecnico que haya que automatizar.
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 
 import pandas as pd
 
-from .config import Config
+from .config import Config, provenance_line
 from .paths import DATA_DIR, REPORT_DIR
+from .report import run_stamp
 
 POSITIONS_FILE = DATA_DIR / "positions.csv"
 
@@ -57,11 +58,16 @@ def build_orders(
     cfg: Config,
     *,
     min_order_notional: float = 100.0,
+    current_prices: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Cartera objetivo + posiciones actuales -> ordenes.
 
     `target` viene de `portfolio.build_portfolio` y trae `ticker`, `weight` y
     `price`. `nav` es el valor total de la cuenta HOY, incluida la caja.
+
+    `current_prices` da precio a las posiciones que salen del objetivo:
+    `build_portfolio` solo devuelve los nombres seleccionados, asi que sin
+    esto cada nombre que rota fuera dejaba la orden de venta sin precio.
 
     Las ordenes por debajo de `min_order_notional` se descartan: mover 40
     dolares para corregir un peso del 0.02% paga comision y no cambia nada.
@@ -75,10 +81,13 @@ def build_orders(
 
     universe = prices.index.union(current_shares.index)
     prices = prices.reindex(universe)
+    if current_prices is not None:
+        prices = prices.fillna(pd.Series(current_prices, dtype="float64").reindex(universe))
     held = current_shares.reindex(universe).fillna(0.0)
 
     # Una posicion que ya no esta en el objetivo se vende entera; su precio sale
-    # de la cartera actual si el modelo ya no la cubre.
+    # de `current_prices` si el modelo ya no la cubre. Sin precio en ninguno de
+    # los dos sitios, error explicito: vender a precio inventado no es opcion.
     missing_price = prices.isna() & (held != 0)
     if missing_price.any():
         raise ValueError(
@@ -119,12 +128,14 @@ def build_orders(
 
 
 def render_orders(orders: pd.DataFrame, target: pd.DataFrame, nav: float,
-                  cfg: Config, as_of: pd.Timestamp) -> str:
+                  cfg: Config, as_of: pd.Timestamp,
+                  provenance: Mapping[str, str] | None = None) -> str:
     """Hoja de ordenes legible, para llevar al comite."""
     lines = [
         f"# Rebalanceo propuesto -- {pd.Timestamp(as_of).date()}",
         "",
         f"- Configuracion: fingerprint `{cfg.fingerprint}`",
+        provenance_line(provenance),
         f"- Valor de la cuenta: {nav:,.2f} {cfg.get('meta.base_currency')}",
         f"- Posiciones objetivo: {len(target)}",
         f"- Ordenes: {len(orders)}",
@@ -166,7 +177,7 @@ def render_orders(orders: pd.DataFrame, target: pd.DataFrame, nav: float,
 def save_orders(orders: pd.DataFrame, text: str, as_of: pd.Timestamp) -> dict[str, Path]:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = pd.Timestamp(as_of).strftime("%Y%m%d")
-    generated = datetime.now().strftime("%H%M")
+    generated = run_stamp(f"ordenes_{stamp}", REPORT_DIR)
     csv_path = REPORT_DIR / f"ordenes_{stamp}_{generated}.csv"
     md_path = REPORT_DIR / f"ordenes_{stamp}_{generated}.md"
     orders.to_csv(csv_path, index=False)

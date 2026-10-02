@@ -157,3 +157,38 @@ def test_el_filtro_de_historia_es_obligatorio_no_opcional(cfg):
 
     parametro = inspect.signature(universe_mod.apply_liquidity_filters).parameters["history_months"]
     assert parametro.default is inspect.Parameter.empty
+
+
+def test_la_capitalizacion_usa_el_precio_real_no_el_ajustado(make_cfg, monkeypatch):
+    # Auditoria #1. Una accion que cotiza a 20 USD con 1.000 millones de
+    # acciones vale 20.000 millones, aunque un split 40:1 posterior haga que
+    # su cierre ajustado sea 0,50. Con el ajustado, el panel la dejaba fuera
+    # por precio (< 5) y por capitalizacion.
+    from sfc_tfsig import panel as panel_mod, universe as universe_mod
+    from sfc_tfsig.data import prices as prices_mod, sec
+
+    cfg = make_cfg(**{"calendar.start": "2015-01-31", "calendar.end": "2015-01-31",
+                      "universe.min_market_cap": 1e9, "universe.min_dollar_volume": 1e6})
+    sessions = pd.bdate_range("2012-06-01", "2015-02-27")
+    long = pd.DataFrame({
+        "date": sessions, "ticker": "AAA",
+        "close": 0.48, "close_split": 0.50, "close_raw": 20.0, "volume": 4e7,
+    })
+    static = pd.DataFrame({"cik": [1], "ticker": ["AAA"], "name": ["A"], "exchange": ["NYSE"],
+                           "sic": [3674], "sector": ["Technology"], "country": ["US"]})
+    observations = pd.DataFrame({
+        "cik": [1, 1], "concept": ["shares", "net_income"],
+        "period_end": pd.to_datetime(["2014-09-30", "2014-09-30"]),
+        "filed": pd.to_datetime(["2014-11-01", "2014-11-01"]),
+        "value": [1e9, 1e9],
+    })
+    monkeypatch.setattr(universe_mod, "build_universe", lambda *a, **k: static.copy())
+    monkeypatch.setattr(universe_mod, "attach_profiles", lambda df, *a, **k: static.copy())
+    monkeypatch.setattr(prices_mod, "get_prices", lambda *a, **k: long.copy())
+    monkeypatch.setattr(sec, "download_fundamentals", lambda *a, **k: observations.copy())
+
+    panel = panel_mod.build_panel(cfg, progress=False)
+    fila = panel.set_index("ticker").loc["AAA"]
+    assert fila["price"] == pytest.approx(20.0)
+    assert fila["market_cap"] == pytest.approx(20e9)
+    assert fila["earnings_yield"] == pytest.approx(0.05)

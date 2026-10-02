@@ -268,7 +268,9 @@ class Window:
     test_end: pd.Timestamp
 
     def __str__(self) -> str:
-        return (f"train {self.train_start.date()}..{self.train_end.date()} | "
+        # Sin "|": la etiqueta va dentro de una tabla Markdown del reporte y lo
+        # partia en una celda de mas.
+        return (f"train {self.train_start.date()}..{self.train_end.date()} / "
                 f"test {self.test_start.date()}..{self.test_end.date()}")
 
 
@@ -344,9 +346,10 @@ def out_of_sample_ic(
 # ---------------------------------------------------------------------------
 #  Decaimiento de la senal
 #
-#  La pregunta de negocio detras: el modelo rota el 273% al ano y paga ~0,55
-#  puntos de CAGR en costes. Rebalancear cada trimestre ahorraria dos tercios de
-#  eso -- pero solo si la senal sigue viva tres meses despues de calcularla. Si
+#  La pregunta de negocio detras: el modelo rota el 365% al ano y paga ~1,46
+#  puntos de NAV en costes (auditoria 2026-10, commit 2d3d996). Rebalancear
+#  cada trimestre ahorraria buena parte de eso -- la configuracion trimestral
+#  rota el 210% y paga 0,84 -- pero solo si la senal sigue viva tres meses despues de calcularla. Si
 #  muere en un mes, rebalancear menos no ahorra coste: regala la senal.
 #
 #  Esto se decide midiendo, no probando frecuencias en el backtest hasta ver cual

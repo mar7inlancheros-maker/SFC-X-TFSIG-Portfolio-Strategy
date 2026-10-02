@@ -17,13 +17,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 
-from .config import Config
+from .config import Config, provenance_line
 from .metrics import TRADING_DAYS
 from .paths import REPORT_DIR
+from .report import run_stamp
 from .risk.analysis import RiskAnalysis
 
 _METHOD_LABELS = {
@@ -461,7 +463,8 @@ def liquidity_section(analysis: RiskAnalysis, top: int = 5) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config) -> str:
+def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config,
+                      provenance: Mapping[str, str] | None = None) -> str:
     """Reporte de riesgo completo en Markdown."""
     header = [
         f"# Reporte de riesgo -- {cfg.get('meta.name')}",
@@ -473,6 +476,7 @@ def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config) -> 
         f"(fingerprint `{cfg.fingerprint}`)",
         f"- Politica de riesgo: `{risk_cfg.source.name if risk_cfg.source else 'en memoria'}` "
         f"(fingerprint `{risk_cfg.fingerprint}`)",
+        provenance_line(provenance),
         f"- Estado general: **{analysis.status}**",
         "",
         "> Dos reportes de riesgo son comparables si coinciden los DOS",
@@ -539,21 +543,18 @@ def render_pre_trade(analysis: RiskAnalysis) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _stamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M")
-
-
-def save_risk_report(text: str, name: str = "riesgo") -> Path:
+def save_risk_report(text: str, name: str = "riesgo", stamp: str | None = None) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = REPORT_DIR / f"{name}_{_stamp()}.md"
+    path = REPORT_DIR / f"{name}_{stamp or run_stamp(name, REPORT_DIR)}.md"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def save_risk_artifacts(analysis: RiskAnalysis, name: str = "riesgo") -> dict[str, Path]:
+def save_risk_artifacts(analysis: RiskAnalysis, name: str = "riesgo",
+                        stamp: str | None = None) -> dict[str, Path]:
     """Tablas del reporte en CSV, para recalcular o auditar cualquier cifra."""
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = _stamp()
+    stamp = stamp or run_stamp(name, REPORT_DIR)
     frames = {
         "limites": analysis.limits,
         "contribuciones": analysis.ex_ante.contributions.reset_index(),
@@ -576,7 +577,8 @@ def save_risk_artifacts(analysis: RiskAnalysis, name: str = "riesgo") -> dict[st
     return paths
 
 
-def save_risk_charts(analysis: RiskAnalysis, name: str = "riesgo") -> Path | None:
+def save_risk_charts(analysis: RiskAnalysis, name: str = "riesgo",
+                     stamp: str | None = None) -> Path | None:
     """Abanico del Monte Carlo, backtest del VaR y riesgo frente a peso por sector."""
     try:
         import matplotlib
@@ -586,7 +588,7 @@ def save_risk_charts(analysis: RiskAnalysis, name: str = "riesgo") -> Path | Non
         return None
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = REPORT_DIR / f"{name}_{_stamp()}_graficos.png"
+    path = REPORT_DIR / f"{name}_{stamp or run_stamp(name, REPORT_DIR)}_graficos.png"
     fig, axes = plt.subplots(3, 1, figsize=(11, 12))
     ax_fan, ax_var, ax_sector = axes
 

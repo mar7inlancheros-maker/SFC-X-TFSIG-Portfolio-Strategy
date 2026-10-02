@@ -15,16 +15,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 import pandas as pd
 
 from . import attribution as attribution_mod, panel as panel_mod, report as report_mod, validation as validation_mod
 from . import risk_report as risk_report_mod
 from .backtest import benchmark_nav, run_backtest
-from .config import Config, ConfigError, load_config, load_risk_config
+from .config import Config, ConfigError, code_revision, load_config, load_risk_config
 from .console import enable_utf8_stdout
-from .data import cache, prices as prices_mod
+from .data import cache, prices as prices_mod, sec as sec_mod
 from .factors.composite import build_scores
 from .metrics import evaluate
 from .orders import build_orders, load_positions, render_orders, save_orders
@@ -34,6 +33,15 @@ from .risk import analysis as risk_mod
 from .universe import build_universe, summarize
 
 PANEL_CACHE = "panel_scored"
+
+
+def provenance() -> dict[str, str]:
+    """Commit y versiones de las caches: lo que el fingerprint no cubre."""
+    return {
+        "commit": code_revision(),
+        "panel_version": panel_mod.PANEL_VERSION,
+        "observations_version": sec_mod.OBSERVATIONS_VERSION,
+    }
 
 
 def _load(config_path: str | None) -> Config:
@@ -91,6 +99,15 @@ def _price_frames(scored: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.D
     end = pd.Timestamp.today().normalize()
     long = prices_mod.get_prices(tickers, start, end, progress=False)
     return prices_mod.to_wide(long, "close"), prices_mod.to_wide(long, "volume")
+
+
+def _latest_close(tickers: list[str]) -> pd.Series:
+    """Ultimo cierre conocido de cada ticker, de la cache de precios."""
+    end = pd.Timestamp.today().normalize()
+    long = prices_mod.get_prices(tickers, end - pd.DateOffset(days=15), end, progress=False)
+    if long.empty:
+        return pd.Series(dtype="float64")
+    return prices_mod.to_wide(long, "close").ffill().iloc[-1]
 
 
 def _load_risk(path: str | None) -> Config:
@@ -175,6 +192,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     scored = _require_panel(cfg, rebuild=args.rebuild)
     close = _close_prices(scored, cfg)
 
+    prov = provenance()
     print("\ncorriendo backtest...")
     result = run_backtest(scored, close, cfg)
 
@@ -203,11 +221,12 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     text = report_mod.build_report(
         result, perf, cfg, benchmark_nav=bench, validation=validation,
         contributions=contributions, yearly_excess=yearly_excess,
-        decay_lag=decay_lag, decay_horizon=decay_horizon,
+        decay_lag=decay_lag, decay_horizon=decay_horizon, provenance=prov,
     )
-    path = report_mod.save_report(text)
-    artifacts = report_mod.save_artifacts(result)
-    chart = report_mod.save_charts(result, bench) if cfg.get("reporting.charts") else None
+    stamp = report_mod.run_stamp("backtest")
+    path = report_mod.save_report(text, stamp=stamp)
+    artifacts = report_mod.save_artifacts(result, stamp=stamp, provenance=prov)
+    chart = report_mod.save_charts(result, bench, stamp=stamp) if cfg.get("reporting.charts") else None
 
     print(text)
     print(f"\nreporte: {path}")
@@ -240,8 +259,11 @@ def cmd_ordenes(args: argparse.Namespace) -> int:
                   "(pasa --capital para incluir la caja)")
 
     target = build_portfolio(cross_section, cfg, held=set(current.index))
-    orders = build_orders(target, current, nav, cfg)
-    text = render_orders(orders, target, nav, cfg, last_date)
+    # Precio de lo que ya se tiene: las posiciones que salen del objetivo no
+    # traen precio en `target`, y sin el la orden de venta no se puede generar.
+    current_prices = _latest_close(list(current.index)) if not current.empty else None
+    orders = build_orders(target, current, nav, cfg, current_prices=current_prices)
+    text = render_orders(orders, target, nav, cfg, last_date, provenance=provenance())
 
     if not args.sin_riesgo and not target.empty:
         # Antes de operar, no despues: si la cartera propuesta excede un limite,
@@ -298,10 +320,11 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
         strategy_fingerprint=cfg.fingerprint,
     )
 
-    text = risk_report_mod.build_risk_report(analysis, cfg, risk_cfg)
-    path = risk_report_mod.save_risk_report(text)
-    artifacts = risk_report_mod.save_risk_artifacts(analysis)
-    chart = risk_report_mod.save_risk_charts(analysis) if cfg.get("reporting.charts") else None
+    text = risk_report_mod.build_risk_report(analysis, cfg, risk_cfg, provenance=provenance())
+    stamp = report_mod.run_stamp("riesgo")
+    path = risk_report_mod.save_risk_report(text, stamp=stamp)
+    artifacts = risk_report_mod.save_risk_artifacts(analysis, stamp=stamp)
+    chart = risk_report_mod.save_risk_charts(analysis, stamp=stamp) if cfg.get("reporting.charts") else None
 
     print(text)
     print(f"\nreporte de riesgo: {path}")
@@ -394,9 +417,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="pide la contrasena una vez y la guarda (pgpass)")
     p_wrds.set_defaults(func=cmd_wrds)
 
-    from quant_engine.app import add_parser as add_research_parser
-
-    add_research_parser(sub)
+    # El motor long/short es opcional (extra [quant]: rich, statsmodels...). Si
+    # no esta instalado, los subcomandos del modelo multifactor tienen que
+    # seguir funcionando: antes este import era incondicional y
+    # `python main.py backtest` moria con "No module named 'rich'".
+    try:
+        from quant_engine.app import add_parser as add_research_parser
+    except ImportError:
+        pass
+    else:
+        add_research_parser(sub)
     return parser
 
 
@@ -407,8 +437,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.comando is None:
-            from quant_engine.app import interactive
-
+            try:
+                from quant_engine.app import interactive
+            except ImportError as exc:
+                print(
+                    f"el motor long/short no esta disponible ({exc}). Instala el extra "
+                    "con: pip install -e \".[quant]\", o usa un subcomando del modelo "
+                    "multifactor (python main.py --help)",
+                    file=sys.stderr,
+                )
+                return 2
             return interactive()
         return args.func(args)
     except KeyboardInterrupt:

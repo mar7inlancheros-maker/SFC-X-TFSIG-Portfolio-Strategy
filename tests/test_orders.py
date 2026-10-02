@@ -96,3 +96,18 @@ def test_hoja_de_ordenes_incluye_el_fingerprint(cfg):
     texto = render_orders(ordenes, target, 100_000.0, cfg, pd.Timestamp("2026-09-30"))
     assert cfg.fingerprint in texto
     assert "2026-09-30" in texto
+
+
+def test_posicion_que_sale_del_objetivo_toma_su_precio_de_la_cartera_actual(cfg):
+    # Caso real de `python main.py ordenes`: el objetivo de build_portfolio
+    # solo trae los nombres seleccionados, no los que salen. Antes esto
+    # lanzaba "faltan precios" cada mes que rotaba un nombre.
+    target = _target({"AAA": 1.0}, {"AAA": 100.0})
+    actuales = pd.Series({"VIEJA": 500.0})
+    ordenes = build_orders(
+        target, actuales, 100_000.0, cfg, current_prices=pd.Series({"VIEJA": 20.0})
+    ).set_index("ticker")
+
+    assert ordenes.loc["VIEJA", "side"] == "SELL"
+    assert ordenes.loc["VIEJA", "shares"] == pytest.approx(500.0)
+    assert ordenes.loc["VIEJA", "price"] == pytest.approx(20.0)

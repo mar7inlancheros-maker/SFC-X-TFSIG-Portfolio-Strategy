@@ -134,3 +134,9 @@ def test_la_configuracion_es_inmutable():
     cfg = config_from_dict(BASE_CONFIG)
     with pytest.raises(Exception):
         cfg.fingerprint = "otro"
+
+
+def test_include_tsx_only_activado_es_un_error_explicito(make_cfg):
+    # Ningun modulo lee `include_tsx_only`: activarlo no hacia nada y no avisaba.
+    with pytest.raises(ConfigError, match="include_tsx_only"):
+        make_cfg(**{"universe.include_tsx_only": True})

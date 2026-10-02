@@ -6,7 +6,9 @@ lo impiden, todas verificables leyendo el codigo de abajo:
 
 1. Los fundamentales entran por `sec.as_of(fecha)`, que filtra por FECHA DE
    PRESENTACION. Nunca por fecha de cierre contable.
-2. El precio de una fecha es el ultimo cierre en o ANTES de esa fecha.
+2. El precio de una fecha es el ultimo cierre en o ANTES de esa fecha, y es el
+   precio REAL de ese dia, no el ajustado por splits y dividendos posteriores:
+   el ajustado depende de lo que la empresa hizo despues.
 3. Momentum y volatilidad se calculan sobre la ventana que termina en esa fecha.
 4. El retorno futuro (`forward_return`) se agrega aparte, con nombre explicito, y
    solo lo consume `validation.py`. El backtest no lo mira.
@@ -37,7 +39,19 @@ from .data import prices as prices_mod, sec
 # sus columnas sube esta version.
 #
 #   v2 -- 2026-09-23: se aplica `min_history_months`.
-PANEL_VERSION = "v2"
+#   v3 -- 2026-10-01: precio real (no ajustado) para el filtro de precio y la
+#         capitalizacion; volumen en dolares con el cierre ajustado solo por
+#         splits. Auditoria #1.
+#   v4 -- 2026-10-01: fundamentales en CAD convertidos a USD. Auditoria #2.
+#   v5 -- 2026-10-01: sectores pequenos puntuados contra la seccion cruzada
+#         global. Auditoria #6.
+PANEL_VERSION = "v5"
+
+# Tipo de cambio para los emisores que reportan en CAD: USD por CAD, de Yahoo.
+# Desde 2007 para cubrir los periodos contables mas viejos que puede ver la
+# primera fecha del panel.
+_FX_TICKER = "CADUSD=X"
+_FX_START = pd.Timestamp("2007-01-01")
 
 # Conceptos crudos que viajan al panel desde la SEC.
 _CONCEPT_COLUMNS = tuple(sec.CONCEPTS.keys())
@@ -105,6 +119,9 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
         static["ticker"], price_start, end, refresh=refresh, progress=progress
     )
     close_wide = prices_mod.to_wide(long_prices, "close")
+    # Niveles (precio minimo, capitalizacion) con el precio que cotizaba ese
+    # dia. Retornos, momentum y volatilidad siguen con el ajustado.
+    level_wide = prices_mod.level_close(long_prices)
     # Mediana movil de 63 sesiones, el MISMO criterio que usa el filtro por
     # fecha. Con el maximo diario crudo el prefiltro no filtraba nada: cualquier
     # accion toca tres millones de dolares en un dia suelto de resultados, asi
@@ -138,7 +155,8 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
 
     if progress:
         print("[4/6] fundamentales point-in-time (XBRL)...", flush=True)
-    observations = sec.download_fundamentals(tradable["cik"], progress=progress)
+    fx = _cad_usd(end, progress=progress)
+    observations = sec.download_fundamentals(tradable["cik"], progress=progress, fx=fx)
 
     if progress:
         print("[5/6] factores de precio...", flush=True)
@@ -177,7 +195,7 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
         if visible.empty:
             continue
 
-        price = _as_of_price_frame(close_wide, date)
+        price = _as_of_price_frame(level_wide, date)
         visible["price"] = visible["ticker"].map(price)
         if "shares" in visible.columns:
             visible["market_cap"] = visible["price"] * visible["shares"]
@@ -224,6 +242,18 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
     panel = _add_shares_growth(panel)
     panel = financials.compute_all(panel)
     return panel.sort_values(["date", "ticker"]).reset_index(drop=True)
+
+
+def _cad_usd(end: pd.Timestamp, *, progress: bool = True) -> pd.Series | None:
+    """Tipo diario USD por CAD, o None si no hay (y se avisa)."""
+    long = prices_mod.get_prices([_FX_TICKER], _FX_START, end, progress=False)
+    wide = prices_mod.to_wide(long, "close")
+    if _FX_TICKER not in wide.columns or wide[_FX_TICKER].dropna().empty:
+        if progress:
+            print(f"      aviso: sin {_FX_TICKER}; las cifras en CAD no entran al panel",
+                  flush=True)
+        return None
+    return wide[_FX_TICKER].dropna()
 
 
 def _add_shares_growth(panel: pd.DataFrame) -> pd.DataFrame:

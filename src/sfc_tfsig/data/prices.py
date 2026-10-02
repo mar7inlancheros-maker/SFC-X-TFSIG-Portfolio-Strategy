@@ -1,8 +1,23 @@
-"""Precios diarios ajustados y las series que se derivan de ellos.
+"""Precios diarios y las series que se derivan de ellos.
 
-Fuente: Yahoo via `yfinance`, con `auto_adjust=True` -- el cierre ya viene
-ajustado por splits y dividendos, que es lo unico con lo que se puede calcular
-un retorno total honesto.
+Fuente: Yahoo via `yfinance`, con `auto_adjust=False` y `actions=True`. De cada
+sesion se guardan tres cierres, porque sirven para cosas distintas:
+
+- `close`: ajustado por splits y dividendos ("Adj Close"). Es lo unico con lo
+  que se puede calcular un retorno total honesto: momentum, volatilidad,
+  backtest y benchmark.
+- `close_split`: ajustado solo por splits ("Close" de Yahoo). Por el mismo
+  factor que el volumen, asi que `close_split x volume` es el volumen en dolares
+  real.
+- `close_raw`: el precio que de verdad cotizaba ese dia. Se reconstruye
+  deshaciendo los splits posteriores. Es el unico valido para NIVELES: el
+  filtro de precio minimo y la capitalizacion (precio x acciones reportadas).
+
+  Usar el ajustado para niveles mete el futuro en el pasado: NVDA cerro 2014 a
+  20,05 USD y el cierre ajustado por los splits de 2021 y 2024 es 0,48. Con el
+  ajustado, el modelo la excluia por precio y por capitalizacion hasta 2017, y
+  los nombres que despues hicieron splits -- casi siempre los ganadores --
+  salian con capitalizaciones diminutas y rendimientos de valor inflados.
 
 **Sesgo de supervivencia, declarado.** Yahoo solo devuelve tickers que existen
 HOY. Las empresas que quebraron, se fusionaron o fueron excluidas del mercado no
@@ -27,7 +42,9 @@ import pandas as pd
 
 from . import cache
 
-_MASTER = "prices_master"
+# v2: tres cierres por sesion (ver docstring). La cache v1 solo tenia el
+# ajustado; con otro nombre conviven y la v1 no se reutiliza por error.
+_MASTER = "prices_master_v2"
 _FAILURES = "prices_failures"
 _BATCH = 150  # tickers por peticion; por encima, Yahoo empieza a devolver huecos
 
@@ -55,15 +72,33 @@ def _import_yfinance():
     return yf
 
 
+_LONG_COLUMNS = ["date", "ticker", "close", "close_split", "close_raw", "volume"]
+
+
 def _empty_long() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "date": pd.Series(dtype="datetime64[ns]"),
             "ticker": pd.Series(dtype="object"),
             "close": pd.Series(dtype="float64"),
+            "close_split": pd.Series(dtype="float64"),
+            "close_raw": pd.Series(dtype="float64"),
             "volume": pd.Series(dtype="float64"),
         }
     )
+
+
+def _future_split_factor(splits: pd.Series) -> pd.Series:
+    """Producto de los splits POSTERIORES a cada sesion (1 si no hay).
+
+    `splits` es la columna "Stock Splits" de Yahoo de un ticker: 0 los dias
+    sin split y la razon (10.0 para un 10:1) el dia del split. Ese dia el
+    cierre ya es posterior al split, asi que su propio split no cuenta.
+    """
+    ratio = pd.to_numeric(splits, errors="coerce").fillna(0.0)
+    ratio = ratio.where(ratio > 0, 1.0)
+    through_end = ratio[::-1].cumprod()[::-1]
+    return through_end / ratio
 
 
 def _tidy(raw: pd.DataFrame, tickers: Sequence[str]) -> pd.DataFrame:
@@ -75,9 +110,15 @@ def _tidy(raw: pd.DataFrame, tickers: Sequence[str]) -> pd.DataFrame:
         # Un solo ticker: yfinance aplana las columnas.
         raw = pd.concat({tickers[0]: raw}, axis=1).swaplevel(axis=1)
 
+    available = set(raw.columns.get_level_values(0))
+    # Con auto_adjust=False, "Adj Close" es el ajustado total y "Close" el
+    # ajustado solo por splits. Una respuesta sin "Adj Close" (auto_adjust=True)
+    # solo trae el ajustado total en "Close".
+    fields = [("close", "Adj Close" if "Adj Close" in available else "Close"),
+              ("close_split", "Close"), ("splits", "Stock Splits"), ("volume", "Volume")]
     frames = []
-    for field, column in (("close", "Close"), ("volume", "Volume")):
-        if column not in raw.columns.get_level_values(0):
+    for field, column in fields:
+        if column not in available:
             continue
         block = raw[column].copy()
         block.index.name = "date"
@@ -89,10 +130,18 @@ def _tidy(raw: pd.DataFrame, tickers: Sequence[str]) -> pd.DataFrame:
 
     out = pd.concat(frames, axis=1).reset_index()
     out["ticker"] = out["ticker"].astype(str).str.upper()
-    out = out.dropna(subset=["close"])
-    if "volume" not in out.columns:
-        out["volume"] = np.nan
-    return out[["date", "ticker", "close", "volume"]].sort_values(["ticker", "date"])
+    out = out.dropna(subset=["close"]).sort_values(["ticker", "date"])
+    for column in ("close_split", "splits", "volume"):
+        if column not in out.columns:
+            out[column] = np.nan
+    out["close_split"] = out["close_split"].fillna(out["close"])
+    # El factor se calcula sobre la serie del ticker en esta descarga. Una
+    # descarga que llega hasta hoy ve todos los splits posteriores; una cola
+    # incremental solo ve los suyos, y el precio real de las filas ya
+    # cacheadas no cambia con splits nuevos.
+    factor = out.groupby("ticker", group_keys=False)["splits"].apply(_future_split_factor)
+    out["close_raw"] = out["close_split"] * factor.reindex(out.index).fillna(1.0)
+    return out[_LONG_COLUMNS]
 
 
 def _download_batch(tickers: Sequence[str], start, end) -> pd.DataFrame:
@@ -101,15 +150,16 @@ def _download_batch(tickers: Sequence[str], start, end) -> pd.DataFrame:
         list(tickers),
         start=pd.Timestamp(start).strftime("%Y-%m-%d"),
         end=(pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
-        auto_adjust=True,
+        # Sin ajuste automatico y con splits: hacen falta los tres cierres.
+        auto_adjust=False,
         progress=False,
         threads=True,
-        actions=False,
+        actions=True,
     )
     return _tidy(raw, list(tickers))
 
 
-_LEDGER = "prices_fetched"
+_LEDGER = "prices_fetched_v2"  # va con la cache v2: lo pedido en v1 no esta en ella
 _TOLERANCE = pd.Timedelta(days=5)  # fines de semana y festivos no son huecos
 
 
@@ -314,6 +364,16 @@ def to_wide(long: pd.DataFrame, field: str = "close") -> pd.DataFrame:
     return long.pivot_table(index="date", columns="ticker", values=field, aggfunc="last").sort_index()
 
 
+def level_close(long: pd.DataFrame) -> pd.DataFrame:
+    """Precio real (fechas x tickers) para filtros de nivel y capitalizacion.
+
+    Cae al ajustado si la cache no trae `close_raw` (datos sinteticos de tests
+    antiguos); con la cache v2 siempre lo trae.
+    """
+    field = "close_raw" if "close_raw" in long.columns else "close"
+    return to_wide(long, field)
+
+
 def month_end(wide: pd.DataFrame) -> pd.DataFrame:
     """Ultimo valor observado de cada mes natural."""
     if wide.empty:
@@ -361,7 +421,11 @@ def median_dollar_volume(long: pd.DataFrame, window_d: int = 63) -> pd.DataFrame
     if long.empty:
         return pd.DataFrame()
     df = long.copy()
-    df["dollar_volume"] = df["close"] * df["volume"]
+    # Precio y volumen ajustados por el MISMO factor de split: su producto es el
+    # volumen en dolares real. Con el cierre ajustado por dividendos salia
+    # infravalorado, mas cuanto mas atras y cuanto mas dividendo.
+    price = df["close_split"] if "close_split" in df.columns else df["close"]
+    df["dollar_volume"] = price * df["volume"]
     wide = df.pivot_table(index="date", columns="ticker", values="dollar_volume", aggfunc="last")
     rolling = wide.rolling(window_d, min_periods=max(20, window_d // 3)).median()
     return month_end(rolling)

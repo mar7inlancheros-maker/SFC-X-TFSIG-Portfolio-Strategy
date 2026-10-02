@@ -13,6 +13,17 @@
 #  las dos corridas: elegir la frecuencia por su CAGR seria elegir el parametro
 #  con el resultado delante.
 #
+#  NOTA DE LA AUDITORIA 2026-10. Las cifras de arriba (76%, t = 2,65, 89%) se
+#  midieron con precios ajustados en los filtros de nivel (fallo #1) y sin los
+#  canadienses en CAD (#2). Recalculadas con el codigo final (commit 2d3d996,
+#  fingerprint mensual d196a3534431f142): con un mes de retraso la senal
+#  conserva el 82% del IC (t = 1,93), con dos el 74% (t = 1,82), con tres el
+#  66% (t = 1,68, ya no significativa al 5%), y un rebalanceo trimestral
+#  conserva el 85% de la senal. El IC fresco es 0,0183 (t = 2,39). La rotacion
+#  mensual es ahora del 365% anual, ~12 bps de NAV por rebalanceo. Backtest:
+#  mensual 15,98% de CAGR (exceso 1,34 puntos, costes 1,46% del NAV al ano);
+#  trimestral 16,52% (exceso 2,28, costes 0,84%). Ver docs/audit_2026-10.md.
+#
 #  La cadencia es parametro de mandato. La fija el comite conjunto.
 #
 #      python main.py --config config/strategy_trimestral.toml backtest
@@ -40,14 +51,18 @@ base_currency = "USD"
 #  UNIVERSO INVESTIBLE
 #
 #  US + Canada, pero via listado en EE.UU.: emisores estadounidenses mas
-#  canadienses cross-listed (NYSE/Nasdaq/NYSE American). Razon: los
+#  canadienses cross-listed (NYSE y Nasdaq; ver `exchanges`). Razon: los
 #  fundamentales point-in-time salen del XBRL de la SEC, que cubre a los
 #  canadienses que presentan 40-F o 10-K y NO a los exclusivos de TSX. Todo
 #  cotiza en USD, asi que el book no carga riesgo de divisa.
 #
-#  El tramo TSX-only se activa con `include_tsx_only` y HOY degrada a factores
-#  solo-precio (momentum y baja volatilidad): sin fundamentales no hay value ni
-#  quality. Ver README, "Limitaciones declaradas".
+#  El tramo TSX-only NO esta implementado: `include_tsx_only = true` es un
+#  error de configuracion (auditoria 2026-10, #15). Sin fundamentales no habria
+#  value ni quality. Ver README, "Limitaciones declaradas".
+#
+#  Los canadienses que reportan en CAD (Royal Bank, Enbridge, Suncor, BCE...)
+#  se convierten a USD: flujos al tipo medio del periodo, saldos al de cierre
+#  (auditoria #2). Antes se quedaban sin fundamentales y fuera del modelo.
 # ---------------------------------------------------------------------------
 [universe]
 # Valores que la SEC emite de verdad en company_tickers_exchange.json:
@@ -61,23 +76,31 @@ min_market_cap       = 750_000_000  # USD. Micro caps: datos peores, costes peor
 min_history_months   = 24           # necesario para momentum 12-1 y vol de 12m
 max_names            = 1200         # techo del panel, por coste de descarga
 
-# Antiguedad maxima de la ultima presentacion. Por encima de esto la empresa se
-# cae del panel: 550 dias son mas de cuatro trimestres de retraso, y una empresa
+# Antiguedad maxima del ultimo cierre contable visible (`period_end` del dato
+# mas reciente ya presentado, no la fecha de presentacion). Por encima de esto
+# la empresa se cae del panel: 550 dias son mas de cuatro trimestres de retraso, y una empresa
 # que no reporta en ese plazo o esta en problemas o ya no informa. Comprarla con
 # los numeros de hace dos anos es comprar a ciegas.
 max_fundamental_staleness_d = 550
 
-# SIC excluidos: fondos cerrados, REITs hipotecarios, blank checks y vehiculos
-# de inversion. Sus estados financieros no son comparables con los de una
-# empresa operativa: el "margen" y el "ROIC" de un fondo no significan nada.
+# SIC excluidos: 6189 y 6199 (vehiculos de activos y financieros varios), 6221
+# (ETF y fideicomisos de materias primas, abajo), 6726 (fondos cerrados), 6770
+# (blank checks) y 6798, que son TODOS los REIT, no solo los hipotecarios. Sus
+# estados financieros no son comparables con los de una empresa operativa: el
+# "margen" y el "ROIC" de un fondo no significan nada. Consecuencia de 6798:
+# RealEstate queda con 3-4 nombres en algunas fechas (auditoria #12).
 #
 # 6221 (Commodity Contracts Brokers & Dealers) se anadio el 2026-09-23 tras la
 # atribucion del primer backtest. Ahi viven TODOS los ETF y fideicomisos de
 # materias primas y divisas: GBTC y ETHE (bitcoin y ether), GLD, SLV, CEF y
 # OUNZ (metales), USO, UNG y BNO (energia), DBA y DBC (cestas), FXC y FXF
 # (divisas). El modelo los venia comprando por momentum, con el peso maximo.
-# GBTC aporto 4,86 puntos en 2024 y el bloque entero devolvio 4,6 en 2025 y 5,4
-# en 2026. Son 28 tickers, ninguno una empresa.
+# Cifras originales (2026-09-23): GBTC aporto 4,86 puntos en 2024. Recalculadas
+# en la auditoria 2026-10 con el codigo final (commit 2d3d996) y una variante de
+# esta config sin 6221 ni require_fundamental_score (fingerprint
+# ba825ded59884c6f): GBTC +4,96 puntos en 2024; el bloque entero +6,8 en 2024,
+# -1,6 en 2025 y -3,2 en 2026. 65 de los perfiles descargados tienen SIC 6221;
+# ninguno es una empresa.
 exclude_sic = [6189, 6199, 6221, 6726, 6770, 6798]
 
 # ---------------------------------------------------------------------------
@@ -104,15 +127,17 @@ lowvol   = 0.10
 [factors.processing]
 winsorize_pct    = 0.02   # recorta el 2% de cada cola antes de estandarizar
 sector_neutral   = true   # z-score DENTRO del sector, no contra todo el panel
-min_sector_names = 5      # sector con menos nombres: cae a z-score global
+min_sector_names = 5      # sector con menos nombres: se puntua contra toda la fecha
 min_coverage     = 0.60   # metrica con menos cobertura que esto se descarta
 
 # Exige que la empresa tenga score de VALOR y de CALIDAD para recibir un score
 # compuesto. Sin esto, un nombre sin fundamentales entra por momentum y baja
 # volatilidad, que es como el Grayscale Bitcoin Trust acabo con el peso maximo
 # de la cartera: cero cobertura en ingresos y en patrimonio, y aun asi un score
-# compuesto en el 100% de las fechas. Solo quita el 2,8% del panel, pero el
-# 13,1% de los nombres que entraban al top-30. Este es un modelo multifactor
+# compuesto en el 100% de las fechas. Solo quita el 1,8% del panel, pero el
+# 10,6% de los nombres que entraban al top-30 (auditoria 2026-10, commit
+# 2d3d996, fingerprint d196a3534431f142; antes de las correcciones #1 y #2 era
+# 2,8% y 13,5%). Este es un modelo multifactor
 # FUNDAMENTAL: si no se pueden puntuar los fundamentales, no se compra.
 require_fundamental_score = true
 
@@ -169,9 +194,11 @@ risk_free_rate  = 0.04        # anual, para Sharpe. Aproximacion de T-bill.
 # ---------------------------------------------------------------------------
 #  VALIDACION
 #
-#  Walk-forward: el modelo solo se juzga fuera de muestra. `train_years` se usa
-#  para calibrar; `test_years` es el tramo que cuenta. La ventana avanza y nunca
-#  mira hacia atras.
+#  Walk-forward: el IC se mide en ventanas de `train_years` y en el tramo
+#  siguiente de `test_years`. OJO: no se calibra nada en el tramo de
+#  entrenamiento. Pesos y parametros son fijos y se eligieron con la muestra
+#  entera, asi que esto mide estabilidad de la senal, no un fuera de muestra de
+#  las decisiones de diseno (auditoria #18).
 # ---------------------------------------------------------------------------
 [validation]
 train_years    = 4
@@ -183,6 +210,6 @@ newey_west_lag = 6     # rezagos para los errores estandar de Fama-MacBeth
 #  REPORTE
 # ---------------------------------------------------------------------------
 [reporting]
-cadence   = "Q"                # trimestral, para el comite conjunto
+cadence   = "Q"                # trimestral, para el comite. Ningun modulo lo lee aun
 charts    = true
-decimals  = 2
+decimals  = 2                  # ningun modulo lo lee: los reportes usan 2 fijos

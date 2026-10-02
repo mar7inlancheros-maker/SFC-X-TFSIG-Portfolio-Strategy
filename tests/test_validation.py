@@ -108,3 +108,17 @@ def test_ic_fuera_de_muestra_se_mide_solo_en_el_tramo_de_prueba():
     assert (tabla["test_months"] > 0).all()
     # Con senal estacionaria, dentro y fuera de muestra deben parecerse.
     assert tabla["test_ic"].mean() > 0.0
+
+
+def test_la_tabla_walk_forward_del_reporte_tiene_cuatro_columnas():
+    # La etiqueta de la ventana llevaba un "|" y partia la fila en cinco celdas.
+    from sfc_tfsig.report import validation_section
+
+    dates = pd.date_range("2012-01-31", periods=84, freq="ME")
+    ventanas = val.walk_forward_windows(dates, train_years=4, test_years=1)
+    wf = pd.DataFrame([{"window": str(v), "train_ic": 0.03, "test_ic": 0.01, "test_months": 12}
+                       for v in ventanas])
+    texto = validation_section({"walk_forward": wf})
+    filas = [l for l in texto.splitlines() if l.startswith("| train")]
+    assert filas
+    assert all(l.count("|") == 5 for l in filas)

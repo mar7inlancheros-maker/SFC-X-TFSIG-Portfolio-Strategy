@@ -243,3 +243,27 @@ def test_la_rotacion_anualizada_usa_los_rebalanceos_reales_no_doce(make_cfg):
     assert f"{esperado * 100:.2f}%" in texto
     # Y no la version inflada:
     assert f"{result.average_turnover * 12 * 100:.2f}%" not in texto
+
+
+def test_sin_precio_de_ejecucion_los_topes_se_siguen_respetando(make_cfg):
+    # Auditoria #7. Si a un nombre del objetivo le falta precio el dia de
+    # ejecucion, los demas se renormalizaban a 1 - cash_buffer sin mirar los
+    # topes: con 10 nombres al 10% (tope 12%) y 4 sin precio, los 6 restantes
+    # subian al 16,7%. Ahora se recortan al tope y el resto queda en caja.
+    cfg = make_cfg(**{"portfolio.n_positions": 10, "portfolio.buffer_rank": 10,
+                      "portfolio.max_sector_w": 1.0, "portfolio.max_weight": 0.12,
+                      "portfolio.cash_buffer": 0.0})
+    sessions = _sessions(periods=60)
+    tickers = [f"T{i:02d}" for i in range(10)]
+    close = _flat_prices(tickers, sessions)
+    dates = pd.date_range("2020-01-31", periods=1, freq="ME")
+    execution = sessions[sessions > dates[0]][0]
+    close.loc[execution, tickers[:4]] = np.nan
+
+    result = run_backtest(_panel(dates, tickers), close, cfg, progress=False)
+
+    # El peso realizado se mide sobre el NAV despues de costes (20 bps): un 12%
+    # objetivo sale 12,02%. Sin la correccion salia 16,7%.
+    assert result.holdings["weight"].max() <= 0.12 * 1.005
+    assert len(result.holdings) == 6
+    assert result.rebalances["cash"].iloc[0] > 0.0

@@ -123,8 +123,11 @@ def factor_score(
     """Score de un factor para todo el panel, fecha a fecha.
 
     Con `sector_neutral`, los sectores con menos de `min_sector_names` nombres
-    caen al grupo global de esa fecha: estandarizar dentro de un sector de tres
-    empresas produce z-scores de +-1.2 mecanicos que no dicen nada.
+    se puntuan contra la seccion cruzada GLOBAL de esa fecha (todos los
+    nombres): estandarizar dentro de un sector de tres empresas produce
+    z-scores de +-1.2 mecanicos que no dicen nada. Antes se estandarizaban solo
+    entre los nombres de los sectores pequenos, que con un unico sector pequeno
+    es exactamente ese caso.
     """
     out = pd.Series(np.nan, index=panel.index, dtype="float64")
 
@@ -144,10 +147,11 @@ def factor_score(
 
             rest = day[~in_big]
             if len(rest) > 0:
-                out.loc[rest.index] = standardize_group(
-                    rest, metrics, winsorize_pct=winsorize_pct,
+                global_scores = standardize_group(
+                    day, metrics, winsorize_pct=winsorize_pct,
                     min_coverage=min_coverage, method=method,
                 )
+                out.loc[rest.index] = global_scores.loc[rest.index]
         else:
             out.loc[day.index] = standardize_group(
                 day, metrics, winsorize_pct=winsorize_pct,

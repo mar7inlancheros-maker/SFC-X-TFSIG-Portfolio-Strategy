@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from .config import Config
-from .portfolio import build_portfolio
+from .portfolio import apply_caps, build_portfolio
 
 
 @dataclass
@@ -104,7 +104,6 @@ def run_backtest(
     rebalance_rows: list[dict] = []
     warnings: list[str] = []
 
-    previous_weights = pd.Series(dtype="float64")
     previous_execution: pd.Timestamp | None = None
 
     for i, signal_date in enumerate(signal_dates, start=1):
@@ -172,9 +171,21 @@ def run_backtest(
             if target_weights.empty:
                 previous_execution = execution_date
                 continue
-            target_weights = target_weights / target_weights.sum() * (
-                1.0 - float(cfg.get("portfolio.cash_buffer"))
+            # Se reparte lo que dejan los excluidos SIN saltarse los topes:
+            # renormalizar a 1 - cash_buffer a secas podia subir un nombre o un
+            # sector por encima de su techo. Lo que no cabe queda en caja, como
+            # en `portfolio.apply_caps`.
+            sectors = (
+                target.set_index("ticker")["sector"].reindex(target_weights.index).fillna("Unknown")
+                if "sector" in target.columns
+                else pd.Series("Unknown", index=target_weights.index)
             )
+            target_weights = apply_caps(
+                target_weights / target_weights.sum(),
+                sectors,
+                max_weight=float(cfg.get("portfolio.max_weight")),
+                max_sector_weight=float(cfg.get("portfolio.max_sector_w")),
+            ) * (1.0 - float(cfg.get("portfolio.cash_buffer")))
 
         # -- ordenes --------------------------------------------------------
         all_names = shares.index.union(target_weights.index)
@@ -250,7 +261,6 @@ def run_backtest(
                 }
             )
 
-        previous_weights = realized_weights
         previous_execution = execution_date
 
         if progress and (i % 12 == 0 or i == len(signal_dates)):

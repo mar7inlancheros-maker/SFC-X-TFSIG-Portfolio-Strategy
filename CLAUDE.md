@@ -8,7 +8,7 @@ rompe en silencio*.
 
 ```bash
 python -c "import sys; print(sys.prefix)"   # comprueba el entorno
-python -m pytest                            # 50+ tests, sin red, ~2 segundos
+python -m pytest                            # 242 tests del modelo (346 con [quant]), sin red, ~25 s
 ```
 
 Los tests no tocan la red. Si un cambio los rompe, se rompió la lógica, no
@@ -85,8 +85,22 @@ equivocado.
   cambio en `select_by_priority`, `quarterly_segments`,
   `trailing_twelve_months` o `point_in_time_balances` exige subir la versión.
   Si no se sube, el panel sigue leyendo observaciones calculadas con la lógica
-  vieja y nada falla. Las filas crudas (`facts_raw/`) no dependen de la versión:
-  subirla recalcula desde ellas, sin tocar EDGAR.
+  vieja y nada falla. Las filas crudas (`facts_raw_v2/`) no dependen de la
+  versión: subirla recalcula desde ellas, sin tocar EDGAR. (Las de `facts_raw/`
+  se extrajeron solo en USD; la auditoría #2 las rehízo con su unidad.)
+
+- **Precios: tres cierres, y los niveles usan el real.** La caché
+  `prices_master_v2` guarda `close` (ajustado por splits y dividendos: para
+  retornos, momentum, volatilidad y backtest), `close_split` (ajustado solo
+  por splits, como el volumen: `close_split × volume` es el volumen en
+  dólares) y `close_raw` (el precio que cotizaba ese día). El filtro de precio
+  y la capitalización usan `close_raw`. Usar el ajustado para niveles mete el
+  futuro en el pasado y nada falla: NVDA salía a 0,48 USD en 2014 y fuera del
+  universo hasta 2017.
+
+- **Las cifras en CAD se convierten con el tipo conocido al presentar.**
+  Flujos al tipo medio de su periodo, saldos al de cierre; nunca un tipo
+  posterior al cierre del periodo. Sin tipo de cambio, la cifra no entra.
 
 - **La prioridad de etiquetas XBRL se resuelve por periodo, no por empresa.**
   Elegir una sola etiqueta por empresa borraba toda la historia de ingresos
@@ -99,8 +113,10 @@ equivocado.
 
 - **`require_fundamental_score` exige score de valor Y de calidad.** Sin eso,
   un nombre sin ingresos ni patrimonio entra en cartera puntuado solo por
-  precio. Solo quitaba el 2,8% del panel, pero el 12,6% del top-30, y esos
-  nombres rendían +0,67% al mes frente al +1,96% de sus reemplazos.
+  precio. Hoy quita el 1,8% del panel y el 10,6% del top-30 (auditoría
+  2026-10, commit `2d3d996`; antes de las correcciones, 2,8% y 13,5%). La
+  cifra de rendimiento de 2026-09-23 (+0,67% al mes frente al +1,96% de sus
+  reemplazos) no se recalculó.
 
 - **El panel se cachea por fingerprint de configuración**
   (`panel_scored_<fingerprint>`). Varias configuraciones conviven. No volver a
