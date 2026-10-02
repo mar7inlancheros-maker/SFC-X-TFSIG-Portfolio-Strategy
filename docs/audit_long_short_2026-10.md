@@ -211,3 +211,53 @@ resumen final como evidencia.
 - **Impacto:** ningún número cambia. El resumen pierde dos líneas:
   - "Sharpe was 1.26 with max drawdown −17.3%";
   - "Sharpe across robustness variants ranges 0.82 to 1.40".
+
+### #7 — La sesión en curso entraba como si fuera un cierre
+
+- **Qué estaba mal:**
+  - `as_of` era `Timestamp.today()` (`analysis.py:215`) y la descarga pedía
+    hasta hoy + 1 (`data/loader.py:46`). Con el mercado abierto, Yahoo
+    devuelve una barra intradía para hoy, y el motor la trataba como un
+    cierre.
+  - Esa barra quedaba 24 horas en caché, así que una corrida a las 12:00
+    seguía viendo el precio de las 12:00 por la tarde y al día siguiente.
+  - Afectaba al precio de entrada, al ATR, a los stops, al último retorno, al
+    VaR y al último día del backtest.
+- **Cambio:**
+  - Nueva función `loader.last_complete_session(now)`: la última sesión cuya
+    barra ya es definitiva, a partir de las 16:15 de Nueva York (salta
+    fines de semana). `as_of` sale de ahí.
+  - `load_ohlcv` corta en `<= end` todo lo que viene de la caché o de Yahoo.
+  - Nuevo registro `qe_ohlcv_fetched` con la hora de cada descarga. Una caché
+    escrita antes de las 16:15 del día `end` lleva la barra intradía, así que
+    se vuelve a pedir. Las cachés antiguas, sin registro, se piden una vez.
+  - La sección [1] dice hasta qué sesión llegan los datos.
+- **Tests** (`tests/test_qe_loader.py`):
+  - `test_ultima_sesion_completa`, con 4 casos: viernes abierto, recién
+    cerrado, cerrado y sábado;
+  - `test_la_barra_de_la_sesion_en_curso_no_entra`;
+  - `test_cache_bajada_antes_del_cierre_se_vuelve_a_pedir`;
+  - `test_cache_bajada_tras_el_cierre_se_reutiliza`.
+- **Impacto.** Antes de las corridas se respaldó la caché `qe_ohlcv` fuera
+  del repo. Corrida "antes" con el código de `e45334c`, con caché vacía y el
+  mercado abierto (2 de octubre, 12:02 de Nueva York). Corrida "después" con
+  el código nuevo, sobre la caché que dejó la anterior:
+
+  | | Antes (barra intradía del 2-oct) | Después (cierre del 1-oct) |
+  |---|---|---|
+  | Última sesión | 2026-10-02 (intradía) | 2026-10-01 |
+  | Sharpe `risk_parity` (Modo A) | 1,271 | 1,263 |
+  | CAGR `risk_parity` (Modo A) | 33,61% | 33,36% |
+  | Sharpe `min_variance` (Modo A) | 1,405 | 1,395 |
+  | Rango de Sharpe en robustez | 0,863 – 1,405 | 0,815 – 1,395 |
+  | Entrada / stop AAPL | 332,65 / 315,07 | 330,32 / 312,20 |
+  | Entrada / stop NKE | 33,22 / 36,06 | 35,15 / 37,60 |
+  | Entrada / stop TSLA | 372,78 / 403,84 | 354,11 / 383,67 |
+  | Acciones NKE en el plan | 3.514 | 4.077 |
+  | Neta del plan | +0,247 | +0,211 |
+
+  "Después" coincide cifra a cifra con la corrida de referencia de `d49f706`.
+  Esa corrida se hizo con la caché escrita la noche anterior, después del
+  cierre. Es decir: el resultado ya no depende de la hora de la corrida. Dos
+  corridas seguidas tras el cambio dan una salida idéntica (0 líneas de
+  diferencia).

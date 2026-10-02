@@ -102,7 +102,8 @@ def data_quality(console: Console, r: AnalysisResult) -> None:
                         {"missing_pct": lambda v: pct(v, 2), "sessions": lambda v: f"{int(v)}"},
                         index_name="Ticker"))
     console.print(f"Benchmark: {r.settings.benchmark}  |  Observations (evaluation window): "
-                  f"{int((r.clean.returns.index >= r.eval_start).sum())}")
+                  f"{int((r.clean.returns.index >= r.eval_start).sum())}  |  Data through the last complete "
+                  f"session: {r.as_of.date()} (a session still trading is excluded)")
     if r.excluded:
         console.print(f"[bold red]EXCLUDED for data quality: {', '.join(r.excluded)}[/]")
     for t, src in r.sector_source.items():

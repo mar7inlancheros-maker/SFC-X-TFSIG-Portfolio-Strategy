@@ -8,7 +8,11 @@ tests, y ningun numero se recalcula de forma distinta en dos sitios.
 
     data_start = eval_start - 1 ano   (calentamiento: la primera estimacion de
                                        covarianza necesita 252 sesiones previas)
-    eval_start = hoy - lookback       (todo lo que se reporta sale de aqui)
+    eval_start = as_of - lookback     (todo lo que se reporta sale de aqui)
+
+`as_of` es la ultima sesion con barra diaria definitiva, no "hoy": con el
+mercado abierto, la barra de hoy es intradia y cambiaria precio de entrada,
+ATR, VaR y backtest segun la hora de la corrida.
 """
 
 from __future__ import annotations
@@ -212,7 +216,7 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
 def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
                  progress: Progress = lambda _msg: None, run_robustness: bool = True) -> AnalysisResult:
     warnings: list[str] = list(settings.get("_notes", []) or [])
-    as_of = pd.Timestamp.today().normalize()
+    as_of = loader.last_complete_session()
     eval_start = as_of - pd.DateOffset(years=settings.lookback_years)
     data_start = eval_start - pd.DateOffset(years=1, days=10)
 
