@@ -117,5 +117,5 @@ así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
   default que ya tenía el modo `research`.
 - **Test:** `test_la_consola_interactiva_tiene_ancho_fijo`.
 - **Impacto:** ninguno en los resultados.
-  - Corrida interactiva con `COLUMNS=80`, contando "…" en el txt exportado:
-    antes 40, después 0.
+  - Antes: la salida de la corrida interactiva de la Fase 1 tenía 429 "…".
+  - Después: con `COLUMNS=80`, el txt exportado tiene 0.
