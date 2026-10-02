@@ -471,7 +471,7 @@ def summary(console: Console, r: AnalysisResult) -> None:
         f"net exposure {signed(ex.get('net'))} and ex-ante annualized volatility of {pct(ex.get('vol_annual'))}.",
         f"- On the hypothetical path (Mode A) its Sharpe was {num(sm.get('sharpe'))} with max drawdown "
         f"{pct(sm.get('max_drawdown'))}; the basket selection is in-sample.",
-        f"- Research/quant agreement: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items()) + ".",
+        "- Research/quant agreement: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items()) + ".",
     ]
     if r.spread:
         lines.append(f"- LONG minus SHORT daily spread: {pct(r.spread['mean_annual'])}/yr, p = "

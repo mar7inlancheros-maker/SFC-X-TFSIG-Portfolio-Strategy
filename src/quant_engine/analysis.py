@@ -356,7 +356,6 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     progress("estres")
     w = primary["weights"]
-    port_daily = pa.static_returns(w, r_eval)
     # Beta de cartera en el peor caso razonable: cada largo con el percentil 95
     # de su beta movil observada, cada corto con el percentil 5. Un corto con
     # beta baja cubre MENOS, asi que su peor caso es la beta baja, no la alta.

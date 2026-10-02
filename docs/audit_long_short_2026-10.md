@@ -94,3 +94,14 @@ así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
 
 ## Registro de cambios
 
+### #23 — Avisos de ruff
+
+- **Qué estaba mal:** `ruff --select E9,F` daba tres avisos:
+  - `port_daily` se calculaba y nunca se usaba (`analysis.py:359`);
+  - `pandas` se importaba sin usarse (`reporting/charts.py:16`);
+  - había un f-string sin placeholders (`reporting/terminal.py:474`).
+- **Cambio:** se borra la línea muerta, se quita el import y el prefijo `f`.
+- **Impacto:** ninguno en los resultados. `static_returns` es pura, así que la
+  línea borrada no tenía efectos. Ruff queda limpio y siguen pasando los 104
+  tests.
+
