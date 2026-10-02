@@ -105,3 +105,17 @@ así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
   línea borrada no tenía efectos. Ruff queda limpio y siguen pasando los 104
   tests.
 
+### #21 — Tablas cortadas en el modo interactivo
+
+- **Qué estaba mal:** en el modo interactivo, `Console(record=True)` tomaba
+  el ancho del terminal (`app.py:148,162`). Con 80 columnas, las tablas
+  anchas salían cortadas con "…". El txt y el html se exportan de lo que
+  graba la consola, así que se cortaban igual. En la corrida de la Fase 1, la
+  tabla de señales era ilegible.
+- **Cambio:** las cuatro consolas del modo interactivo usan
+  `report_console()`, con un ancho fijo `REPORT_WIDTH = 160`. Es el mismo
+  default que ya tenía el modo `research`.
+- **Test:** `test_la_consola_interactiva_tiene_ancho_fijo`.
+- **Impacto:** ninguno en los resultados.
+  - Corrida interactiva con `COLUMNS=80`, contando "…" en el txt exportado:
+    antes 40, después 0.

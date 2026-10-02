@@ -39,6 +39,15 @@ Would you like to:
 [6] Exit
 """
 
+# Ancho fijo del reporte. El txt y el html se exportan de lo que grabo la
+# consola: con el ancho del terminal (80 columnas tipicamente) las tablas
+# anchas salian cortadas con "..." y asi quedaban en los ficheros.
+REPORT_WIDTH = 160
+
+
+def report_console() -> Console:
+    return Console(record=True, width=REPORT_WIDTH)
+
 
 def _setup_logging(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
@@ -145,7 +154,7 @@ def save(result: AnalysisResult, console: Console, *, charts: bool = True) -> di
 
 def interactive() -> int:
     enable_utf8_stdout()
-    console = Console(record=True)
+    console = report_console()
     print("=" * 60)
     print("        QUANTITATIVE HEDGE FUND RESEARCH ENGINE")
     print("=" * 60)
@@ -159,13 +168,13 @@ def interactive() -> int:
         choice = input("Selection:\n> ").strip()
         try:
             if choice == "1":
-                console = Console(record=True)
+                console = report_console()
                 settings = ask_settings(settings)
                 result, _ = execute(settings, console)
             elif choice == "2":
                 method = _ask(f"Portfolio construction {list(CONSTRUCTIONS)}", settings.construction)
                 settings = settings.with_changes(construction=method)
-                console = Console(record=True)
+                console = report_console()
                 result, _ = execute(settings, console)
             elif choice == "3":
                 from .robustness import run_robustness
@@ -177,7 +186,7 @@ def interactive() -> int:
                 if not path.exists():
                     print(f"  ERROR: {path} not found")
                     continue
-                console = Console(record=True)
+                console = report_console()
                 result, _ = execute(settings, console, signals_csv=path)
             elif choice == "5":
                 save(result, console)
@@ -221,7 +230,7 @@ def add_parser(sub) -> None:
     p.add_argument("--signals", help="CSV date,ticker,signal para el modo B")
     p.add_argument("--no-robustness", action="store_true")
     p.add_argument("--no-charts", action="store_true")
-    p.add_argument("--width", type=int, default=160, help="ancho de la salida")
+    p.add_argument("--width", type=int, default=REPORT_WIDTH, help="ancho de la salida")
     p.set_defaults(func=run_once)
 
 

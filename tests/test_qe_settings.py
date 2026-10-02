@@ -209,3 +209,15 @@ def test_long_fuera_de_la_lista_se_rechaza():
 
     with pytest.raises(SettingsError, match="no estan en la lista"):
         split_long_short(("A", "B"), "Z")
+
+
+def test_la_consola_interactiva_tiene_ancho_fijo(monkeypatch):
+    # Auditoria #21. La consola interactiva tomaba el ancho del terminal: con
+    # 80 columnas las tablas salian cortadas con "..." y asi quedaban en el txt
+    # y el html exportados. Ahora el ancho es fijo, como en el modo `research`.
+    from quant_engine import app
+
+    monkeypatch.setenv("COLUMNS", "80")
+    console = app.report_console()
+    assert console.width == app.REPORT_WIDTH == 160
+    assert console.record
