@@ -423,6 +423,7 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     result.trade_plan = build_plan(result, params_from_settings(settings))
     if result.trade_plan.get("note"):
         warnings.append(result.trade_plan["note"])
+    warnings.extend(result.trade_plan.get("warnings", []))
 
     if run_robustness:
         from .robustness import run_robustness as rr

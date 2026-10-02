@@ -74,3 +74,17 @@ def test_params_from_settings_reads_yaml_sections():
     p = tp.params_from_settings(S())
     assert (p.stop_atr, p.tp_r, p.max_risk_per_trade, p.flip, p.horizon_d) == (3.0, (2.0, 4.0), 0.02, -0.6, 21)
     assert (p.weak, p.conflict) == (0.2, -0.2)
+
+
+def test_aviso_si_el_plan_no_queda_neutral():
+    # Auditoria #16. Tras REDUCE y el tope de riesgo por operacion, el plan
+    # quedaba en bruta 1,17 y neta +0,21 sin ningun aviso.
+    w = pd.Series({"A": 0.18, "B": 0.09, "C": -0.06})
+    notes = tp.book_warnings(w, gross=2.0, net=0.0)
+    assert any("net +0.21" in n for n in notes)
+    assert any("gross 0.33" in n for n in notes)
+
+
+def test_sin_aviso_si_el_plan_cumple():
+    w = pd.Series({"A": 0.5, "B": 0.5, "C": -0.5, "D": -0.5})
+    assert tp.book_warnings(w, gross=2.0, net=0.0) == []

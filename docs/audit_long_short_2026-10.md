@@ -139,3 +139,24 @@ así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
   - Antes: `momentum 20%, value 15%, … liquidity 2%, statistical 2%`.
   - Después: `momentum 20.0% -> 40.0%, … liquidity 2.5% -> 5.0%`, más la
     lista de componentes sin datos (`value, quality, analyst, short_interest`).
+
+### #16 — Plan de operación no neutral sin aviso
+
+- **Qué estaba mal:** el plan parte de la cartera reconstruida (bruta 2,0,
+  neta 0), pero tres cosas la mueven sin respetar las patas:
+  - REDUCE recorta el nombre a la mitad;
+  - NO TRADE y FLIP sacan el nombre o lo cambian de pata;
+  - el tope de riesgo por operación recorta los nombres de stop ancho.
+
+  En la corrida de referencia, el libro final quedaba en bruta 1,17 y neta
+  +0,21, y solo se veía en una línea de cifras.
+- **Cambio:** nueva función `trade_plan.book_warnings`. Avisa si la neta se
+  aleja más de 0,05 del objetivo o si la bruta queda más de 0,05 por debajo.
+  - Los avisos salen en la sección [14] y en la lista final de avisos.
+  - No se redistribuye nada: el plan sigue igual y ahora lo dice.
+- **Tests:**
+  - `test_aviso_si_el_plan_no_queda_neutral`;
+  - `test_sin_aviso_si_el_plan_cumple`.
+- **Impacto:** ninguno en los resultados. Aparecen dos avisos nuevos:
+  - "net +0.21 vs target +0.00";
+  - "gross 1.17 vs target 2.00".

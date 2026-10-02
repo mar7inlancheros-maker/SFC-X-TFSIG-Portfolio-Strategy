@@ -468,6 +468,8 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
                   f"P(TP): share of past entries in this stock ({p.horizon_d}-session horizon, "
                   "same ATR multiples) that hit the target before the stop. A historical base rate, not a "
                   "forecast. Review at the next rebalance or before earnings.")
+    for w in tp.get("warnings", []):
+        console.print(f"[bold yellow]! {escape(w)}[/]")
 
 
 def summary(console: Console, r: AnalysisResult) -> None:
