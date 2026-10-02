@@ -22,6 +22,34 @@ log = logging.getLogger(__name__)
 _FIELDS = ("Open", "High", "Low", "Close", "Volume")
 _MAX_AGE_DAYS = 1.0  # los cierres de ayer cambian el analisis; los de hace un ano no
 
+# Cierre de Nueva York mas un margen para que Yahoo publique la barra final.
+# Antes de esa hora la barra del dia es intradia: un precio a medias que
+# cambiaria el precio de entrada, el ATR, el ultimo retorno, el VaR y el
+# backtest segun la hora a la que se corra el motor.
+_MARKET_TZ = "America/New_York"
+_SESSION_FINAL = pd.Timedelta(hours=16, minutes=15)
+
+
+def last_complete_session(now: pd.Timestamp | None = None) -> pd.Timestamp:
+    """Fecha (sin hora) de la ultima sesion cuya barra diaria ya es definitiva.
+
+    No conoce festivos: un festivo da una fecha sin barra, que es inocuo porque
+    los datos se cortan en `<= fecha`.
+    """
+    now = pd.Timestamp.now(tz=_MARKET_TZ) if now is None else now
+    local = now.tz_convert(_MARKET_TZ) if now.tzinfo else now.tz_localize(_MARKET_TZ)
+    day = local.normalize()
+    if local - day < _SESSION_FINAL:
+        day -= pd.Timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= pd.Timedelta(days=1)
+    return day.tz_localize(None)
+
+
+def _final_after(end: pd.Timestamp) -> pd.Timestamp:
+    """Momento a partir del cual la barra de `end` es definitiva."""
+    return (end.normalize() + _SESSION_FINAL).tz_localize(_MARKET_TZ)
+
 
 @dataclass
 class MarketData:
@@ -68,6 +96,9 @@ def _download(tickers: list[str], start: pd.Timestamp, end: pd.Timestamp) -> dic
 
 
 _REQUESTED = "qe_ohlcv_requested"
+# Cuando se descargo cada ticker. Una cache escrita antes del cierre de `end`
+# lleva la barra intradia de ese dia y hay que volver a pedirla.
+_FETCHED = "qe_ohlcv_fetched"
 
 
 def load_ohlcv(
@@ -76,6 +107,7 @@ def load_ohlcv(
     end: pd.Timestamp,
     *,
     refresh: bool = False,
+    now: pd.Timestamp | None = None,
 ) -> MarketData:
     """OHLCV ajustado por splits y dividendos para cada ticker.
 
@@ -83,19 +115,28 @@ def load_ohlcv(
     cada ticker, no por su primer precio: una accion que salio a bolsa hace dos
     anos nunca tendra precios de hace cinco, y mirando solo la cache se volveria
     a descargar en cada corrida. Es el mismo error que tuvo `sfc_tfsig.data.prices`.
+
+    Nada posterior a `end` entra, venga de la cache o de Yahoo. Pasar como `end`
+    la ultima sesion completa (`last_complete_session`) deja fuera la barra
+    intradia de la sesion en curso.
     """
     wanted = list(dict.fromkeys(t.upper() for t in tickers))
     result = MarketData(ohlcv={})
     requested = cache.read_json(_REQUESTED) or {}
+    fetched = cache.read_json(_FETCHED) or {}
+    now = pd.Timestamp.now(tz=_MARKET_TZ) if now is None else now
+    final_after = _final_after(end)
     to_fetch: list[str] = []
 
     for ticker in wanted:
         cached = None if refresh else cache.read_frame(_cache_name(ticker), max_age_days=_MAX_AGE_DAYS)
         asked_from = requested.get(ticker)
         covered = asked_from is not None and pd.Timestamp(asked_from) <= start + pd.Timedelta(days=7)
-        if cached is not None and not cached.empty and covered:
+        fetched_at = fetched.get(ticker)
+        final = fetched_at is not None and pd.Timestamp(fetched_at) >= final_after
+        if cached is not None and not cached.empty and covered and final:
             frame = cached.set_index(pd.to_datetime(cached["date"])).drop(columns="date")
-            result.ohlcv[ticker] = frame.loc[frame.index >= start]
+            result.ohlcv[ticker] = frame.loc[(frame.index >= start) & (frame.index <= end)]
             continue
         to_fetch.append(ticker)
 
@@ -107,10 +148,13 @@ def load_ohlcv(
             if frame is None:
                 result.failures[ticker] = "Yahoo no devolvio datos (ticker invalido, deslistado o sin historia)"
                 continue
+            frame = frame.loc[frame.index <= end]
             cache.write_frame(_cache_name(ticker), frame.reset_index())
             requested[ticker] = start.strftime("%Y-%m-%d")
+            fetched[ticker] = now.isoformat()
             result.ohlcv[ticker] = frame
         cache.write_json(_REQUESTED, requested)
+        cache.write_json(_FETCHED, fetched)
     return result
 
 

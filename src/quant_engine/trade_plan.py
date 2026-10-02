@@ -125,6 +125,43 @@ def hit_rate(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.S
     return wins / total if total else float("nan")
 
 
+def plan_weights(method: str, traded: pd.Series, *, cov: pd.DataFrame, mu: pd.Series | None,
+                 betas: pd.Series | None, params: ConstructionParams) -> tuple[pd.Series, str]:
+    """Cartera con las direcciones corregidas y el mismo metodo que la principal.
+
+    `mu` son las medias contraidas (James-Stein) de la ventana de estimacion,
+    las mismas que usa la cartera principal. Con mu = 0 la restriccion
+    mu'y = 1 de max_sharpe es infactible y el plan caia siempre a equal_weight.
+    """
+    vol = pd.Series(np.sqrt(np.diag(cov.loc[traded.index, traded.index]) * 252), index=traded.index)
+    mu = mu.reindex(traded.index) if mu is not None else pd.Series(0.0, index=traded.index)
+    built = construction.build(method, traded, cov=cov, vol=vol, params=params, mu=mu, betas=betas)
+    if built.status == "ok":
+        return built.weights, ""
+    note = f"{method} fallo con las direcciones corregidas ({built.note}); se usa equal_weight"
+    return construction.equal_weight(traded, params), note
+
+
+def book_warnings(weights: pd.Series, gross: float, net: float, tol: float = 0.05) -> list[str]:
+    """Avisos si el libro final se aleja de la bruta y la neta de la cartera.
+
+    REDUCE recorta a la mitad, NO TRADE y FLIP sacan o cambian de pata a un
+    nombre, y el tope de riesgo por operacion recorta los de stop ancho.
+    Nada de eso respeta las patas, asi que el plan puede quedar lejos de
+    100% / 100%. No se corrige: se dice.
+    """
+    w = weights.fillna(0.0)
+    g, n = float(w.abs().sum()), float(w.sum())
+    notes = []
+    if abs(n - net) > tol:
+        notes.append("trade plan book is not dollar neutral after the verdicts (REDUCE, NO TRADE, FLIP) "
+                     f"and the per-trade risk cap: net {n:+.2f} vs target {net:+.2f}")
+    if g < gross - tol:
+        notes.append(f"trade plan book uses gross {g:.2f} vs target {gross:.2f}: the risk cap and the "
+                     "verdicts shrink positions and nothing redistributes the difference")
+    return notes
+
+
 def build_plan(result, p: PlanParams) -> dict[str, object]:
     """Plan completo a partir del resultado del analisis."""
     s = result.settings
@@ -138,19 +175,14 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     note = ""
     cov = result.primary["cov"]
     if (traded > 0).any() and (traded < 0).any():
-        vol = pd.Series(np.sqrt(np.diag(cov.loc[traded.index, traded.index]) * 252), index=traded.index)
         params = ConstructionParams(
             gross=float(s.get("portfolio.gross_exposure", 2.0)), net=float(s.get("portfolio.net_exposure", 0.0)),
             max_position=max(float(s.get("portfolio.max_position", 0.35)),
                              float(s.get("portfolio.gross_exposure", 2.0)) / 2
                              / max(1, min((traded > 0).sum(), (traded < 0).sum()))))
-        built = construction.build(method, traded, cov=cov, vol=vol, params=params,
-                                   mu=pd.Series(0.0, index=traded.index), betas=result.primary.get("betas"))
-        if built.status == "ok":
-            weights.loc[built.weights.index] = built.weights
-        else:
-            note = f"{method} fallo con las direcciones corregidas ({built.note}); se usa equal_weight"
-            weights.loc[traded.index] = construction.equal_weight(traded, params)
+        built, note = plan_weights(method, traded, cov=cov, mu=result.primary.get("mu"),
+                                   betas=result.primary.get("betas"), params=params)
+        weights.loc[built.index] = built
     else:
         note = ("tras la correccion no quedan largos Y cortos: no hay cartera long/short. "
                 "Los niveles se dan por nombre, sin tamano de cartera.")
@@ -190,7 +222,9 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         })
     plan = pd.DataFrame(rows).set_index("ticker")
     corrections = plan[plan["verdict"] != "CONFIRM"]
-    return {"plan": plan, "corrections": corrections, "note": note, "params": p,
+    warnings = book_warnings(plan["weight"], float(s.get("portfolio.gross_exposure", 2.0)),
+                             float(s.get("portfolio.net_exposure", 0.0)))
+    return {"plan": plan, "corrections": corrections, "note": note, "params": p, "warnings": warnings,
             "gross": float(plan["weight"].abs().sum()), "net": float(plan["weight"].sum())}
 
 

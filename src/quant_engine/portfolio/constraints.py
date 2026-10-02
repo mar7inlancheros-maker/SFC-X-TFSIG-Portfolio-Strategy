@@ -89,4 +89,7 @@ def check(weights: pd.Series, signs: pd.Series, params: ConstructionParams, tol:
     e = exposures(w)
     if abs(e["gross"] - params.gross) > 1e-4:
         problems.append(f"bruta {e['gross']:.4f} != {params.gross}")
+    # Con beta neutral la neta queda libre a proposito (ver `_leg_constraints`).
+    if not params.beta_neutral and abs(e["net"] - params.net) > 1e-4:
+        problems.append(f"neta {e['net']:+.4f} != {params.net:+.4f}")
     return problems

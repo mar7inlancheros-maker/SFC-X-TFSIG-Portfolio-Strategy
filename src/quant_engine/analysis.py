@@ -8,7 +8,11 @@ tests, y ningun numero se recalcula de forma distinta en dos sitios.
 
     data_start = eval_start - 1 ano   (calentamiento: la primera estimacion de
                                        covarianza necesita 252 sesiones previas)
-    eval_start = hoy - lookback       (todo lo que se reporta sale de aqui)
+    eval_start = as_of - lookback     (todo lo que se reporta sale de aqui)
+
+`as_of` es la ultima sesion con barra diaria definitiva, no "hoy": con el
+mercado abierto, la barra de hoy es intradia y cambiaria precio de entrada,
+ATR, VaR y backtest segun la hora de la corrida.
 """
 
 from __future__ import annotations
@@ -185,8 +189,8 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
     vol = pd.Series(np.sqrt(np.diag(cov.to_numpy()) * 252), index=cov.index)
     betas = pd.Series({t: beta_mod.regression(window[t], window[clean.benchmark], settings.risk_free_rate).get("beta", 1.0)
                        for t in names})
-    built = construction.build(method, signs, cov=cov, vol=vol, params=params,
-                               mu=construction.shrink_means(window[names]), betas=betas)
+    mu = construction.shrink_means(window[names])
+    built = construction.build(method, signs, cov=cov, vol=vol, params=params, mu=mu, betas=betas)
     block: dict[str, object] = {"method": method, "status": built.status, "note": built.note,
                                 "covariance": cov_name, "weights": built.weights}
     if built.status != "ok":
@@ -200,6 +204,7 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
     block["ex_ante"] = ex
     block["betas"] = betas
     block["cov"] = cov
+    block["mu"] = mu
 
     cfg = backtest_config(settings, method=method, params=params)
     result = bt.run(clean.returns, clean.benchmark, bt.constant_schedule(signs), cfg,
@@ -212,7 +217,7 @@ def _portfolio_block(settings, clean, signs, method, params, eval_start, bench_n
 def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
                  progress: Progress = lambda _msg: None, run_robustness: bool = True) -> AnalysisResult:
     warnings: list[str] = list(settings.get("_notes", []) or [])
-    as_of = pd.Timestamp.today().normalize()
+    as_of = loader.last_complete_session()
     eval_start = as_of - pd.DateOffset(years=settings.lookback_years)
     data_start = eval_start - pd.DateOffset(years=1, days=10)
 
@@ -247,6 +252,16 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         warnings.append(f"WRDS no disponible, se usa Yahoo + ETFs + SIC: {wrds.reason}")
     elif wrds.unmatched:
         warnings.append(f"sin identificador en Compustat: {', '.join(wrds.unmatched)}")
+    if wrds.available:
+        unadjusted = []
+        if "split_adjusted" in wrds.fundamentals:
+            unadjusted += [t for t, ok in wrds.fundamentals["split_adjusted"].items() if ok is False]
+        if "si_split_adjusted" in wrds.short_interest:
+            unadjusted += [t for t, ok in wrds.short_interest["si_split_adjusted"].items() if ok is False]
+        if unadjusted:
+            warnings.append("sin factor de ajuste de Compustat (comp.secd.ajexdi) para "
+                            f"{', '.join(sorted(set(unadjusted)))}: acciones e interes corto sin ajustar por "
+                            "splits posteriores; capitalizacion y rendimientos de valor pueden estar mal")
 
     sectors, sector_source = loader.load_sectors(tickers)
     for t, gics in wrds.sectors.items():
@@ -356,7 +371,6 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     progress("estres")
     w = primary["weights"]
-    port_daily = pa.static_returns(w, r_eval)
     # Beta de cartera en el peor caso razonable: cada largo con el percentil 95
     # de su beta movil observada, cada corto con el percentil 5. Un corto con
     # beta baja cubre MENOS, asi que su peor caso es la beta baja, no la alta.
@@ -424,6 +438,7 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     result.trade_plan = build_plan(result, params_from_settings(settings))
     if result.trade_plan.get("note"):
         warnings.append(result.trade_plan["note"])
+    warnings.extend(result.trade_plan.get("warnings", []))
 
     if run_robustness:
         from .robustness import run_robustness as rr

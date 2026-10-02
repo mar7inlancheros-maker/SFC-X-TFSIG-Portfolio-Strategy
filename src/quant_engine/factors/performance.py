@@ -88,13 +88,25 @@ def drawdown_stats(returns: pd.Series) -> dict[str, float]:
     }
 
 
+def downside_deviation(returns: pd.Series, rf_annual: float) -> float:
+    """Semidesviacion anual del exceso sobre rf, promediada sobre TODAS las sesiones."""
+    excess = returns.dropna() - daily_rf(rf_annual)
+    return math.sqrt(float((np.minimum(excess, 0.0) ** 2).mean())) * math.sqrt(TD)
+
+
+def sortino_ratio(returns: pd.Series, rf_annual: float) -> float:
+    """mean(r - rf_d) x 252 / downside_deviation. La unica definicion del motor:
+    la usan los activos, las carteras y el backtest."""
+    r = returns.dropna()
+    downside = downside_deviation(r, rf_annual)
+    return float((r - daily_rf(rf_annual)).mean() * TD / downside) if downside > 0 else float("nan")
+
+
 def risk_metrics(returns: pd.Series, rf_annual: float) -> dict[str, float]:
     r = returns.dropna()
     if len(r) < 20:
         return {}
-    rf_d = daily_rf(rf_annual)
-    excess = r - rf_d
-    downside = math.sqrt(float((np.minimum(excess, 0.0) ** 2).mean())) * math.sqrt(TD)
+    downside = downside_deviation(r, rf_annual)
     out = {
         "vol_daily": float(r.std(ddof=1)),
         "vol_annual": float(r.std(ddof=1) * math.sqrt(TD)),
@@ -123,8 +135,7 @@ def risk_adjusted(
     std = float(excess.std(ddof=1))
     sharpe = float(excess.mean() / std * math.sqrt(TD)) if std > 0 else float("nan")
 
-    downside = math.sqrt(float((np.minimum(excess, 0.0) ** 2).mean())) * math.sqrt(TD)
-    sortino = float(excess.mean() * TD / downside) if downside > 0 else float("nan")
+    sortino = sortino_ratio(r, rf_annual)
 
     dd = drawdown_stats(r)["max_dd"]
     calmar = float(cagr / abs(dd)) if dd and not np.isnan(dd) and dd < 0 else float("nan")

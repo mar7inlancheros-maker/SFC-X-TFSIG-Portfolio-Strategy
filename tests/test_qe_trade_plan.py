@@ -74,3 +74,36 @@ def test_params_from_settings_reads_yaml_sections():
     p = tp.params_from_settings(S())
     assert (p.stop_atr, p.tp_r, p.max_risk_per_trade, p.flip, p.horizon_d) == (3.0, (2.0, 4.0), 0.02, -0.6, 21)
     assert (p.weak, p.conflict) == (0.2, -0.2)
+
+
+def test_aviso_si_el_plan_no_queda_neutral():
+    # Auditoria #16. Tras REDUCE y el tope de riesgo por operacion, el plan
+    # quedaba en bruta 1,17 y neta +0,21 sin ningun aviso.
+    w = pd.Series({"A": 0.18, "B": 0.09, "C": -0.06})
+    notes = tp.book_warnings(w, gross=2.0, net=0.0)
+    assert any("net +0.21" in n for n in notes)
+    assert any("gross 0.33" in n for n in notes)
+
+
+def test_sin_aviso_si_el_plan_cumple():
+    w = pd.Series({"A": 0.5, "B": 0.5, "C": -0.5, "D": -0.5})
+    assert tp.book_warnings(w, gross=2.0, net=0.0) == []
+
+
+def test_plan_con_max_sharpe_usa_las_medias_contraidas():
+    # Auditoria #15. El plan reconstruia la cartera con mu = 0: la restriccion
+    # mu'y = 1 de max_sharpe es infactible y siempre caia a equal_weight.
+    from quant_engine.portfolio.constraints import ConstructionParams
+
+    rng = np.random.default_rng(7)
+    names = list("ABCDEF")
+    r = pd.DataFrame(rng.normal(0.0, 0.015, (500, 6)), columns=names)
+    r[["A", "B", "C"]] += 0.0008                    # los largos esperan mas
+    signs = pd.Series([1.0, 1.0, 1.0, -1.0, -1.0, -1.0], index=names)
+    params = ConstructionParams(gross=2.0, net=0.0, max_position=0.6)
+    mu = r.mean()
+
+    weights, note = tp.plan_weights("max_sharpe", signs, cov=r.cov(), mu=mu, betas=None, params=params)
+    assert note == ""
+    assert not np.allclose(weights.abs(), 1.0 / 3.0)    # no es equal_weight
+    assert weights[signs > 0].sum() == pytest.approx(1.0, abs=1e-6)

@@ -106,6 +106,18 @@ def quant_score(features: pd.DataFrame, weights: dict[str, float]) -> pd.DataFra
     return out
 
 
+def effective_weights(scores: pd.DataFrame, weights: dict[str, float]) -> pd.Series:
+    """Pesos que de verdad entran en el score: los del YAML renormalizados sobre
+    los componentes con algun dato. Sin WRDS, value, quality, analyst y
+    short_interest quedan fuera y el resto conserva sus proporciones.
+    """
+    w = pd.Series(normalized_weights(weights))
+    has_data = [k for k in w.index if k in scores.columns and scores[k].notna().any()]
+    if not has_data:
+        return pd.Series(dtype=float)
+    return w[has_data] / w[has_data].sum()
+
+
 def feature_matrix(features: pd.DataFrame) -> pd.DataFrame:
     cols = {k: v for k, v in FEATURE_MATRIX_COLUMNS.items() if v in features.columns}
     return pd.DataFrame({k: zscore(features[v]) for k, v in cols.items()})

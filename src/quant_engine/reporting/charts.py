@@ -13,11 +13,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
 from matplotlib.ticker import PercentFormatter  # noqa: E402
 
 from ..analysis import AnalysisResult  # noqa: E402
+from ..backtest.engine import MODE_A_TAG  # noqa: E402
 
 LONG_COLOR, SHORT_COLOR, BENCH_COLOR, PORT_COLOR = "#2f6db5", "#c0392b", "#7f7f7f", "#1b1b1b"
 
@@ -27,6 +27,11 @@ def _save(fig, path: Path) -> Path:
     fig.savefig(path, dpi=130)
     plt.close(fig)
     return path
+
+
+def _mode_a_note(fig) -> None:
+    fig.text(0.01, 0.005, "Today's LONG/SHORT basket applied to the past: hypothetical, not evidence.",
+             fontsize=7, color=BENCH_COLOR, ha="left", va="bottom")
 
 
 def _nav(r: AnalysisResult):
@@ -47,7 +52,8 @@ def render_all(r: AnalysisResult, directory: Path, stamp: str) -> list[Path]:
     ax.plot(nav.index, nav - 1, color=PORT_COLOR, label=f"L/S {r.primary['method']}")
     ax.plot(bench.index, bench - 1, color=BENCH_COLOR, label=r.settings.benchmark)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.set_title("Cumulative return (Mode A, hypothetical)")
+    ax.set_title(f"Cumulative return ({MODE_A_TAG})")
+    _mode_a_note(fig)
     ax.legend()
     ax.grid(alpha=0.3)
     out.append(_save(fig, directory / f"01_cumulative_{stamp}.png"))
@@ -58,7 +64,8 @@ def render_all(r: AnalysisResult, directory: Path, stamp: str) -> list[Path]:
         dd = series / series.cummax() - 1
         ax.plot(dd.index, dd, color=color, label=label)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.set_title("Drawdown")
+    ax.set_title(f"Drawdown ({MODE_A_TAG})")
+    _mode_a_note(fig)
     ax.legend()
     ax.grid(alpha=0.3)
     out.append(_save(fig, directory / f"02_drawdown_{stamp}.png"))
@@ -70,7 +77,8 @@ def render_all(r: AnalysisResult, directory: Path, stamp: str) -> list[Path]:
     ax.plot((r_eval[r.settings.benchmark].rolling(63).std() * np.sqrt(252)).dropna(), color=BENCH_COLOR,
             label=r.settings.benchmark)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.set_title("Rolling 63d annualized volatility")
+    ax.set_title(f"Rolling 63d annualized volatility (L/S: {MODE_A_TAG})")
+    _mode_a_note(fig)
     ax.legend()
     ax.grid(alpha=0.3)
     out.append(_save(fig, directory / f"03_rolling_vol_{stamp}.png"))
@@ -108,7 +116,8 @@ def render_all(r: AnalysisResult, directory: Path, stamp: str) -> list[Path]:
     ax.plot(lb.index, lb, color=LONG_COLOR, label="LONG basket (EW)")
     ax.plot(sb.index, sb, color=SHORT_COLOR, label="SHORT basket (EW, as held long)")
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.set_title("LONG vs SHORT basket cumulative return")
+    ax.set_title("LONG vs SHORT basket cumulative return (today's baskets, in-sample)")
+    _mode_a_note(fig)
     ax.legend()
     ax.grid(alpha=0.3)
     out.append(_save(fig, directory / f"07_long_vs_short_{stamp}.png"))

@@ -1,0 +1,619 @@
+# Auditoría del motor long/short (octubre de 2026)
+
+Revisión del Quantitative Long/Short Research Engine (`src/quant_engine/`,
+`config/quant_engine.yaml`) frente a su especificación original de 35 secciones.
+Rama `audit/long-short-review`, desde `main` en `d49f706`.
+
+**Reglas de la auditoría:**
+
+- Un commit por corrección.
+- Ningún valor de `config/quant_engine.yaml` cambia.
+- No se toca el modelo multifactor (`src/sfc_tfsig/`, `strategy.toml`).
+- Los problemas de código compartido se reportan, no se editan.
+
+**Corrida de referencia.** Todas las cifras "antes → después" salen de la misma
+orden, con la caché de precios del día:
+
+```bash
+python main.py research --long AAPL,MSFT,NVDA,AMZN,META \
+    --short TSLA,INTC,BA,PYPL,NKE --width 160
+```
+
+Usa los defaults del YAML: SPY, 5 años, `risk_parity`, mensual, 0,05% de coste
+y 0,25% de préstamo. WRDS no estaba disponible en esta máquina (no hay pgpass),
+así que todas las corridas usan la ruta de respaldo: Yahoo + ETF + SIC.
+
+## Mapeo de la especificación
+
+| § | Tema | Estado | Nota |
+|---|---|---|---|
+| 1 | No es research | OK | El Quant Score no sobrescribe la señal de research |
+| 2 | Entrada | Desvío | Con Enter, la primera mitad va LONG, y la §2 lo prohíbe (#27) |
+| 3 | Capa de datos | OK / Doc | Caché, calidad y calendario correctos. rf constante declarada (#31). Sesión abierta: #7 |
+| 4 | Calidad de datos | OK | — |
+| 5 | Retornos y riesgo por activo | OK | — |
+| 6 | Beta / alpha | OK | HAC; beta móvil de 60, 120 y 252 días |
+| 7–9 | Momentum, reversión, volatilidad | OK | Umbrales en el YAML y documentados |
+| 10–11 | Correlación y covarianza | OK | Clusters jerárquicos, Ledoit-Wolf, número de condición |
+| 12 | Modelo de factores | OK | Si falta un factor, se marca como no disponible y no se inventa |
+| 13 | Cinco métodos | OK salvo #4 | — |
+| 14 | Beta neutral | OK | — |
+| 15 | Sector neutral | OK | — |
+| 16 | Optimización | Desvío | `risk_parity` deja la neta libre (#12). La especificación pone el tope en 20%; el YAML usa 0,35 (#18) |
+| 17–18 | Señales y acuerdo | OK | Texto de los pesos: #22 |
+| 19 | LONG vs SHORT | OK | La mediana no se muestra en la terminal (#30) |
+| 20 | Matriz de sección cruzada | OK | — |
+| 21 | Modos A / B | Desvío | La trayectoria A alimentaba salidas sin rótulo y el resumen final (#8) |
+| 22 | Métricas del backtest | Parcial | Los retornos anuales y mensuales no se reportan (#28) |
+| 23 | Estrés | OK | — |
+| 24 | Monte Carlo | OK | — |
+| 25 | Robustez | Desvío | Se calcula sobre la trayectoria A (#25) |
+| 26 | Sobreajuste | OK | Walk-forward |
+| 27 | Terminal | OK | Añade una sección [14] TRADE PLAN (#26) |
+| 28 | Exportaciones | OK | Tablas cortadas: #21 |
+| 29 | Gráficos | OK | Rótulos: #8 |
+| 30 | Arquitectura | OK (adaptada) | `loader.py` en lugar de downloader y cache, `inference/` en lugar de `statistics/`. La especificación permite adaptar |
+| 31 | Ingeniería | OK | Log en `engine.log`; 104 tests al empezar |
+| 32 | Matemática | OK salvo #4 | — |
+| 33 | Menú final | OK | — |
+| 34 | No recomendar | Incumple | El plan de operación (#26) |
+| 35 | Proceso | n/a | — |
+
+## Hallazgos
+
+| # | § | Hallazgo | Evidencia | Severidad | Estado |
+|---|---|---|---|---|---|
+| 3 | 32 | Anualización, Sharpe, CAGR, Calmar, beta/alpha HAC, VaR/CVaR, P&L del corto, coste, préstamo, rotación, bruta y neta: correctos frente a un cálculo independiente | script con datos sintéticos | — | OK |
+| 4 | 22, 32 | El Sortino del backtest usa otra definición que la del motor; la desviación a la baja usa el retorno bruto | `backtest/metrics.py:47-50` | Media | Corregido |
+| 5 | 3 | Liquidez con cierre ajustado: efecto despreciable | `factors/liquidity.py:18` | Baja | OK |
+| 6 | 3 | Con WRDS, la capitalización es el precio de hoy × `cshoq` del último trimestre, sin ajustar los splits posteriores | `data/wrds_data.py` | Media | Corregido (sin WRDS real) |
+| 7 | 3, 16 | No se excluye la sesión en curso | `analysis.py:215`, `data/loader.py:46` | Media | Corregido |
+| 8 | 21 | La trayectoria A aparecía sin rótulo y alimentaba el resumen final | ver la entrada #8 | Media | Corregido |
+| 9 | 16, 26 | Estimación walk-forward sin look-ahead | `backtest/engine.py` | — | OK |
+| 10 | 19 | Tests estadísticos y aviso de N = 5 | `inference/tests.py` | — | OK |
+| 11 | 13 | Bruta 2,0 y tope respetado en los 5 métodos | salida | — | OK |
+| 12 | 16 | `risk_parity` deja la neta libre (+0,23 hoy) | `portfolio/construction.py` | Media | Corregido |
+| 13 | 14 | Beta neutral: 0,000 ex-ante, −0,035 realizada | salida | — | OK |
+| 14 | 11 | Número de condición entre 24 y 26 | salida | — | OK |
+| 15 | — | El plan de operación con `max_sharpe` siempre caía a `equal_weight` | `trade_plan.py:148` | Baja | Corregido |
+| 16 | — | Tras los recortes, el plan queda con bruta 1,17 y neta +0,21, sin aviso | salida | Baja | Corregido |
+| 17 | — | Constantes fijas en el código (`history_d`, umbrales de calidad) | `trade_plan.py:54`, `data/validation.py:22` | Baja | Para el comité |
+| 18 | 16 | `max_position` = 0,35 frente al 20% de la especificación | YAML | Media | Para el comité |
+| 19 | — | `borrow_cost` plano de 0,25% | YAML | Baja | Fila de sensibilidad añadida |
+| 20 | 28 | Las exportaciones coinciden con la terminal | — | — | OK |
+| 21 | 28 | En modo interactivo, las tablas salen cortadas en txt y html | `app.py:148,162` | Baja | Corregido |
+| 22 | 17 | Los pesos se muestran nominales y redondeados | `reporting/terminal.py:210` | Baja | Corregido |
+| 23 | 31 | Avisos de ruff | 3 sitios | Baja | Corregido |
+| 24 | — | Código compartido: `cli.py`, techo de pandas, Sortino de `sfc_tfsig` | — | Media | Va en el PR del multifactor |
+| 25 | 25, 21 | La robustez se calcula entera sobre la trayectoria A | `robustness.py:31-35` | Media | Propuesta |
+| 26 | 34 | El plan de operación emite órdenes: BUY / SELL SHORT, acciones, "do not trade" | `trade_plan.py`, `reporting/terminal.py:413-458` | Alta | Propuesta |
+| 27 | 2 | Enter = la primera mitad va LONG | `app.py:88-95` | Baja | Propuesta |
+| 28 | 22 | Retornos anuales y mensuales sin reportar | `backtest/metrics.py:100-110` | Baja | Propuesta |
+| 30 | 19 | Mediana calculada pero no mostrada | `reporting/terminal.py:254` | Baja | Propuesta |
+| 31 | 3 | rf constante, sin FRED | YAML | Baja | Documentado |
+
+## Registro de cambios
+
+### #23 — Avisos de ruff
+
+- **Qué estaba mal:** `ruff --select E9,F` daba tres avisos:
+  - `port_daily` se calculaba y nunca se usaba (`analysis.py:359`);
+  - `pandas` se importaba sin usarse (`reporting/charts.py:16`);
+  - había un f-string sin placeholders (`reporting/terminal.py:474`).
+- **Cambio:** se borra la línea muerta, se quita el import y el prefijo `f`.
+- **Impacto:** ninguno en los resultados. `static_returns` es pura, así que la
+  línea borrada no tenía efectos. Ruff queda limpio y siguen pasando los 104
+  tests.
+
+### #21 — Tablas cortadas en el modo interactivo
+
+- **Qué estaba mal:** en el modo interactivo, `Console(record=True)` tomaba
+  el ancho del terminal (`app.py:148,162`). Con 80 columnas, las tablas
+  anchas salían cortadas con "…". El txt y el html se exportan de lo que
+  graba la consola, así que se cortaban igual. En la corrida de la Fase 1, la
+  tabla de señales era ilegible.
+- **Cambio:** las cuatro consolas del modo interactivo usan
+  `report_console()`, con un ancho fijo `REPORT_WIDTH = 160`. Es el mismo
+  default que ya tenía el modo `research`.
+- **Test:** `test_la_consola_interactiva_tiene_ancho_fijo`.
+- **Impacto:** ninguno en los resultados.
+  - Antes: la salida de la corrida interactiva de la Fase 1 tenía 429 "…".
+  - Después: con `COLUMNS=80`, el txt exportado tiene 0.
+
+### #22 — Pesos del Quant Score mostrados como nominales
+
+- **Qué estaba mal:** la sección [8] imprimía los pesos del YAML. Sin WRDS,
+  los componentes `value`, `quality`, `analyst` y `short_interest` no tienen
+  datos, y `quant_score` renormaliza sobre el resto. El reporte decía
+  "momentum 20%" cuando en realidad pesaba el 40%. Además, `:.0%` convertía
+  el 2,5% en "2%" (`reporting/terminal.py:210`).
+- **Cambio:**
+  - Nueva función `composite.effective_weights`: los pesos del YAML,
+    renormalizados sobre los componentes que tienen algún dato.
+  - Nueva función `terminal.weights_line`: muestra "YAML → efectivo" con un
+    decimal y lista aparte los componentes sin datos.
+- **Tests:**
+  - `test_pesos_efectivos_excluyen_componentes_sin_datos`;
+  - `test_linea_de_pesos_muestra_decimales_y_los_inactivos`.
+- **Impacto:** el score no cambia; solo cambia el texto.
+  - Antes: `momentum 20%, value 15%, … liquidity 2%, statistical 2%`.
+  - Después: `momentum 20.0% -> 40.0%, … liquidity 2.5% -> 5.0%`, más la
+    lista de componentes sin datos (`value, quality, analyst, short_interest`).
+
+### #16 — Plan de operación no neutral sin aviso
+
+- **Qué estaba mal:** el plan parte de la cartera reconstruida (bruta 2,0,
+  neta 0), pero tres cosas la mueven sin respetar las patas:
+  - REDUCE recorta el nombre a la mitad;
+  - NO TRADE y FLIP sacan el nombre o lo cambian de pata;
+  - el tope de riesgo por operación recorta los nombres de stop ancho.
+
+  En la corrida de referencia, el libro final quedaba en bruta 1,17 y neta
+  +0,21, y solo se veía en una línea de cifras.
+- **Cambio:** nueva función `trade_plan.book_warnings`. Avisa si la neta se
+  aleja más de 0,05 del objetivo o si la bruta queda más de 0,05 por debajo.
+  - Los avisos salen en la sección [14] y en la lista final de avisos.
+  - No se redistribuye nada: el plan sigue igual y ahora lo dice.
+- **Tests:**
+  - `test_aviso_si_el_plan_no_queda_neutral`;
+  - `test_sin_aviso_si_el_plan_cumple`.
+- **Impacto:** ninguno en los resultados. Aparecen dos avisos nuevos:
+  - "net +0.21 vs target +0.00";
+  - "gross 1.17 vs target 2.00".
+
+### #8 — Trayectoria del Modo A: rótulo en todas las salidas y fuera del resumen
+
+Decisión del comité: el Modo A se mantiene, pero cumpliendo la sección 21. La
+trayectoria va rotulada como hipotética en todas las salidas y no alimenta el
+resumen final como evidencia.
+
+- **Qué estaba mal:** solo la sección [10] y el gráfico 1 avisaban de que la
+  cesta de hoy se aplica al pasado. Lo demás salía sin rótulo:
+  - [11] RISK ANALYSIS: CAGR, Sharpe, drawdown, VaR y operativa del Modo A;
+  - el backtest beta neutral de [10];
+  - los episodios históricos de [12], con los pesos de hoy;
+  - el bootstrap de Monte Carlo, que remuestrea la trayectoria A;
+  - la robustez de [13] (ver #25);
+  - los gráficos de drawdown, volatilidad móvil y cestas;
+  - en el JSON, `portfolios.*.summary` y `robustness`.
+
+  Además, el resumen final citaba el Sharpe y el drawdown del Modo A y el
+  rango de Sharpe de la robustez (`reporting/terminal.py:472,488`).
+- **Cambio:**
+  - Un único rótulo, `MODE_A_LABEL`, definido en `backtest/engine.py`, junto
+    a la definición del modo.
+  - Terminal (y por tanto txt y html): rótulo en [11] y [13] y etiqueta
+    "Mode A, hypothetical" en el beta neutral, los episodios y Monte Carlo.
+  - Resumen final: se quitan las dos líneas del Modo A. Se añade una línea
+    que dice que esas métricas no son evidencia y quedan fuera, y otra con el
+    Modo B (CAGR, Sharpe, drawdown, IR) cuando hay señales con fecha.
+  - Gráficos 1, 2, 3 y 7: título rotulado y nota al pie "hypothetical, not
+    evidence".
+  - JSON: añade `mode_a_notice`, `path` en cada cartera y en `robustness`,
+    `historical_path` en `stress` y `bootstrap_source` en `montecarlo`. Añade
+    también `mode_b_historical`, que antes no se exportaba.
+  - CSV: ninguno lleva la trayectoria. Se revisaron las columnas:
+    - `portfolio_*.csv` son pesos actuales;
+    - `signals`, `risk` y `correlation` son datos por activo;
+    - `trade_plan` es el plan.
+
+    No hay nada que rotular.
+- **Qué se deja en el resumen y por qué:** el spread diario LONG − SHORT con
+  su p-valor (Newey-West) también usa las cestas de hoy. Se mantiene, porque
+  es la comparación que pide la sección 19 y la sección 34 lo pone de ejemplo
+  ("the statistical difference between the LONG and SHORT baskets has a
+  p-value of X%"). Sigue rotulado "in-sample".
+- **Tests** (`tests/test_qe_reporting.py`):
+  - `test_resumen_final_no_usa_la_trayectoria_del_modo_a`;
+  - `test_resumen_final_cita_el_modo_b_cuando_existe`;
+  - `test_analisis_de_riesgo_rotula_el_modo_a`;
+  - `test_json_rotula_cada_trayectoria_del_modo_a`.
+- **Impacto:** ningún número cambia. El resumen pierde dos líneas:
+  - "Sharpe was 1.26 with max drawdown −17.3%";
+  - "Sharpe across robustness variants ranges 0.82 to 1.40".
+
+### #7 — La sesión en curso entraba como si fuera un cierre
+
+- **Qué estaba mal:**
+  - `as_of` era `Timestamp.today()` (`analysis.py:215`) y la descarga pedía
+    hasta hoy + 1 (`data/loader.py:46`). Con el mercado abierto, Yahoo
+    devuelve una barra intradía para hoy, y el motor la trataba como un
+    cierre.
+  - Esa barra quedaba 24 horas en caché, así que una corrida a las 12:00
+    seguía viendo el precio de las 12:00 por la tarde y al día siguiente.
+  - Afectaba al precio de entrada, al ATR, a los stops, al último retorno, al
+    VaR y al último día del backtest.
+- **Cambio:**
+  - Nueva función `loader.last_complete_session(now)`: la última sesión cuya
+    barra ya es definitiva, a partir de las 16:15 de Nueva York (salta
+    fines de semana). `as_of` sale de ahí.
+  - `load_ohlcv` corta en `<= end` todo lo que viene de la caché o de Yahoo.
+  - Nuevo registro `qe_ohlcv_fetched` con la hora de cada descarga. Una caché
+    escrita antes de las 16:15 del día `end` lleva la barra intradía, así que
+    se vuelve a pedir. Las cachés antiguas, sin registro, se piden una vez.
+  - La sección [1] dice hasta qué sesión llegan los datos.
+- **Tests** (`tests/test_qe_loader.py`):
+  - `test_ultima_sesion_completa`, con 4 casos: viernes abierto, recién
+    cerrado, cerrado y sábado;
+  - `test_la_barra_de_la_sesion_en_curso_no_entra`;
+  - `test_cache_bajada_antes_del_cierre_se_vuelve_a_pedir`;
+  - `test_cache_bajada_tras_el_cierre_se_reutiliza`.
+- **Impacto.** Antes de las corridas se respaldó la caché `qe_ohlcv` fuera
+  del repo. Corrida "antes" con el código de `e45334c`, con caché vacía y el
+  mercado abierto (2 de octubre, 12:02 de Nueva York). Corrida "después" con
+  el código nuevo, sobre la caché que dejó la anterior:
+
+  | | Antes (barra intradía del 2-oct) | Después (cierre del 1-oct) |
+  |---|---|---|
+  | Última sesión | 2026-10-02 (intradía) | 2026-10-01 |
+  | Sharpe `risk_parity` (Modo A) | 1,271 | 1,263 |
+  | CAGR `risk_parity` (Modo A) | 33,61% | 33,36% |
+  | Sharpe `min_variance` (Modo A) | 1,405 | 1,395 |
+  | Rango de Sharpe en robustez | 0,863 – 1,405 | 0,815 – 1,395 |
+  | Entrada / stop AAPL | 332,65 / 315,07 | 330,32 / 312,20 |
+  | Entrada / stop NKE | 33,22 / 36,06 | 35,15 / 37,60 |
+  | Entrada / stop TSLA | 372,78 / 403,84 | 354,11 / 383,67 |
+  | Acciones NKE en el plan | 3.514 | 4.077 |
+  | Neta del plan | +0,247 | +0,211 |
+
+  "Después" coincide cifra a cifra con la corrida de referencia de `d49f706`.
+  Esa corrida se hizo con la caché escrita la noche anterior, después del
+  cierre. Es decir: el resultado ya no depende de la hora de la corrida. Dos
+  corridas seguidas tras el cambio dan una salida idéntica (0 líneas de
+  diferencia).
+
+### #4 — Sortino del backtest con otra definición
+
+- **Qué estaba mal:** `backtest/metrics.py:47-50` calculaba el Sortino de
+  carteras y backtests con `sfc_tfsig.metrics.sortino`. Esa función usa la
+  desviación estándar de solo los excesos negativos. El motor declara otra
+  definición en `factors/performance.py:8-13`: la semidesviación del exceso,
+  promediada sobre todas las sesiones. Las secciones [3] (activos) y [10]-[11]
+  (carteras) daban así Sortinos no comparables; con datos sintéticos, −0,070
+  frente a −0,042. Además, `downside_deviation` usaba el retorno bruto y no el
+  exceso sobre rf: una cartera plana salía con desviación a la baja 0.
+- **Cambio:**
+  - `factors/performance.py` expone `downside_deviation` y `sortino_ratio`.
+  - Activos, carteras y backtest usan esas dos funciones.
+  - `sfc_tfsig.metrics` no se toca (es compartido; ver #24).
+- **Tests:**
+  - `test_sortino_del_backtest_usa_la_definicion_del_motor`;
+  - `test_desviacion_a_la_baja_es_sobre_el_exceso`.
+- **Impacto.** Antes es `f58c2b5` y después este commit, con la misma caché.
+  Sharpe, CAGR y drawdown no cambian. Las métricas por activo de [3] tampoco
+  (diferencia máxima 0,0):
+
+  | Método (Modo A) | Sortino antes → después | Desv. a la baja antes → después |
+  |---|---|---|
+  | equal_weight | 1,506 → 1,435 | 15,72% → 15,85% |
+  | inverse_vol | 1,785 → 1,690 | 14,23% → 14,36% |
+  | risk_parity | 2,095 → 1,969 | 13,76% → 13,89% |
+  | min_variance | 2,363 → 2,219 | 13,35% → 13,48% |
+  | max_sharpe | 1,129 → 1,284 | 24,38% → 24,49% |
+
+  La definición anterior inflaba el Sortino de las carteras de menor
+  volatilidad y desinflaba el de `max_sharpe`, que tiene colas más largas.
+
+### #15 — El plan con `max_sharpe` siempre caía a `equal_weight`
+
+- **Qué estaba mal:** `trade_plan.py:148` reconstruía la cartera con las
+  direcciones corregidas usando `mu = 0`. En `max_sharpe` (Charnes-Cooper),
+  la restricción `mu'y = 1` es entonces infactible, así que el plan caía
+  siempre a `equal_weight` con el aviso "max_sharpe fallo con las direcciones
+  corregidas".
+- **Cambio:**
+  - La cartera principal guarda sus medias contraídas (`primary["mu"]`, de
+    James-Stein sobre la ventana de estimación).
+  - El plan las usa en la nueva función `trade_plan.plan_weights`.
+  - Si el método falla igualmente, la caída a `equal_weight` sigue avisada.
+- **Test:** `test_plan_con_max_sharpe_usa_las_medias_contraidas`. Con
+  `mu=None` (el comportamiento anterior), la misma llamada devuelve el aviso
+  de caída.
+- **Impacto.** Antes es `793a822` y después este commit, con
+  `--construction max_sharpe`. Con el default `risk_parity` no cambia nada (0
+  líneas de diferencia en el resumen de métricas). Con `max_sharpe`:
+
+  | | Antes | Después |
+  |---|---|---|
+  | Aviso de caída a `equal_weight` | sí | no |
+  | Pesos del plan, largos (AAPL, MSFT, NVDA, AMZN, META) | 0,167 / 0,167 / 0,083 / 0,083 / 0,083 | 0,182 / 0,103 / 0,028 / 0,087 / 0,030 |
+  | PYPL | −0,125 | −0,052 |
+  | Bruta / neta del plan | 1,17 / +0,155 | 0,94 / +0,075 |
+
+  Los nombres con el tope de riesgo activo (TSLA, BA, NKE e INTC tras el FLIP)
+  no cambian. La bruta baja porque `max_sharpe` concentra en pocos nombres y
+  el tope de riesgo recorta los de stop ancho. El aviso de #16 lo dice.
+
+### #12 — `risk_parity` dejaba la neta libre
+
+Decisión del comité: risk parity dentro de cada pata y patas fijas de
+100% / 100%, para cumplir la sección 16 ("Net exposure ≈ 0") y el
+`net_exposure: 0.0` del YAML.
+
+- **Qué estaba mal:** `risk_parity` igualaba las contribuciones al riesgo
+  total de la cartera (ERC sobre S Σ S). Eso deja libre el tamaño de cada
+  pata. La neta era +0,234 hoy, entre −0,12 y +0,32 en el backtest, con una
+  media de +0,06. Era el default del YAML, así que la cartera principal no
+  era neutral en dólares. `constraints.check()` no miraba la neta, por eso el
+  test de los cinco métodos no lo detectaba.
+- **Cambio:**
+  - `construction.risk_parity` resuelve un ERC long-only por pata, sobre la
+    covarianza de sus nombres (Spinu), y escala cada pata a
+    L = (G + N) / 2 y S = (G − N) / 2. El tope por nombre se aplica dentro de
+    la pata, con aviso si actúa.
+  - `constraints.check()` verifica la neta, salvo con beta neutral, donde
+    queda libre a propósito.
+  - La tabla del docstring dice "fijada (N)".
+- **Tests:**
+  - `test_paridad_de_riesgo_iguala_contribuciones_dentro_de_cada_pata`
+    sustituye a `test_paridad_de_riesgo_iguala_contribuciones_con_cortos`,
+    que exigía justo el comportamiento corregido;
+  - `test_check_detecta_neta_fuera_de_objetivo`;
+  - el test paramétrico de los cinco métodos ahora comprueba también la neta.
+- **Impacto.** Antes es `dd3881e` y después este commit, con la misma caché y
+  el default `risk_parity`. Los otros cuatro métodos no cambian.
+
+  | `risk_parity` | Antes | Después |
+  |---|---|---|
+  | Neta ex-ante hoy | +0,234 | 0,000 |
+  | Neta media en el backtest | +0,060 | 0,000 |
+  | Beta ex-ante | +0,048 | −0,254 |
+  | Beta realizada (Modo A) | +0,098 | +0,068 |
+  | Volatilidad ex-ante | 19,4% | 20,5% |
+  | Sharpe (Modo A) | 1,263 | 1,102 |
+  | Sortino (Modo A) | 1,969 | 1,685 |
+  | CAGR (Modo A) | 33,36% | 29,33% |
+  | Max drawdown (Modo A) | −17,3% | −21,1% |
+  | VaR 95% 1 día | 1,95% | 2,06% |
+  | Contribución al riesgo de la pata corta | 50% | 77% |
+  | Monte Carlo neutro: P(drawdown peor que −20%) | 46,9% | 48,9% |
+  | Rango de Sharpe en robustez | 0,815 – 1,395 | 0,471 – 1,395 |
+
+  **Lectura:**
+  - Parte del Sharpe anterior venía de estar un 23% neto largo en un mercado
+    alcista, no de la cesta LONG/SHORT.
+  - Con patas iguales, la pata corta tiene más beta (TSLA, INTC, BA) y
+    domina el riesgo: la cartera queda con beta ex-ante −0,25. Si se quiere
+    beta ≈ 0 (§14), está la variante beta neutral, que sigue igual.
+  - En la robustez, la variante de 1 año cae de 0,82 a 0,47.
+  - El plan de operación cambia en los nombres REDUCE: NVDA 0,080 → 0,072,
+    AMZN 0,092 → 0,078, META 0,080 → 0,069, PYPL −0,095 → −0,113.
+
+### #6 — Con WRDS, las acciones no se ajustaban por splits posteriores
+
+**No se verificó con WRDS real.** WRDS no estaba disponible en esta máquina
+(no hay pgpass). La corrección se probó solo con datos sintéticos con un split
+4:1 conocido. Hay que repetir la comprobación con WRDS antes de dar el arreglo
+por cerrado (ver "Pendiente" al final de esta entrada).
+
+- **Qué estaba mal:**
+  - La capitalización era el precio de hoy (Yahoo, ya posterior a cualquier
+    split) × `cshoq` del último trimestre publicado, sin ajustar
+    (`data/wrds_data.py:131,168`). Con un split 4:1 entre ese cierre y hoy, la
+    capitalización salía dividida entre 4 y los rendimientos de valor
+    (beneficio, flujo libre, libros, ventas) multiplicados por 4.
+  - `shares_growth` comparaba `cshoq` de dos trimestres sin ajustar
+    (`:148`): un split entre ellos parecía una emisión del 300%.
+  - `si_pct_float` dividía `shortint` en la base de su fecha entre `cshoq` en
+    la base del trimestre (`:225`). Con un split entre ambas fechas, el
+    porcentaje salía multiplicado o dividido por 4.
+- **Cambio:**
+  - Nueva consulta a `comp.secd` del factor diario `ajexdi` por emisión
+    (gvkey + iid).
+  - Nueva función pura `to_current_basis`: acciones_hoy = acciones_t ×
+    ajex(t) / ajex(hoy). Usa el cociente porque así no depende de la base en
+    la que Compustat tenga reescrita la serie.
+  - `ttm_fundamentals` lleva `shares_mm` y `shares_growth` a la base de hoy.
+  - El interés corto se lleva a la base de hoy con el mismo factor.
+  - Sin factor, los datos se usan sin ajustar y se marcan
+    (`split_adjusted` / `si_split_adjusted` en False). El análisis lo avisa
+    por nombre; no se inventa nada.
+  - La consulta de `ajexdi` va después de las de fundamentales e interés
+    corto y en un `try` propio: si falla, se pierde el ajuste, no todo WRDS.
+- **Tests** (`tests/test_qe_wrds.py`, datos sintéticos):
+  - `test_split_tras_el_ultimo_trimestre_lleva_las_acciones_a_la_base_de_hoy`:
+    capitalización de 21.000 M en lugar de 5.250 M;
+  - `test_split_entre_trimestres_no_es_crecimiento_de_acciones`: crecimiento
+    0% en lugar de +300%;
+  - `test_sin_factor_de_ajuste_se_marca_y_no_se_inventa`;
+  - `test_interes_corto_anterior_al_split_pasa_a_la_base_de_hoy`.
+- **Impacto:**
+  - Sin WRDS (la ruta de esta máquina) no cambia nada: 0 líneas de
+    diferencia en el resumen de métricas frente a `af1eba0`.
+  - Con WRDS solo cambia algo en los nombres con un split entre el último
+    trimestre publicado (o la fecha del interés corto) y hoy.
+- **Pendiente con WRDS real:**
+  - Confirmar que `comp.secd` tiene `ajexdi` con esas columnas para las
+    emisiones de `comp.security`.
+  - Comparar la capitalización con la de Yahoo en un nombre con un split
+    reciente.
+  - Si la consulta falla dentro de una transacción, puede que las consultas
+    de IBES que van detrás fallen también. Hay que comprobar que el aviso
+    aparece y que IBES sigue llegando.
+
+### Fila de sensibilidad de `borrow_cost` en la robustez (#19)
+
+Aprobada por el comité, sin cambiar el default del YAML.
+
+- **Por qué:** el motor cobra un préstamo plano del 0,25% anual sobre el
+  nocional corto, que es lo típico de un nombre "general collateral". Los
+  nombres difíciles de prestar cuestan bastante más, y hasta ahora no había
+  forma de ver cuánto pesa ese supuesto.
+- **Cambio:**
+  - `robustness.py` añade la dimensión `borrow_cost` con 0,25% / 1% / 3%
+    (`BORROW_COSTS`).
+  - La rejilla está en el código y no en el YAML porque el comité pidió no
+    tocar `config/quant_engine.yaml`. La clave `robustness.borrow_costs`, si
+    se añade al YAML, la sustituye.
+  - `borrow_cost` sigue en 0,0025.
+- **Test:** `test_robustez_incluye_sensibilidad_al_coste_de_prestamo`.
+  Comprueba las tres filas, que el Sharpe baja al subir el préstamo y que el
+  default no cambia.
+- **Impacto:** el resto de la robustez no cambia. Las filas nuevas
+  (trayectoria del Modo A, `risk_parity`, tras #12):
+
+  | Préstamo | Sharpe | CAGR | Max DD |
+  |---|---|---|---|
+  | 0,25% | 1,10 | 29,3% | −21,1% |
+  | 1,00% | 1,07 | 28,4% | −21,4% |
+  | 3,00% | 0,98 | 26,0% | −22,1% |
+
+  Con patas de 100%, cada punto de préstamo cuesta alrededor de un punto de
+  CAGR. Para estos nombres pesa menos que la ventana de evaluación (1 año:
+  0,47) o la frecuencia de rebalanceo (trimestral: 0,90).
+
+## Resumen de métricas por etapa
+
+Corrida de referencia con el default (`risk_parity`). Todas las cifras de
+cartera son de la trayectoria del Modo A, que es hipotética (ver #8).
+
+| Etapa | Commit | Última sesión | Neta | Sharpe | Sortino | CAGR | Max DD | Rango robustez |
+|---|---|---|---|---|---|---|---|---|
+| Referencia (caché tras el cierre) | `d49f706` | 2026-10-01 | +0,234 | 1,263 | 2,095 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Referencia con mercado abierto | `e45334c` | 2026-10-02 (intradía) | +0,227 | 1,271 | 2,109 | 33,61% | −17,3% | 0,863 – 1,405 |
+| Tras #7 | `f58c2b5` | 2026-10-01 | +0,234 | 1,263 | 2,095 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Tras #4 | `793a822` | 2026-10-01 | +0,234 | 1,263 | 1,969 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Tras #15 | `dd3881e` | 2026-10-01 | +0,234 | 1,263 | 1,969 | 33,36% | −17,3% | 0,815 – 1,395 |
+| Tras #12 | `af1eba0` | 2026-10-01 | 0,000 | 1,102 | 1,685 | 29,33% | −21,1% | 0,471 – 1,395 |
+| Tras #6 y la fila de préstamo | `f431572` | 2026-10-01 | 0,000 | 1,102 | 1,685 | 29,33% | −21,1% | 0,471 – 1,395 |
+
+- #23, #21, #22, #16 y #8 no cambian números.
+- #15 solo cambia algo con `max_sharpe`.
+- #6 solo cambia algo con WRDS.
+
+## Propuestas sin aplicar (requieren aprobación)
+
+### #25 — Robustez sobre la trayectoria A
+
+- **Problema:** `run_robustness` vuelve a correr el backtest del Modo A
+  (`bt.constant_schedule` con la cesta de hoy, `robustness.py:33`) en todas
+  las variantes. Mide la sensibilidad de la *construcción* a decisiones
+  arbitrarias, pero toda variante hereda la selección hecha con información
+  de hoy. Su Sharpe no es evidencia de nada sobre la selección.
+- **Ya aplicado** (dentro de #8): la tabla va rotulada y su rango salió del
+  resumen final.
+- **Propuesta:**
+  1. Si el usuario da señales con fecha (Modo B), correr las mismas
+     variantes sobre el calendario del Modo B y mostrar esa tabla como la
+     robustez válida.
+  2. Sin Modo B, mantener la tabla A rotulada, renombrada a "Sensibilidad de
+     la construcción (hipotética)", y reportar solo la dispersión, no los
+     niveles.
+  3. Ninguna de las dos tablas vuelve al resumen salvo la de B.
+
+### #26 — El plan de operación cruza la línea de la sección 34
+
+- **Problema:** la sección 34 dice que el motor no recomienda: "is a research
+  and risk-analysis tool, NOT an investment adviser". El plan
+  (`trade_plan.py`, sección [14] y `trade_plan_*.csv`) emite:
+  - una columna `action` con `BUY` / `SELL SHORT` / `NO TRADE`;
+  - número de acciones (`shares`) y nocional en dólares;
+  - instrucciones en imperativo: "model suggests SELL SHORT", "do not trade
+    until the thesis is reviewed", "trade at 50% size", "exit 50% at each,
+    move stop to entry after TP1", "Review at the next rebalance or before
+    earnings".
+
+  Además, el veredicto FLIP propone operar el lado contrario al research,
+  que es justo lo que la sección 17 prohíbe ("must NOT overwrite the external
+  BUY/SELL research signal"). Stop y TP, tal como se presentan, son órdenes.
+- **Propuesta:** convertir [14] en un "perfil de riesgo por nombre",
+  descriptivo:
+  - `verdict` pasa a `alignment`: CONFIRM → aligned, REDUCE → neutral,
+    NO TRADE → contradicts, FLIP → strongly contradicts. Son los mismos
+    umbrales y es la misma información que [8], sin verbo de acción.
+  - Fuera `action`, `shares`, `notional` y la cartera "corregida". El peso de
+    referencia es el de la cartera principal, que no cambia el signo del
+    research.
+  - Stop y TP pasan a ser una banda de volatilidad: "±2,5 × ATR(14) =
+    ±X% del último cierre".
+  - P(TP) pasa a ser una tasa base: "en los últimos 3 años, una subida de
+    +1,5 × banda antes de una caída de −1 × banda ocurrió en el Y% de los
+    días".
+  - El tope de riesgo por operación pasa a ser una cifra descriptiva: "con el
+    peso actual, un movimiento de una banda cuesta Z% del capital".
+  - Textos sin imperativos.
+
+  Esto haría que #15 y #16 dejen de aplicar (no habría cartera corregida ni
+  libro del plan). Son commits pequeños y se pueden revertir limpiamente.
+
+### #27 — Entrada por defecto
+
+- **Problema:** `app.py:88-95` asigna como LONG la primera mitad de los
+  tickers si el usuario pulsa Enter. La sección 2 dice: "The first half of
+  the tickers will NOT automatically be assumed to be BUYs". Además,
+  benchmark, periodo, rf, rebalanceo, construcción, capital y coste solo se
+  preguntan bajo "opciones avanzadas".
+- **Propuesta:** pedir "Enter LONG tickers" y "Enter SHORT tickers" por
+  separado, sin default. Preguntar las demás opciones con su default
+  visible, como en la especificación.
+
+### #28 — Retornos anuales y mensuales del backtest
+
+- **Problema:** `backtest/metrics.annual_returns` y `monthly_returns` existen
+  pero nadie las llama. La sección 22 las pide para backtests válidos.
+- **Propuesta:** mostrarlas en [11] cuando hay Modo B y exportarlas a CSV.
+
+### #30 — Mediana en LONG vs SHORT
+
+- **Problema:** `compare_groups` calcula `long_median` y `short_median`, pero
+  [9] no las muestra; solo están en el JSON.
+- **Propuesta:** añadir las dos columnas a la tabla de [9].
+
+## Recomendaciones de parámetros para el comité (no aplicadas)
+
+Por decisión del comité, ninguna se aplica; quedan aquí para discutirlas.
+
+- **`max_position` 0,35 frente al 20% de la especificación (#18).**
+  - Con 5 nombres por pata, el 20% obliga a equiponderar y los cinco métodos
+    dan la misma cartera. Por eso el YAML usa 0,35, y el razonamiento se
+    sostiene.
+  - Pero en `min_variance` y `max_sharpe` el tope se alcanza: un nombre es el
+    35% del capital. Tras #12, `risk_parity` tiene AAPL en 0,307.
+  - Opciones: bajar a 0,30, o añadir un tope de contribución al riesgo por
+    nombre (por ejemplo, 20% del riesgo de su pata).
+- **`borrow_cost` 0,25% (#19).**
+  - Razonable como tasa general.
+  - La fila nueva de robustez muestra unos −0,12 de Sharpe con un préstamo
+    del 3%.
+  - Con WRDS, el interés corto ya se descarga: se podría aproximar un coste
+    por nombre (por ejemplo, más caro si `si_pct_float` > 10% o los días para
+    cubrir > 5).
+- **Construcción por defecto `risk_parity`.**
+  - Tras #12 cumple neta 0, pero queda con beta ex-ante −0,25, porque la pata
+    corta tiene más beta.
+  - Si el objetivo es neutralidad de mercado (§14), conviene valorar
+    `risk_parity` con beta neutral, o `min_variance`, que tiene la beta más
+    baja y el Sharpe más alto en la trayectoria A. Ese Sharpe es hipotético y
+    no debe decidir.
+- **Constantes al YAML (#17):**
+  - `history_d = 756` del plan;
+  - los umbrales de calidad de datos (126 sesiones, 5% de huecos, 1%);
+  - el corte de clusters (ρ 0,6);
+  - la profundidad mínima de episodios de estrés (7%);
+  - `max_ffill = 2`;
+  - la rejilla de `borrow_costs`.
+
+  Moverlas cambia el fingerprint de la configuración.
+
+## Código compartido (no editado, #24)
+
+- `cli.py` importa el motor sin condición y `pyproject.toml` no tiene techo
+  para pandas. Ambos van en el PR de la auditoría del multifactor
+  (`audit/multifactor-review`).
+- `sfc_tfsig.metrics.sortino` sigue con su propia definición. El motor ya no
+  la usa (#4), pero el multifactor sí. Si se quiere una sola definición en el
+  repo, es una decisión del modelo multifactor.
+
+## Pruebas al cierre
+
+- `pytest`: 346 passed. Del motor long/short, 129 (eran 104; 25 tests nuevos).
+- `ruff check --select E9,F` limpio en `src/quant_engine` y en sus tests.
+- Los `.py` modificados no tienen caracteres fuera de ASCII.
+- Corrida interactiva completa de `python main.py` con `COLUMNS=80`.
+  - Opciones del menú: [3] robustez, [5] exportar, [2] `min_variance`,
+    [4] Modo B con CSV, [1] cambio de universo (2 + 2 nombres),
+    [2] `max_sharpe`, una entrada inválida "9" y [6] salir.
+  - Termina con código 0 en 121 s.
+  - Ninguna tabla cortada. El resumen del Modo B cita su CAGR (34,1%) y su
+    Sharpe (1,31).
+- Determinismo: dos corridas seguidas tras #7 dan una salida idéntica.
