@@ -252,6 +252,16 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         warnings.append(f"WRDS no disponible, se usa Yahoo + ETFs + SIC: {wrds.reason}")
     elif wrds.unmatched:
         warnings.append(f"sin identificador en Compustat: {', '.join(wrds.unmatched)}")
+    if wrds.available:
+        unadjusted = []
+        if "split_adjusted" in wrds.fundamentals:
+            unadjusted += [t for t, ok in wrds.fundamentals["split_adjusted"].items() if ok is False]
+        if "si_split_adjusted" in wrds.short_interest:
+            unadjusted += [t for t, ok in wrds.short_interest["si_split_adjusted"].items() if ok is False]
+        if unadjusted:
+            warnings.append("sin factor de ajuste de Compustat (comp.secd.ajexdi) para "
+                            f"{', '.join(sorted(set(unadjusted)))}: acciones e interes corto sin ajustar por "
+                            "splits posteriores; capitalizacion y rendimientos de valor pueden estar mal")
 
     sectors, sector_source = loader.load_sectors(tickers)
     for t, gics in wrds.sectors.items():

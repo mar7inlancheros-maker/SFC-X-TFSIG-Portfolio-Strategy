@@ -120,3 +120,51 @@ def test_sin_wrds_el_motor_no_falla(monkeypatch):
     d = wd.load(["AAPL"], pd.Timestamp("2024-01-01"), pd.Timestamp("2026-01-01"))
     assert not d.available
     assert "WRDS_USERNAME" in d.reason
+
+
+# ---------------------------------------------------------------------------
+#  Splits entre el trimestre publicado y hoy (auditoria #6)
+#
+#  WRDS no estaba disponible al corregirlo: estos datos son sinteticos, con un
+#  split 4:1 conocido. `ajexdi` de Compustat: precio ajustado = precio / ajex,
+#  asi que en un split 4:1 el factor anterior es 4 veces el posterior,
+#  cualquiera que sea la base de la serie.
+# ---------------------------------------------------------------------------
+
+
+AS_OF = pd.Timestamp("2026-10-01")
+
+
+def _ajex(split_date: str, before: float = 4.0, after: float = 1.0) -> pd.Series:
+    return pd.Series([before, after], index=pd.to_datetime(["2020-01-02", split_date]))
+
+
+def test_split_tras_el_ultimo_trimestre_lleva_las_acciones_a_la_base_de_hoy():
+    # Ultimo trimestre publicado: 2026-06-30, con 105 M de acciones. Split 4:1
+    # el 2026-08-17. Hoy hay 420 M y el precio de Yahoo (50) ya es posterior al
+    # split: la capitalizacion es 21.000 M, no 5.250 M.
+    ttm = wd.ttm_fundamentals(_fundq(), AS_OF, ajex=_ajex("2026-08-17"))
+    assert ttm["shares_mm"] == pytest.approx(105.0 * 4)
+    m = wd.fundamental_metrics(pd.DataFrame([ttm], index=["X"]), pd.Series({"X": 50.0}))
+    assert m.loc["X", "market_cap_mm"] == pytest.approx(21_000.0)
+
+
+def test_split_entre_trimestres_no_es_crecimiento_de_acciones():
+    f = _fundq()
+    f.loc[f["datadate"] >= "2025-12-31", "cshoq"] = 400.0   # tras el split 4:1 del 2025-12-01
+    f.loc[f["datadate"] < "2025-12-31", "cshoq"] = 100.0
+    ttm = wd.ttm_fundamentals(f, AS_OF, ajex=_ajex("2025-12-01"))
+    assert ttm["shares_growth"] == pytest.approx(0.0)
+    assert ttm["shares_mm"] == pytest.approx(400.0)
+
+
+def test_sin_factor_de_ajuste_se_marca_y_no_se_inventa():
+    ttm = wd.ttm_fundamentals(_fundq(), AS_OF)
+    assert ttm["shares_mm"] == pytest.approx(105.0)
+    assert ttm["split_adjusted"] is False
+
+
+def test_interes_corto_anterior_al_split_pasa_a_la_base_de_hoy():
+    ajex = _ajex("2026-08-17")
+    assert wd.to_current_basis(8e6, pd.Timestamp("2026-07-15"), ajex, AS_OF) == pytest.approx(32e6)
+    assert wd.to_current_basis(32e6, pd.Timestamp("2026-09-15"), ajex, AS_OF) == pytest.approx(32e6)

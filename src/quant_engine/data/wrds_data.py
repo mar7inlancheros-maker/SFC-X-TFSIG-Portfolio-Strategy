@@ -102,13 +102,42 @@ def quarterly_from_ytd(frame: pd.DataFrame, column: str) -> pd.Series:
     return q.reindex(frame.index)
 
 
-def ttm_fundamentals(fundq: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series | None:
+def to_current_basis(value: float, at: pd.Timestamp, ajex: pd.Series | None, as_of: pd.Timestamp) -> float:
+    """Un numero de ACCIONES de la fecha `at` expresado en la base de `as_of`.
+
+    `ajex` es el factor de ajuste diario de Compustat (`ajexdi`): precio
+    ajustado = precio / ajex. En un split 4:1 el factor anterior es 4 veces el
+    posterior, sea cual sea la base de la serie, asi que el cociente
+
+        acciones_hoy = acciones_at x ajex(at) / ajex(as_of)
+
+    no depende de cuando se reescribio la serie. Sin factor, NaN: quien llama
+    decide si usa el dato sin ajustar y lo marca.
+    """
+    if ajex is None or ajex.empty or pd.isna(value):
+        return float("nan")
+    a = ajex.dropna().sort_index()
+    then, now = a.loc[:at], a.loc[:as_of]
+    if then.empty or now.empty or now.iloc[-1] <= 0:
+        return float("nan")
+    return float(value) * float(then.iloc[-1]) / float(now.iloc[-1])
+
+
+def ttm_fundamentals(fundq: pd.DataFrame, as_of: pd.Timestamp, ajex: pd.Series | None = None) -> pd.Series | None:
     """Conceptos de los ultimos 4 trimestres PUBLICADOS antes de `as_of`.
 
     Point-in-time por `rdq` (fecha de publicacion). Sin `rdq`, se supone
     publicado 90 dias despues del cierre: conservador, nunca antes.
     Devuelve None si no hay 4 trimestres consecutivos: un TTM con huecos mezcla
     periodos y no significa nada.
+
+    **Acciones en la base de hoy.** `cshoq` es el numero de acciones al cierre
+    del trimestre. La capitalizacion se calcula con el precio de HOY, que ya
+    refleja cualquier split posterior: sin llevar `cshoq` a la base de hoy, un
+    split 4:1 despues del trimestre dividia la capitalizacion entre 4 e
+    inflaba por 4 todos los rendimientos de valor. Con `ajex` (factor diario de
+    Compustat) se ajustan las acciones y su crecimiento; sin el, se usan tal
+    cual y `split_adjusted` queda en False.
     """
     f = _numeric(fundq, ("gvkey", "datadate", "rdq"))
     f["datadate"] = pd.to_datetime(f["datadate"])
@@ -128,7 +157,16 @@ def ttm_fundamentals(fundq: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series | No
     def ttm(col: str) -> float:
         return float(last4[col].sum(min_count=4)) if col in last4 else np.nan
 
-    shares_prev = f.iloc[-5]["cshoq"] if len(f) >= 5 else np.nan
+    shares_raw = latest.get("cshoq")
+    prev = f.iloc[-5] if len(f) >= 5 else None
+    shares_prev_raw = prev["cshoq"] if prev is not None else np.nan
+    shares = to_current_basis(shares_raw, latest["datadate"], ajex, as_of)
+    adjusted = not pd.isna(shares)
+    if adjusted:
+        shares_prev = (to_current_basis(shares_prev_raw, prev["datadate"], ajex, as_of)
+                       if prev is not None else np.nan)
+    else:
+        shares, shares_prev = shares_raw, shares_prev_raw
     return pd.Series({
         "revenue": ttm("saleq"),
         "cogs": ttm("cogsq"),
@@ -145,8 +183,9 @@ def ttm_fundamentals(fundq: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series | No
         "cash": latest.get("cheq"),
         "current_assets": latest.get("actq"),
         "current_liabilities": latest.get("lctq"),
-        "shares_mm": latest.get("cshoq"),
-        "shares_growth": (latest.get("cshoq") / shares_prev - 1.0) if shares_prev and shares_prev > 0 else np.nan,
+        "shares_mm": shares,
+        "shares_growth": (shares / shares_prev - 1.0) if shares_prev and shares_prev > 0 else np.nan,
+        "split_adjusted": adjusted,
         "fiscal_period_end": latest["datadate"],
         "report_date": latest["rdq"],
     })
@@ -158,7 +197,7 @@ def fundamental_metrics(concepts: pd.DataFrame, prices: pd.Series) -> pd.DataFra
     Reutiliza `sfc_tfsig.financials`: un ROE o un rendimiento por beneficio
     significan lo mismo en los dos motores del repo. Compustat va en millones;
     la capitalizacion se calcula con el precio de hoy y las acciones del
-    ultimo trimestre publicado.
+    ultimo trimestre publicado, llevadas a la base de hoy en `ttm_fundamentals`.
     """
     from sfc_tfsig import financials  # noqa: PLC0415
 
@@ -268,21 +307,44 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
                    f"where gvkey in ({_in_list(gvkeys)}) and indfmt='INDL' and datafmt='STD' and consol='C' "
                    f"and popsrc='D' and datadate >= '{as_of - pd.DateOffset(years=3):%Y-%m-%d}' "
                    f"and datadate <= '{day}'", f"fundq_{day}")
-            for t, row in ids.iterrows():
-                block = fq[fq["gvkey"] == row["gvkey"]]
-                ttm = ttm_fundamentals(block, as_of) if len(block) else None
-                if ttm is not None:
-                    fund_rows[t] = ttm
-
             raw_si = q("select gvkey, iid, shortint, shortintadj, datadate from comp.sec_shortint "
                        f"where gvkey in ({_in_list(gvkeys)}) and datadate >= '{as_of - pd.DateOffset(months=3):%Y-%m-%d}' "
                        f"and datadate <= '{day}'", f"shortint_{day}")
+
+            # Factor de ajuste diario por emision, para llevar acciones e
+            # interes corto a la base de hoy (ver `to_current_basis`). Va la
+            # ultima a proposito: si falla no se pierde todo WRDS ni se deja la
+            # conexion a medias para otras consultas de fundamentales. Los
+            # nombres quedan con `split_adjusted = False` y el analisis avisa.
+            factors_by_ticker: dict[str, pd.Series | None] = {}
+            try:
+                adj = q("select gvkey, iid, datadate, ajexdi from comp.secd "
+                        f"where gvkey in ({_in_list(gvkeys)}) "
+                        f"and datadate >= '{as_of - pd.DateOffset(years=3, months=6):%Y-%m-%d}' "
+                        f"and datadate <= '{day}'", f"ajex_{day}")
+                adj = _numeric(adj, ("gvkey", "iid", "datadate"))
+                adj["datadate"] = pd.to_datetime(adj["datadate"])
+                for t, row in ids.iterrows():
+                    a = adj[(adj["gvkey"] == row["gvkey"]) & (adj["iid"] == row["iid"])]
+                    factors_by_ticker[t] = a.set_index("datadate")["ajexdi"] if len(a) else None
+            except Exception:  # noqa: BLE001 -- se marca por nombre y se avisa
+                log.exception("fallo leyendo comp.secd.ajexdi; acciones sin ajustar por splits")
+
+            for t, row in ids.iterrows():
+                block = fq[fq["gvkey"] == row["gvkey"]]
+                ttm = ttm_fundamentals(block, as_of, factors_by_ticker.get(t)) if len(block) else None
+                if ttm is not None:
+                    fund_rows[t] = ttm
+
             rows = {}
             for t, row in ids.iterrows():
                 block = raw_si[(raw_si["gvkey"] == row["gvkey"]) & (raw_si["iid"] == row["iid"])]
                 if len(block):
                     last = block.sort_values("datadate").iloc[-1]
-                    rows[t] = {"shortint": float(last["shortint"]), "si_date": pd.Timestamp(last["datadate"])}
+                    si_date = pd.Timestamp(last["datadate"])
+                    current = to_current_basis(float(last["shortint"]), si_date, factors_by_ticker.get(t), as_of)
+                    rows[t] = {"shortint": current if not pd.isna(current) else float(last["shortint"]),
+                               "si_date": si_date, "si_split_adjusted": not pd.isna(current)}
             si = pd.DataFrame(rows).T
 
         ibtics = ids["ibtic"].dropna()

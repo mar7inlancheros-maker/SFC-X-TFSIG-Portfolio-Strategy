@@ -378,3 +378,55 @@ Decisión del comité: risk parity dentro de cada pata y patas fijas de
   - En la robustez, la variante de 1 año cae de 0,82 a 0,47.
   - El plan de operación cambia en los nombres REDUCE: NVDA 0,080 → 0,072,
     AMZN 0,092 → 0,078, META 0,080 → 0,069, PYPL −0,095 → −0,113.
+
+### #6 — Con WRDS, las acciones no se ajustaban por splits posteriores
+
+**No se verificó con WRDS real.** WRDS no estaba disponible en esta máquina
+(no hay pgpass). La corrección se probó solo con datos sintéticos con un split
+4:1 conocido. Hay que repetir la comprobación con WRDS antes de dar el arreglo
+por cerrado (ver "Pendiente" al final de esta entrada).
+
+- **Qué estaba mal:**
+  - La capitalización era el precio de hoy (Yahoo, ya posterior a cualquier
+    split) × `cshoq` del último trimestre publicado, sin ajustar
+    (`data/wrds_data.py:131,168`). Con un split 4:1 entre ese cierre y hoy, la
+    capitalización salía dividida entre 4 y los rendimientos de valor
+    (beneficio, flujo libre, libros, ventas) multiplicados por 4.
+  - `shares_growth` comparaba `cshoq` de dos trimestres sin ajustar
+    (`:148`): un split entre ellos parecía una emisión del 300%.
+  - `si_pct_float` dividía `shortint` en la base de su fecha entre `cshoq` en
+    la base del trimestre (`:225`). Con un split entre ambas fechas, el
+    porcentaje salía multiplicado o dividido por 4.
+- **Cambio:**
+  - Nueva consulta a `comp.secd` del factor diario `ajexdi` por emisión
+    (gvkey + iid).
+  - Nueva función pura `to_current_basis`: acciones_hoy = acciones_t ×
+    ajex(t) / ajex(hoy). Usa el cociente porque así no depende de la base en
+    la que Compustat tenga reescrita la serie.
+  - `ttm_fundamentals` lleva `shares_mm` y `shares_growth` a la base de hoy.
+  - El interés corto se lleva a la base de hoy con el mismo factor.
+  - Sin factor, los datos se usan sin ajustar y se marcan
+    (`split_adjusted` / `si_split_adjusted` en False). El análisis lo avisa
+    por nombre; no se inventa nada.
+  - La consulta de `ajexdi` va después de las de fundamentales e interés
+    corto y en un `try` propio: si falla, se pierde el ajuste, no todo WRDS.
+- **Tests** (`tests/test_qe_wrds.py`, datos sintéticos):
+  - `test_split_tras_el_ultimo_trimestre_lleva_las_acciones_a_la_base_de_hoy`:
+    capitalización de 21.000 M en lugar de 5.250 M;
+  - `test_split_entre_trimestres_no_es_crecimiento_de_acciones`: crecimiento
+    0% en lugar de +300%;
+  - `test_sin_factor_de_ajuste_se_marca_y_no_se_inventa`;
+  - `test_interes_corto_anterior_al_split_pasa_a_la_base_de_hoy`.
+- **Impacto:**
+  - Sin WRDS (la ruta de esta máquina) no cambia nada: 0 líneas de
+    diferencia en el resumen de métricas frente a `af1eba0`.
+  - Con WRDS solo cambia algo en los nombres con un split entre el último
+    trimestre publicado (o la fecha del interés corto) y hoy.
+- **Pendiente con WRDS real:**
+  - Confirmar que `comp.secd` tiene `ajexdi` con esas columnas para las
+    emisiones de `comp.security`.
+  - Comparar la capitalización con la de Yahoo en un nombre con un split
+    reciente.
+  - Si la consulta falla dentro de una transacción, puede que las consultas
+    de IBES que van detrás fallen también. Hay que comprobar que el aviso
+    aparece y que IBES sigue llegando.
