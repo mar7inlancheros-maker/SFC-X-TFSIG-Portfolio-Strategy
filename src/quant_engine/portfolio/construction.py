@@ -4,19 +4,20 @@
 |---|---|---|
 | equal_weight | mismo peso dentro de cada pata | fijada (N) |
 | inverse_vol | peso proporcional a 1/sigma dentro de cada pata | fijada (N) |
-| risk_parity | misma contribucion al riesgo TOTAL de cada nombre (ERC) | libre, se reporta |
+| risk_parity | misma contribucion al riesgo de SU PATA (ERC por pata) | fijada (N) |
 | min_variance | minima varianza con las patas fijadas | fijada (N) |
 | max_sharpe | maximo Sharpe ex-ante con las patas fijadas | fijada (N) |
 
-**Paridad de riesgo long/short.** Con S = diag(signos) y Sigma' = S Sigma S,
-la contribucion de riesgo de w = S x en Sigma es exactamente la de x en Sigma':
+**Paridad de riesgo long/short, dentro de cada pata.** Cada pata se resuelve
+como un ERC long-only sobre la covarianza de sus nombres (Spinu 2013: minimizar
+0,5 x' Sigma x - (1/n) sum ln x_i, que es convexo) y se escala a su tamano:
+L = (G + N) / 2 y S = (G - N) / 2. Asi la neta queda fijada, como pide la
+seccion 16 de la especificacion y `net_exposure` del YAML.
 
-    w_i (Sigma w)_i = s_i x_i sum_j Sigma_ij s_j x_j = x_i (Sigma' x)_i
-
-Asi que basta resolver un ERC long-only sobre Sigma' (Spinu 2013: minimizar
-0,5 x' Sigma' x - (1/n) sum ln x_i, que es convexo) y devolver el signo. ERC
-iguala contribuciones a la varianza TOTAL, asi que las patas no quedan
-necesariamente del mismo tamano: la neta sale libre y se reporta.
+Antes se igualaban las contribuciones al riesgo TOTAL de la cartera (ERC sobre
+S Sigma S, con S = diag(signos)). Eso deja la neta libre: +0,23 en la corrida
+de referencia, entre -0,12 y +0,32 en el backtest. Una cartera "neutral en
+dolares" con un 23% neto largo no lo es. Auditoria #12.
 
 **Maximo Sharpe** es el metodo menos robusto de los cinco: depende de retornos
 esperados, y la media historica es un estimador pesimo. Se contrae con
@@ -85,29 +86,36 @@ def inverse_vol(signs: pd.Series, vol: pd.Series, params: ConstructionParams) ->
     return w
 
 
-def risk_parity(signs: pd.Series, cov: pd.DataFrame, params: ConstructionParams) -> tuple[pd.Series, str]:
-    names = list(signs.index)
-    s = signs.to_numpy(float)
-    sigma = cov.loc[names, names].to_numpy(float)
-    sigma_flip = s[:, None] * sigma * s[None, :]
-    n = len(names)
+def _erc_long_only(sigma: np.ndarray) -> np.ndarray:
+    """Pesos (sin escalar) con contribuciones iguales al riesgo de `sigma`."""
+    n = len(sigma)
 
     def objective(x: np.ndarray) -> tuple[float, np.ndarray]:
-        sx = sigma_flip @ x
+        sx = sigma @ x
         return 0.5 * x @ sx - np.log(x).sum() / n, sx - 1.0 / (n * x)
 
-    x0 = 1.0 / np.sqrt(np.diag(sigma_flip))
+    x0 = 1.0 / np.sqrt(np.diag(sigma))
     res = minimize(objective, x0, jac=True, method="L-BFGS-B",
                    bounds=[(1e-10, None)] * n, options={"maxiter": 1000, "ftol": 1e-14})
-    x = pd.Series(res.x, index=names)
-    x = x / x.sum() * params.gross
+    return res.x
 
-    note = ""
-    if (x > params.max_position + 1e-9).any():
-        # El tope rompe la igualdad exacta de contribuciones; se dice.
-        x = cap_leg(x, params.gross, params.max_position)
-        note = "tope por nombre activo: contribuciones aproximadamente iguales, no exactas"
-    return x * signs, note
+
+def risk_parity(signs: pd.Series, cov: pd.DataFrame, params: ConstructionParams) -> tuple[pd.Series, str]:
+    w = pd.Series(0.0, index=signs.index)
+    capped = False
+    for names, total, sign in ((list(signs.index[signs > 0]), params.long_leg, 1.0),
+                               (list(signs.index[signs < 0]), params.short_leg, -1.0)):
+        if not names:
+            continue
+        x = pd.Series(_erc_long_only(cov.loc[names, names].to_numpy(float)), index=names)
+        x = x / x.sum() * total
+        if (x > params.max_position + 1e-9).any():
+            x = cap_leg(x, total, params.max_position)
+            capped = True
+        w[names] = sign * x
+    # El tope rompe la igualdad exacta de contribuciones; se dice.
+    note = "tope por nombre activo: contribuciones aproximadamente iguales, no exactas" if capped else ""
+    return w, note
 
 
 def _leg_constraints(w: cp.Variable, signs: pd.Series, params: ConstructionParams,

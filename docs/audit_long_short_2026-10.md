@@ -323,3 +323,58 @@ resumen final como evidencia.
   Los nombres con el tope de riesgo activo (TSLA, BA, NKE e INTC tras el FLIP)
   no cambian. La bruta baja porque `max_sharpe` concentra en pocos nombres y
   el tope de riesgo recorta los de stop ancho. El aviso de #16 lo dice.
+
+### #12 — `risk_parity` dejaba la neta libre
+
+Decisión del comité: risk parity dentro de cada pata y patas fijas de
+100% / 100%, para cumplir la sección 16 ("Net exposure ≈ 0") y el
+`net_exposure: 0.0` del YAML.
+
+- **Qué estaba mal:** `risk_parity` igualaba las contribuciones al riesgo
+  total de la cartera (ERC sobre S Σ S). Eso deja libre el tamaño de cada
+  pata. La neta era +0,234 hoy, entre −0,12 y +0,32 en el backtest, con una
+  media de +0,06. Era el default del YAML, así que la cartera principal no
+  era neutral en dólares. `constraints.check()` no miraba la neta, por eso el
+  test de los cinco métodos no lo detectaba.
+- **Cambio:**
+  - `construction.risk_parity` resuelve un ERC long-only por pata, sobre la
+    covarianza de sus nombres (Spinu), y escala cada pata a
+    L = (G + N) / 2 y S = (G − N) / 2. El tope por nombre se aplica dentro de
+    la pata, con aviso si actúa.
+  - `constraints.check()` verifica la neta, salvo con beta neutral, donde
+    queda libre a propósito.
+  - La tabla del docstring dice "fijada (N)".
+- **Tests:**
+  - `test_paridad_de_riesgo_iguala_contribuciones_dentro_de_cada_pata`
+    sustituye a `test_paridad_de_riesgo_iguala_contribuciones_con_cortos`,
+    que exigía justo el comportamiento corregido;
+  - `test_check_detecta_neta_fuera_de_objetivo`;
+  - el test paramétrico de los cinco métodos ahora comprueba también la neta.
+- **Impacto.** Antes es `dd3881e` y después este commit, con la misma caché y
+  el default `risk_parity`. Los otros cuatro métodos no cambian.
+
+  | `risk_parity` | Antes | Después |
+  |---|---|---|
+  | Neta ex-ante hoy | +0,234 | 0,000 |
+  | Neta media en el backtest | +0,060 | 0,000 |
+  | Beta ex-ante | +0,048 | −0,254 |
+  | Beta realizada (Modo A) | +0,098 | +0,068 |
+  | Volatilidad ex-ante | 19,4% | 20,5% |
+  | Sharpe (Modo A) | 1,263 | 1,102 |
+  | Sortino (Modo A) | 1,969 | 1,685 |
+  | CAGR (Modo A) | 33,36% | 29,33% |
+  | Max drawdown (Modo A) | −17,3% | −21,1% |
+  | VaR 95% 1 día | 1,95% | 2,06% |
+  | Contribución al riesgo de la pata corta | 50% | 77% |
+  | Monte Carlo neutro: P(drawdown peor que −20%) | 46,9% | 48,9% |
+  | Rango de Sharpe en robustez | 0,815 – 1,395 | 0,471 – 1,395 |
+
+  **Lectura:**
+  - Parte del Sharpe anterior venía de estar un 23% neto largo en un mercado
+    alcista, no de la cesta LONG/SHORT.
+  - Con patas iguales, la pata corta tiene más beta (TSLA, INTC, BA) y
+    domina el riesgo: la cartera queda con beta ex-ante −0,25. Si se quiere
+    beta ≈ 0 (§14), está la variante beta neutral, que sigue igual.
+  - En la robustez, la variante de 1 año cae de 0,82 a 0,47.
+  - El plan de operación cambia en los nombres REDUCE: NVDA 0,080 → 0,072,
+    AMZN 0,092 → 0,078, META 0,080 → 0,069, PYPL −0,095 → −0,113.

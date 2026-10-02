@@ -42,12 +42,26 @@ def test_todos_los_metodos_respetan_signos_bruta_y_topes(market, method):
     assert check(res.weights, SIGNS, PARAMS) == []
 
 
-def test_paridad_de_riesgo_iguala_contribuciones_con_cortos(market):
+def test_paridad_de_riesgo_iguala_contribuciones_dentro_de_cada_pata(market):
+    # Auditoria #12. La especificacion (seccion 16) y `net_exposure` del YAML
+    # piden neta ~ 0. ERC sobre el riesgo TOTAL dejaba la neta libre (+0,23 en
+    # la corrida de referencia). Ahora: ERC dentro de cada pata y patas fijas.
     _, cov, vol, _ = market
     w = C.build("risk_parity", SIGNS, cov=cov, vol=vol, params=PARAMS).weights
-    rc = pa.ex_ante(w, cov)["risk_contribution"]
-    assert rc.sum() == pytest.approx(1.0)
-    assert rc.std() < 1e-3
+    assert w[SIGNS > 0].sum() == pytest.approx(PARAMS.long_leg, abs=1e-9)
+    assert w[SIGNS < 0].sum() == pytest.approx(-PARAMS.short_leg, abs=1e-9)
+    for leg in (SIGNS > 0, SIGNS < 0):
+        x = w[leg].abs()
+        sub = cov.loc[x.index, x.index]
+        rc = x * (sub @ x) / float(x @ sub @ x)
+        assert rc.std() < 1e-3
+
+
+def test_check_detecta_neta_fuera_de_objetivo():
+    w = pd.Series([0.6, 0.6, -0.4, -0.4], index=list("ABCD"))
+    signs = pd.Series([1.0, 1.0, -1.0, -1.0], index=list("ABCD"))
+    problems = check(w, signs, ConstructionParams(gross=2.0, net=0.0, max_position=0.6))
+    assert any("neta" in p for p in problems)
 
 
 def test_minima_varianza_no_supera_a_equiponderado(market):
