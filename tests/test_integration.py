@@ -17,7 +17,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sfc_tfsig import panel as panel_mod, report as report_mod, validation as validation_mod
+from sfc_tfsig import panel as panel_mod
+from sfc_tfsig import report as report_mod
+from sfc_tfsig import validation as validation_mod
 from sfc_tfsig.backtest import benchmark_nav, run_backtest
 from sfc_tfsig.factors.composite import build_scores
 from sfc_tfsig.metrics import evaluate
@@ -113,6 +115,7 @@ def mercado():
 @pytest.fixture(scope="module")
 def cfg_integracion():
     from conftest import BASE_CONFIG
+
     from sfc_tfsig.config import config_from_dict
     return config_from_dict(BASE_CONFIG).replace(**{
         "calendar.start": "2019-12-31",
@@ -299,7 +302,7 @@ def test_el_reporte_incluye_atribucion_y_decaimiento(mercado, cfg_integracion):
 
 
 def test_las_ordenes_del_ultimo_mes_cuadran_con_la_cartera(mercado, cfg_integracion):
-    crudo, close = mercado
+    crudo, _close = mercado
     cfg = cfg_integracion
     puntuado = build_scores(crudo, cfg)
 

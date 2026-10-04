@@ -126,7 +126,7 @@ def rank_stability(features: pd.DataFrame, weights: dict[str, float],
     rng = np.random.default_rng(seed)
     correlations = []
     for _ in range(draws):
-        sample = dict(zip(keys, rng.dirichlet(alpha)))
+        sample = dict(zip(keys, rng.dirichlet(alpha), strict=True))
         alt = quant_score(features, sample)["quant_score"]
         correlations.append(base.rank().corr(alt.rank()))
     arr = np.array(correlations, dtype=float)

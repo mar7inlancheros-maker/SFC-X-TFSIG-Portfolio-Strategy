@@ -29,8 +29,8 @@ ejecucion al cierre de la sesion siguiente. Coste = tc x nocional operado.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -38,8 +38,8 @@ import pandas as pd
 from ..data.cleaning import daily_rf
 from ..factors.beta import rolling_beta
 from ..inference.covariance import ewma, for_optimization
-from ..portfolio.construction import build, shrink_means
 from ..portfolio.constraints import ConstructionParams
+from ..portfolio.construction import build, shrink_means
 
 log = logging.getLogger(__name__)
 

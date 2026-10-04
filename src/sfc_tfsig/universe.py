@@ -1,8 +1,8 @@
 """Universo investible: que acciones pueden entrar en la cartera, y por que no las demas.
 
-El universo se define ANTES de mirar ninguna señal. Si se filtra despues -- "me
+El universo se define ANTES de mirar ninguna senal. Si se filtra despues -- "me
 quedo con las que el modelo puntua alto y ademas son liquidas" -- el filtro deja
-de ser una restriccion operativa y se convierte en parte de la señal, sin haberlo
+de ser una restriccion operativa y se convierte en parte de la senal, sin haberlo
 validado como tal.
 
 Dos capas, deliberadamente separadas:
@@ -21,7 +21,7 @@ seria del modelo y no se arregla sin datos de pago. Ver README.
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 import pandas as pd
 import requests
@@ -340,7 +340,7 @@ def apply_liquidity_filters(
     max_names = int(cfg.get("universe.max_names"))
     if len(out) > max_names:
         # Si sobran nombres se recorta por liquidez, que es el criterio
-        # operativo, NO por capitalizacion ni por ninguna señal del modelo.
+        # operativo, NO por capitalizacion ni por ninguna senal del modelo.
         out = out.nlargest(max_names, "dollar_volume")
 
     return out.reset_index(drop=True)

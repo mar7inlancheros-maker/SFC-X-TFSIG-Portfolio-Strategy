@@ -104,7 +104,6 @@ def run_backtest(
     rebalance_rows: list[dict] = []
     warnings: list[str] = []
 
-    previous_weights = pd.Series(dtype="float64")
     previous_execution: pd.Timestamp | None = None
 
     for i, signal_date in enumerate(signal_dates, start=1):
@@ -166,15 +165,16 @@ def run_backtest(
         if dropped:
             warnings.append(
                 f"{execution_date.date()}: sin precio de ejecucion para {sorted(dropped)}; "
-                "se excluyen del rebalanceo"
+                "su peso queda en caja"
             )
             target_weights = target_weights.loc[tradable]
             if target_weights.empty:
                 previous_execution = execution_date
                 continue
-            target_weights = target_weights / target_weights.sum() * (
-                1.0 - float(cfg.get("portfolio.cash_buffer"))
-            )
+            # NO se renormaliza. Repartir el peso de los que faltan entre los que
+            # quedan rompe los topes: el 1 de octubre de 2026 faltaban 24 de 30
+            # precios y 7 nombres acabaron con 11-17% cada uno frente a un tope
+            # del 6%. Igual que `apply_caps`, ante lo imposible se deja caja.
 
         # -- ordenes --------------------------------------------------------
         all_names = shares.index.union(target_weights.index)
@@ -250,7 +250,6 @@ def run_backtest(
                 }
             )
 
-        previous_weights = realized_weights
         previous_execution = execution_date
 
         if progress and (i % 12 == 0 or i == len(signal_dates)):

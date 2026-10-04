@@ -3,14 +3,18 @@
     python main.py                      -> interactivo: pide tickers y opciones
     python main.py research --long ...  -> una corrida sin preguntas (scripts, CI)
 
-Tras cada analisis se guardan reporte, CSV, JSON, HTML y graficos, y se ofrece
-un menu para seguir sin reiniciar el programa.
+Tras cada analisis se guardan reporte, CSV, JSON, HTML y graficos. En pantalla
+sale el resumen, el plan de operacion y la senal final; el informe del plan
+(HTML de una pagina) se abre en el navegador si hay una persona delante. Un
+menu permite seguir sin reiniciar el programa.
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import sys
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,8 +25,19 @@ from sfc_tfsig.console import enable_utf8_stdout
 
 from .analysis import AnalysisResult, run_analysis
 from .reporting import terminal
-from .settings import (CONSTRUCTIONS, LOOKBACK_YEARS, REBALANCES, EngineSettings, SettingsError,
-                       build_settings, default_values, output_dir, parse_tickers)
+from .settings import (
+    CONSTRUCTIONS,
+    LOOKBACK_YEARS,
+    REBALANCES,
+    EngineSettings,
+    SettingsError,
+    build_settings,
+    default_values,
+    format_positions,
+    output_dir,
+    parse_positions,
+    parse_tickers,
+)
 
 MENU = """
 ============================================================
@@ -35,8 +50,9 @@ Would you like to:
 [2] Change portfolio construction
 [3] Run robustness analysis
 [4] Run historical backtest
-[5] Export full report
-[6] Exit
+[5] Show the full analysis here (13 sections)
+[6] Open the trade plan report in the browser
+[0] Exit
 """
 
 
@@ -93,6 +109,11 @@ def ask_settings(previous: EngineSettings | None = None) -> EngineSettings:
             print(f"  (Enter = los primeros {half} LONG: {','.join(tickers[:half])})")
             longs, shorts = split_long_short(tickers, _ask("Cuales van LONG? El resto queda SHORT", ""))
             print(f"  LONG:  {' '.join(longs)}\n  SHORT: {' '.join(shorts)}")
+            print("  (TICKER:ACCIONES, negativo = corto. Ej: AAPL:500,TSLA:-200. Enter = ninguna)")
+            prev_pos = format_positions(previous.positions) if previous else ""
+            positions = parse_positions(_ask("Posiciones actuales", prev_pos))
+            if positions:
+                print("  AHORA: " + "  ".join(f"{t} {q:+,}" for t, q in positions))
 
             options = {}
             if _ask("Cambiar opciones avanzadas? (s/N)", "n").lower().startswith("s"):
@@ -110,23 +131,38 @@ def ask_settings(previous: EngineSettings | None = None) -> EngineSettings:
                                risk_free_rate=previous.risk_free_rate, rebalance=previous.rebalance,
                                construction=previous.construction, initial_capital=previous.initial_capital,
                                transaction_cost=previous.transaction_cost)
-            return build_settings(longs, shorts, **options)
+            return build_settings(longs, shorts, positions=positions, **options)
         except (SettingsError, ValueError) as exc:
             print(f"\n  ERROR: {exc}\n  Intenta de nuevo.\n")
 
 
+# Ancho del reporte en disco: independiente de la terminal de quien lo corre.
+REPORT_WIDTH = 120
+
+
 def execute(settings: EngineSettings, console: Console, *, signals_csv: Path | None = None,
-            robustness: bool = True, charts: bool = True) -> tuple[AnalysisResult, dict[str, Path]]:
+            robustness: bool = True, charts: bool = True,
+            full: bool = False) -> tuple[AnalysisResult, dict[str, Path]]:
+    """Corre, guarda el reporte completo y muestra en pantalla el plan.
+
+    En pantalla va el resumen, el plan y la senal final; las trece secciones de
+    analisis van a disco (y al menu [5]). Con `full` se imprime todo.
+    """
     print("\nRunning quantitative research...", flush=True)
     result = run_analysis(settings, signals_csv=signals_csv, run_robustness=robustness,
                           progress=lambda m: print(f"  - {m}", flush=True))
-    terminal.render(result, console)
-    return result, save(result, console, charts=charts)
+    paths = save(result, charts=charts)
+    (terminal.render if full else terminal.brief)(result, console)
+    _print_saved(console, paths)
+    return result, paths
 
 
-def save(result: AnalysisResult, console: Console, *, charts: bool = True) -> dict[str, Path]:
+def save(result: AnalysisResult, *, charts: bool = True) -> dict[str, Path]:
+    """Reporte completo grabado sin imprimir, y todos los ficheros."""
     from .reporting import export
 
+    report = Console(record=True, file=io.StringIO(), width=REPORT_WIDTH)
+    terminal.render(result, report)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     directory = output_dir(result.settings)
     chart_paths = []
@@ -134,59 +170,92 @@ def save(result: AnalysisResult, console: Console, *, charts: bool = True) -> di
         from .reporting import charts as charts_mod
 
         chart_paths = charts_mod.render_all(result, directory / "charts", stamp)
-    paths = export.export_all(result, console, directory, stamp, chart_paths)
+    return export.export_all(result, report, directory, stamp, chart_paths)
+
+
+def _print_saved(console: Console, paths: dict[str, Path]) -> None:
+    if not paths:
+        return
+    directory = next(iter(paths.values())).parent
     console.print()
-    for kind, path in paths.items():
-        console.print(f"saved {kind:12} {path}")
-    if chart_paths:
-        console.print(f"saved {'charts':12} {directory / 'charts'} ({len(chart_paths)} files)")
-    return paths
+    console.print(f"Files in {directory}:")
+    labels = {"trade_plan_html": "TRADE PLAN REPORT", "orders": "orders (Excel)", "html": "full report",
+              "txt": "full report (text)"}
+    for kind, label in labels.items():
+        if kind in paths:
+            console.print(f"  {label:20} {paths[kind].name}")
+    console.print("  + JSON, CSVs (portfolio, signals, risk, correlation, trade plan) and charts/")
+
+
+def _open(paths: dict[str, Path]) -> None:
+    path = paths.get("trade_plan_html")
+    if path is not None:
+        webbrowser.open(path.resolve().as_uri())
 
 
 def interactive() -> int:
     enable_utf8_stdout()
-    console = Console(record=True)
+    # La pantalla no se graba: lo que va a disco sale de su propia consola en `save`.
+    console = Console()
     print("=" * 60)
     print("        QUANTITATIVE HEDGE FUND RESEARCH ENGINE")
     print("=" * 60)
     print()
-    settings = ask_settings()
+    try:
+        settings = ask_settings()
+    except EOFError:
+        return 0
     _setup_logging(output_dir(settings))
-    result, _ = execute(settings, console)
+    result, paths = execute(settings, console)
+    # Solo con una persona delante: redirigido o en un script no se abre nada.
+    auto_open = sys.stdin.isatty() and bool(settings.get("output.open_trade_plan", True))
+    if auto_open:
+        _open(paths)
 
     while True:
         print(MENU)
-        choice = input("Selection:\n> ").strip()
+        try:
+            choice = input("Selection:\n> ").strip()
+        except EOFError:
+            return 0
         try:
             if choice == "1":
-                console = Console(record=True)
                 settings = ask_settings(settings)
-                result, _ = execute(settings, console)
+                result, paths = execute(settings, console)
+                if auto_open:
+                    _open(paths)
             elif choice == "2":
                 method = _ask(f"Portfolio construction {list(CONSTRUCTIONS)}", settings.construction)
                 settings = settings.with_changes(construction=method)
-                console = Console(record=True)
-                result, _ = execute(settings, console)
+                result, paths = execute(settings, console)
+                if auto_open:
+                    _open(paths)
             elif choice == "3":
                 from .robustness import run_robustness
 
                 result.robustness = run_robustness(result)
                 terminal.robustness(console, result)
+                paths = save(result, charts=False)
+                _print_saved(console, paths)
             elif choice == "4":
                 path = Path(_ask("Path to historical signals CSV (date,ticker,signal)"))
                 if not path.exists():
                     print(f"  ERROR: {path} not found")
                     continue
-                console = Console(record=True)
-                result, _ = execute(settings, console, signals_csv=path)
+                result, paths = execute(settings, console, signals_csv=path)
             elif choice == "5":
-                save(result, console)
+                terminal.render(result, console)
             elif choice == "6":
+                _open(paths)
+                print(f"  {paths.get('trade_plan_html')}")
+            elif choice in ("0", "q", "salir", "exit"):
                 return 0
             else:
-                print("  Choose 1-6.")
+                print("  Choose 0-6.")
         except (SettingsError, ValueError, RuntimeError) as exc:
             print(f"\n  ERROR: {exc}\n")
+        except EOFError:
+            return 0
 
 
 def run_once(args) -> int:
@@ -199,11 +268,14 @@ def run_once(args) -> int:
         risk_free_rate=parse_fraction(args.rf) if args.rf else None,
         initial_capital=float(args.capital) if args.capital else None,
         transaction_cost=parse_fraction(args.tc) if args.tc else None,
+        positions=args.positions,
     )
     _setup_logging(output_dir(settings))
-    console = Console(record=True, width=args.width)
-    execute(settings, console, signals_csv=Path(args.signals) if args.signals else None,
-            robustness=not args.no_robustness, charts=not args.no_charts)
+    console = Console(width=args.width)
+    _, paths = execute(settings, console, signals_csv=Path(args.signals) if args.signals else None,
+                       robustness=not args.no_robustness, charts=not args.no_charts, full=args.full)
+    if args.open:
+        _open(paths)
     return 0
 
 
@@ -218,9 +290,12 @@ def add_parser(sub) -> None:
     p.add_argument("--capital")
     p.add_argument("--tc", help="coste de transaccion: 0.0005 o 0.05%%")
     p.add_argument("--rf", help="tasa libre de riesgo: 0.04 o 4%%")
+    p.add_argument("--positions", help="posiciones actuales: AAPL:500,TSLA:-200 (negativo = corto)")
     p.add_argument("--signals", help="CSV date,ticker,signal para el modo B")
     p.add_argument("--no-robustness", action="store_true")
     p.add_argument("--no-charts", action="store_true")
+    p.add_argument("--full", action="store_true", help="imprime las 13 secciones, no solo el plan")
+    p.add_argument("--open", action="store_true", help="abre el informe del plan en el navegador")
     p.add_argument("--width", type=int, default=160, help="ancho de la salida")
     p.set_defaults(func=run_once)
 

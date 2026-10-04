@@ -13,7 +13,7 @@
 **Por que combinarlos ponderados y no en cascada.** Un embudo (primero filtro por
 calidad, luego ordeno por valor) descarta de forma irreversible a una empresa
 excelente en tres factores que falla el corte del cuarto por poco. La suma
-ponderada -- como en Two Sigma, señales combinadas y no secuenciales -- deja que
+ponderada -- como en Two Sigma, senales combinadas y no secuenciales -- deja que
 las fortalezas compensen debilidades y que la cartera exprese lo que realmente
 piensa el modelo. El coste es que un mal score en un factor se puede esconder;
 por eso el reporte muestra SIEMPRE los cuatro por separado para cada posicion.

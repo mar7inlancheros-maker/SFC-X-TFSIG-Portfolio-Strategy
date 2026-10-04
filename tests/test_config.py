@@ -9,11 +9,10 @@ from __future__ import annotations
 import copy
 
 import pytest
+from conftest import BASE_CONFIG
 
 from sfc_tfsig.config import ConfigError, config_from_dict, load_config
 from sfc_tfsig.paths import DEFAULT_CONFIG
-
-from conftest import BASE_CONFIG
 
 
 def _con(**cambios):
@@ -132,5 +131,5 @@ def test_coste_total_por_lado_suma_las_tres_patas():
 
 def test_la_configuracion_es_inmutable():
     cfg = config_from_dict(BASE_CONFIG)
-    with pytest.raises(Exception):
+    with pytest.raises(AttributeError):  # FrozenInstanceError
         cfg.fingerprint = "otro"

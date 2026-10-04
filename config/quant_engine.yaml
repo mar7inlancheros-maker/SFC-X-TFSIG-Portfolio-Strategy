@@ -107,6 +107,7 @@ robustness:
 output:
   directory: output/quant_engine
   charts: true
+  open_trade_plan: true      # modo interactivo: abre el informe del plan en el navegador
 
 # Plan de operacion. Ver src/quant_engine/trade_plan.py.
 trade_plan:
@@ -116,3 +117,6 @@ trade_plan:
   reduce_size: 0.5           # veredicto REDUCE (senal neutral): mitad de tamano
   flip_threshold: -0.5       # score alineado por debajo: el modelo sugiere el lado contrario
   horizon_d: 63              # horizonte de la tasa base historica (TP antes que stop)
+  hedge_beta: true           # cubrir con el benchmark la beta que dejan correcciones y recortes
+  hedge_threshold: 0.05      # |beta| del libro por debajo de esto: no se cubre
+  hold_band: 0.005           # mismo lado y ajuste menor a 0,5% del capital: HOLD

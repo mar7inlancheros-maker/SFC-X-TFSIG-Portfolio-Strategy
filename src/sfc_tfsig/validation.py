@@ -241,7 +241,7 @@ def fama_macbeth(
         if beta is None:
             continue
         row = {"date": pd.Timestamp(date), "alpha": float(beta[0])}
-        row.update({factor: float(b) for factor, b in zip(factors, beta[1:])})
+        row.update({factor: float(b) for factor, b in zip(factors, beta[1:], strict=True)})
         coefficients.append(row)
 
     if not coefficients:

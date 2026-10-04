@@ -30,9 +30,10 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pandas as pd
 
@@ -112,8 +113,53 @@ def get_connection():
             f"tiene terminal para pedirla.\n{SETUP_HELP}"
         )
 
+    # El sondeo solo tiene sentido con contrasena guardada: sin ella, con
+    # terminal, `wrds` la pide por teclado y eso es lo que se quiere.
+    if _pgpass_path().exists():
+        _probe(username)
     wrds = _import_wrds()
     return wrds.Connection(wrds_username=username)
+
+
+_HOST, _PORT, _DB = "wrds-pgdata.wharton.upenn.edu", 9737, "wrds"
+
+
+def _probe(username: str, timeout: int | None = None) -> None:
+    """Prueba usuario y contrasena guardada antes de dar el control a `wrds`.
+
+    Si la autenticacion falla, `wrds.Connection` no lanza: pide usuario y
+    contrasena por teclado. Sin terminal eso es un EOFError a mitad del
+    analisis; con terminal, una pregunta inesperada. Y si WRDS deja la
+    conexion esperando (aprobacion Duo pendiente en el celular del titular),
+    se queda colgada sin limite. Aqui se falla con un mensaje que dice que
+    hacer, y en `timeout` segundos como mucho.
+    """
+    import psycopg2  # noqa: PLC0415
+
+    timeout = timeout or int(_read_env_value("WRDS_CONNECT_TIMEOUT") or 45)
+    try:
+        psycopg2.connect(host=_HOST, port=_PORT, dbname=_DB, user=username, sslmode="require",
+                         connect_timeout=timeout).close()
+    except psycopg2.OperationalError as exc:
+        msg = str(exc).strip()
+        low = msg.lower()
+        if "timeout" in low:
+            raise RuntimeError(
+                f"WRDS no respondio en {timeout}s (la red si llega). Suele ser una aprobacion Duo "
+                "pendiente en el celular del titular de la cuenta: aprobarla y volver a correr. "
+                "Para esperar mas, WRDS_CONNECT_TIMEOUT=90 en .env."
+            ) from None
+        if "no password supplied" in low:
+            raise RuntimeError(
+                f"el pgpass no tiene una linea para {username} en {_HOST}. Crearla con: "
+                "python main.py wrds --setup"
+            ) from None
+        if "authentication" in low or "password" in low:
+            raise RuntimeError(
+                f"WRDS rechazo la contrasena guardada para {username}. Si cambio, "
+                f"actualizarla con: python main.py wrds --setup"
+            ) from None
+        raise RuntimeError(f"no se pudo conectar a WRDS: {msg.splitlines()[0]}") from None
 
 
 @contextmanager

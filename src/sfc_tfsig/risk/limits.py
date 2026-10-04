@@ -13,8 +13,8 @@ no protege de nada, y ignorarlo en silencio seria peor que no tenerlo.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -62,6 +62,12 @@ LIMIT_SPECS: dict[str, LimitSpec] = {
     "max_stress_loss": LimitSpec(
         "Peor perdida en escenarios hipoteticos", "max_stress_loss", "max", "pct",
         "identificar el escenario y los nombres que lo explican"),
+    "max_stressed_var_99_1d": LimitSpec(
+        "VaR 99% 1 dia estresado (peor ventana historica)", "stressed_var_99_1d", "max", "pct",
+        "la cartera de hoy no aguantaria su peor ano; revisar beta y concentracion"),
+    "max_liquidation_cost": LimitSpec(
+        "Coste de liquidar todo el libro en crisis", "liquidation_cost_stress", "max", "pct",
+        "reducir las posiciones de menor volumen o el capital que se gestiona"),
 }
 
 

@@ -25,10 +25,11 @@ import copy
 import hashlib
 import json
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .paths import DEFAULT_CONFIG, RISK_CONFIG
 
@@ -313,7 +314,8 @@ def config_from_dict(data: Mapping[str, Any]) -> Config:
 #  panel y haria incomparables dos backtests identicos.
 # ---------------------------------------------------------------------------
 
-_RISK_SECTIONS = ("var", "montecarlo", "exposure", "stress", "limits")
+_RISK_SECTIONS = ("var", "montecarlo", "exposure", "factor_model", "history", "liquidity",
+                  "stress", "limits")
 
 
 def _confidence(value: Any, name: str) -> float:
@@ -381,6 +383,10 @@ def validate_risk(data: Mapping[str, Any]) -> None:
         raise ConfigError("[var.backtest].window_d < 60: el cuantil de la cola seria ruido")
     if int(_need(bt, "recent_d", "var.backtest")) < 50:
         raise ConfigError("[var.backtest].recent_d < 50: el semaforo necesita al menos 50 sesiones")
+    garch = _need(var, "garch", "var")
+    if int(_need(garch, "n_paths", "var.garch")) < 1000:
+        raise ConfigError("[var.garch].n_paths < 1000: el ES al 99% saldria de 10 trayectorias")
+    _positive_ints(_need(garch, "horizons_d", "var.garch"), "var.garch.horizons_d")
 
     mc = data["montecarlo"]
     _need(mc, "seed", "montecarlo")
@@ -425,8 +431,43 @@ def validate_risk(data: Mapping[str, Any]) -> None:
         raise ConfigError("[exposure].adv_window_d < 5: la mediana del volumen seria de un dia raro")
     _fraction(_need(exp, "participation", "exposure"), "exposure.participation", allow_zero=False)
 
+    if int(_need(data["factor_model"], "window_d", "factor_model")) < 120:
+        raise ConfigError(
+            "[factor_model].window_d < 120: la covarianza de los factores y la varianza "
+            "especifica necesitan al menos medio ano de regresiones diarias"
+        )
+
+    hist = data["history"]
+    if int(_need(hist, "rolling_window_d", "history")) < 20:
+        raise ConfigError("[history].rolling_window_d < 20: el riesgo movil seria ruido diario")
+    if int(_need(hist, "calibration_window_d", "history")) < 60:
+        raise ConfigError("[history].calibration_window_d < 60: prevision con menos de un trimestre")
+
+    liq = data["liquidity"]
+    _positive(_need(liq, "impact_coef", "liquidity"), "liquidity.impact_coef")
+    _fraction(_need(liq, "stress_adv_mult", "liquidity"), "liquidity.stress_adv_mult", allow_zero=False)
+    for key in ("stress_vol_mult", "stress_cost_mult"):
+        if float(_need(liq, key, "liquidity")) < 1.0:
+            raise ConfigError(
+                f"[liquidity].{key} < 1: un escenario de crisis no puede abaratar la salida"
+            )
+    navs = _need(liq, "capacity_navs", "liquidity")
+    if not isinstance(navs, list) or not navs or any(float(v) <= 0 for v in navs):
+        raise ConfigError("[liquidity].capacity_navs debe ser una lista de NAV positivos")
+    _fraction(_need(liq, "capacity_budget", "liquidity"), "liquidity.capacity_budget", allow_zero=False)
+
     st = data["stress"]
     _iso_date(_need(st, "history_start", "stress"), "stress.history_start")
+    sv = _need(st, "stressed_var", "stress")
+    _confidence(_need(sv, "confidence", "stress.stressed_var"), "stress.stressed_var.confidence")
+    if int(_need(sv, "window_d", "stress.stressed_var")) < 60:
+        raise ConfigError("[stress.stressed_var].window_d < 60: el cuantil de la cola seria ruido")
+    for i, sc in enumerate(st.get("covariance", []), start=1):
+        where = f"stress.covariance #{i}"
+        _need(sc, "name", where)
+        if float(sc.get("vol_mult", 1.0)) <= 0:
+            raise ConfigError(f"[{where}] '{sc['name']}': vol_mult debe ser positivo")
+        _fraction(sc.get("corr_blend", 0.0), f"{where}.corr_blend")
     for i, sc in enumerate(st.get("historical", []), start=1):
         where = f"stress.historical #{i}"
         for key in ("name", "start", "end"):

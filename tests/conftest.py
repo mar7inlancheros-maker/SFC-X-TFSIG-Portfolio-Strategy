@@ -13,7 +13,6 @@ if str(SRC) not in sys.path:
 
 from sfc_tfsig.config import config_from_dict  # noqa: E402
 
-
 BASE_CONFIG = {
     "meta": {"name": "test", "version": "0", "base_currency": "USD"},
     "universe": {

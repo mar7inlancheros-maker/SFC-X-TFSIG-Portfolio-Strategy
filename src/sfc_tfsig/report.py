@@ -17,9 +17,9 @@ al hacerlo.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping
 
 import pandas as pd
 

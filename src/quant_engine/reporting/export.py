@@ -46,7 +46,7 @@ def to_json(r: AnalysisResult) -> dict:
         "settings": {"longs": r.longs, "shorts": r.shorts, "benchmark": s.benchmark, "lookback": s.lookback,
                      "construction": s.construction, "rebalance": s.rebalance, "capital": s.initial_capital,
                      "transaction_cost": s.transaction_cost, "borrow_cost": s.borrow_cost,
-                     "risk_free_rate": s.risk_free_rate},
+                     "risk_free_rate": s.risk_free_rate, "positions": dict(s.positions)},
         "evaluation_window": [r.eval_start, r.as_of],
         "data_quality": r.quality,
         "excluded": r.excluded,
@@ -76,7 +76,8 @@ def to_json(r: AnalysisResult) -> dict:
         "stress": {k: v for k, v in r.stress.items()},
         "montecarlo": {k: v for k, v in r.montecarlo.items() if k != "bootstrap_terminal"},
         "robustness": {k: v for k, v in r.robustness.items()} if r.robustness else {},
-        "trade_plan": r.trade_plan.get("plan") if r.trade_plan else None,
+        "trade_plan": ({k: r.trade_plan.get(k) for k in ("plan", "orders", "hedge", "beta", "gross", "net", "note")}
+                       if r.trade_plan else None),
         "warnings": r.warnings,
         "disclaimer": "Descriptive quantitative analysis. Not investment advice.",
     })
@@ -108,6 +109,11 @@ def export_all(r: AnalysisResult, console: Console, directory: Path, stamp: str,
     if r.trade_plan:
         paths["trade_plan"] = directory / f"trade_plan_{stamp}.csv"
         r.trade_plan["plan"].to_csv(paths["trade_plan"], index_label="ticker")
+        paths["orders"] = directory / f"orders_{stamp}.csv"
+        r.trade_plan["orders"].to_csv(paths["orders"], index_label="ticker")
+        from . import plan_html  # noqa: PLC0415
+
+        paths["trade_plan_html"] = plan_html.write(r, directory / f"trade_plan_{stamp}.html")
 
     paths["correlation"] = directory / f"correlation_{stamp}.csv"
     r.correlation["pearson"].to_csv(paths["correlation"])

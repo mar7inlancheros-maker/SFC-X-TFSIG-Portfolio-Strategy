@@ -15,16 +15,19 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 import pandas as pd
 
-from . import attribution as attribution_mod, panel as panel_mod, report as report_mod, validation as validation_mod
+from . import attribution as attribution_mod
+from . import panel as panel_mod
+from . import report as report_mod
 from . import risk_report as risk_report_mod
+from . import validation as validation_mod
 from .backtest import benchmark_nav, run_backtest
 from .config import Config, ConfigError, load_config, load_risk_config
-from .console import enable_utf8_stdout
-from .data import cache, prices as prices_mod
+from .console import enable_utf8_stdout, keep_awake
+from .data import cache
+from .data import prices as prices_mod
 from .factors.composite import build_scores
 from .metrics import evaluate
 from .orders import build_orders, load_positions, render_orders, save_orders
@@ -65,9 +68,18 @@ def _require_panel(cfg: Config, *, rebuild: bool, progress: bool = True) -> pd.D
         cached = cache.read_frame(name)
         if cached is not None:
             cached["date"] = pd.to_datetime(cached["date"])
-            print(f"panel en cache: {len(cached):,} filas, "
-                  f"{cached['date'].nunique()} fechas (fingerprint {cfg.fingerprint})")
-            return cached
+            last, expected = cached["date"].max(), panel_mod.expected_last_date(cfg)
+            # La cache no caducaba: un panel armado el 23 de septiembre seguia
+            # sirviendo agosto en octubre, y `ordenes` sacaba las ordenes de hace
+            # un mes sin avisar. Con `calendar.end` vacio, falta un fin de mes
+            # cerrado = panel viejo.
+            if expected is not None and last < expected:
+                print(f"panel en cache desactualizado: ultima fecha {last.date()}, falta "
+                      f"{expected.date()}. Se reconstruye (baja solo lo que falta).", flush=True)
+            else:
+                print(f"panel en cache: {len(cached):,} filas, "
+                      f"{cached['date'].nunique()} fechas (fingerprint {cfg.fingerprint})")
+                return cached
 
     raw = panel_mod.build_panel(cfg, progress=progress)
     scored = build_scores(raw, cfg)
@@ -255,6 +267,7 @@ def cmd_ordenes(args: argparse.Namespace) -> int:
             weights, sectors, nav, close, str(cfg.get("backtest.benchmark")), risk_cfg,
             as_of=close.index.max(), volume_wide=volume,
             factor_scores=holding_scores, universe_scores=universe_scores,
+            panel=scored, cost_bps=cfg.total_cost_bps,
             strategy_fingerprint=cfg.fingerprint,
         )
         text = text + "\n" + risk_report_mod.render_pre_trade(pre_trade)
@@ -289,12 +302,16 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
         stress_close = _stress_prices(sorted(set(weights.index) | {benchmark}), risk_cfg)
 
     holding_scores, universe_scores = _scores(scored, scored["date"].max())
-    print("midiendo riesgo (VaR, Monte Carlo, estres, limites)...")
+    years = max((result.nav.index[-1] - result.nav.index[0]).days / 365.25, 1e-9)
+    print("midiendo riesgo (VaR, GARCH, Monte Carlo, factores, estres, limites)...")
     analysis = risk_mod.analyze(
         weights, sectors, nav, close, benchmark, risk_cfg,
         strategy_nav=result.nav, benchmark_nav=bench, as_of=as_of,
         volume_wide=volume, stress_close=stress_close,
         factor_scores=holding_scores, universe_scores=universe_scores,
+        panel=scored, holdings=result.holdings, cost_bps=cfg.total_cost_bps,
+        turnover=result.average_turnover,
+        rebalances_per_year=len(result.rebalances) / years,
         strategy_fingerprint=cfg.fingerprint,
     )
 
@@ -406,11 +423,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if args.comando is None:
-            from quant_engine.app import interactive
+        with keep_awake():
+            if args.comando is None:
+                from quant_engine.app import interactive
 
-            return interactive()
-        return args.func(args)
+                return interactive()
+            return args.func(args)
     except KeyboardInterrupt:
         print("\ninterrumpido", file=sys.stderr)
         return 130

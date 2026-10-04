@@ -153,7 +153,34 @@ def test_una_opi_de_tres_meses_no_entra_al_universo(cfg):
 def test_el_filtro_de_historia_es_obligatorio_no_opcional(cfg):
     """Sin valor por defecto a proposito: olvidarlo tiene que fallar, no pasar."""
     import inspect
+
     from sfc_tfsig import universe as universe_mod
 
     parametro = inspect.signature(universe_mod.apply_liquidity_filters).parameters["history_months"]
     assert parametro.default is inspect.Parameter.empty
+
+
+def test_fecha_esperada_de_un_panel_abierto(make_cfg):
+    cfg = make_cfg(**{"calendar.end": ""})
+    assert panel_mod.expected_last_date(cfg, pd.Timestamp("2026-10-04")) == pd.Timestamp("2026-09-30")
+    # El dia de fin de mes la sesion no ha cerrado: aun se espera el mes anterior.
+    assert panel_mod.expected_last_date(cfg, pd.Timestamp("2026-09-30")) == pd.Timestamp("2026-08-31")
+    trimestral = make_cfg(**{"calendar.end": "", "calendar.rebalance": "Q"})
+    assert panel_mod.expected_last_date(trimestral, pd.Timestamp("2026-10-04")) == pd.Timestamp("2026-09-30")
+    assert panel_mod.expected_last_date(trimestral, pd.Timestamp("2026-09-15")) == pd.Timestamp("2026-06-30")
+
+
+def test_fin_de_mes_en_sabado_no_se_espera_antes_de_tener_precios(make_cfg):
+    """31-oct-2026 es sabado: el panel no puede tenerlo hasta que haya un cierre
+    posterior (lunes 2-nov, disponible el martes)."""
+    cfg = make_cfg(**{"calendar.end": ""})
+    for hoy in ("2026-11-01", "2026-11-02"):
+        assert panel_mod.expected_last_date(cfg, pd.Timestamp(hoy)) == pd.Timestamp("2026-09-30")
+    assert panel_mod.expected_last_date(cfg, pd.Timestamp("2026-11-03")) == pd.Timestamp("2026-10-31")
+    # Y lo que se espera es exactamente lo que el constructor produce con esos precios.
+    sesiones = pd.bdate_range("2026-01-02", "2026-11-02")
+    assert panel_mod.rebalance_dates(cfg, sesiones).max() == pd.Timestamp("2026-10-31")
+
+
+def test_panel_con_fecha_final_fija_no_caduca(make_cfg):
+    assert panel_mod.expected_last_date(make_cfg(**{"calendar.end": "2020-12-31"})) is None

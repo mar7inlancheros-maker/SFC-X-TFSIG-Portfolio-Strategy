@@ -23,9 +23,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from . import financials, universe as universe_mod
+from . import financials
+from . import universe as universe_mod
 from .config import Config
-from .data import prices as prices_mod, sec
+from .data import prices as prices_mod
+from .data import sec
 
 # Version de la logica de ensamblaje. Va en el nombre de la cache del panel,
 # junto al fingerprint de la configuracion. Hace falta porque el fingerprint
@@ -60,6 +62,24 @@ def rebalance_dates(cfg: Config, available: pd.DatetimeIndex) -> pd.DatetimeInde
     # Solo fechas para las que hay mercado: el ultimo dia natural del mes puede
     # ser domingo.
     return pd.DatetimeIndex([d for d in grid if (available <= d).any()])
+
+
+def expected_last_date(cfg: Config, today: pd.Timestamp | None = None) -> pd.Timestamp | None:
+    """Ultima fecha de decision que deberia tener un panel abierto.
+
+    Solo aplica con `calendar.end` vacio ("hasta el ultimo cierre"). Replica lo
+    que `rebalance_dates` PUEDE producir: el ultimo fin de periodo no posterior
+    al ultimo dia habil con cierre definitivo (ayer o antes; hoy la sesion no
+    ha cerrado). Con el dia natural, un fin de mes en sabado se esperaba antes
+    de que hubiera precios para construirlo, y cada corrida reconstruia el
+    panel entero para seguir igual de "viejo".
+    """
+    if str(cfg.get("calendar.end") or "").strip():
+        return None
+    today = (today if today is not None else pd.Timestamp.today()).normalize()
+    last_session = pd.bdate_range(end=today - pd.Timedelta(days=1), periods=1)[0]
+    freq = "ME" if cfg.get("calendar.rebalance") == "M" else "QE"
+    return pd.date_range(end=last_session, periods=1, freq=freq)[0]
 
 
 def history_months_at(first_trade: pd.Series, date: pd.Timestamp) -> pd.Series:
@@ -160,7 +180,7 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
     # al futuro.
     first_trade = close_wide.apply(lambda s: s.first_valid_index())
 
-    cik_to_ticker = dict(zip(tradable["cik"], tradable["ticker"]))
+    cik_to_ticker = dict(zip(tradable["cik"], tradable["ticker"], strict=True))
     max_stale = int(cfg.get("universe.max_fundamental_staleness_d", 550))
 
     blocks: list[pd.DataFrame] = []
@@ -186,7 +206,7 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
 
         month = date.to_period("M")
 
-        def _monthly(frame: pd.DataFrame) -> pd.Series:
+        def _monthly(frame: pd.DataFrame, month: pd.Period = month) -> pd.Series:
             """Valor de la fila mensual correspondiente a `date`, o vacio."""
             if frame is None or frame.empty:
                 return pd.Series(dtype="float64")

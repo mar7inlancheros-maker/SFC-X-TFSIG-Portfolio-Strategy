@@ -244,7 +244,7 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
         conn_ctx = wrds.connection()
         conn = conn_ctx.__enter__()
     except Exception as exc:  # noqa: BLE001 -- se reporta, el motor sigue sin WRDS
-        return WrdsData(available=False, reason=f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}")
+        return WrdsData(available=False, reason=f"{type(exc).__name__}: {str(exc).splitlines()[0][:400]}")
 
     day = as_of.strftime("%Y-%m-%d")
     q = lambda sql, name: wrds.query(sql, cache_name=f"qe_{name}", conn=conn)  # noqa: E731
@@ -310,6 +310,6 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("fallo leyendo WRDS")
-        return WrdsData(available=False, reason=f"{type(exc).__name__}: {str(exc).splitlines()[0][:160]}")
+        return WrdsData(available=False, reason=f"{type(exc).__name__}: {str(exc).splitlines()[0][:400]}")
     finally:
         conn_ctx.__exit__(None, None, None)

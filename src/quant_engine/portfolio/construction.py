@@ -53,7 +53,11 @@ def _solve(problem: cp.Problem) -> str:
     last = "no resuelto"
     for solver in _SOLVERS:
         try:
-            problem.solve(solver=solver)
+            # Canonicalizacion en Python (scipy), no en C++: Smart App Control de
+            # Windows bloquea `_cvxcore.pyd` en esta maquina desde octubre de
+            # 2026. Con problemas de 10-50 nombres la diferencia de tiempo no
+            # se nota.
+            problem.solve(solver=solver, canon_backend=cp.SCIPY_CANON_BACKEND)
         except (cp.error.SolverError, ValueError) as exc:
             last = f"{solver}: {exc}"
             continue

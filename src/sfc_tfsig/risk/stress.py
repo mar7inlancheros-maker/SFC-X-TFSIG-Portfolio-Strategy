@@ -25,8 +25,12 @@ Funciones puras: entran pesos, betas y precios; salen tablas.
 
 from __future__ import annotations
 
+from statistics import NormalDist
+
 import numpy as np
 import pandas as pd
+
+from ..metrics import TRADING_DAYS
 
 # Un precio "del dia de inicio" que en realidad es de hace mas de una semana no
 # es de ese episodio: el nombre no cotizaba y se aproxima por beta.
@@ -216,4 +220,112 @@ def worst_windows(nav: pd.Series, benchmark_nav: pd.Series | None, windows_d) ->
         if bench is not None:
             row["benchmark"] = float(bench.loc[end] / bench.loc[start] - 1.0)
         rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+#  VaR estresado y choques de covarianza
+# ---------------------------------------------------------------------------
+
+
+def book_backcast(
+    weights: pd.Series,
+    betas: pd.Series,
+    close_wide: pd.DataFrame,
+    benchmark: str,
+) -> tuple[pd.Series, pd.Series]:
+    """Retornos diarios que habria tenido la cartera de HOY en toda la historia.
+
+    Devuelve `(retornos, peso_aproximado)`. El dia en que un nombre no cotizaba
+    se le da beta x retorno del benchmark: sin riesgo especifico, asi que en
+    los tramos con mucho peso aproximado la serie subestima algo la
+    volatilidad. `peso_aproximado` dice cuanto, dia a dia.
+    """
+    if benchmark not in close_wide.columns:
+        raise ValueError(f"sin precios de {benchmark}: no se puede reconstruir la historia de la cartera")
+    w = weights.astype(float)
+    prices = close_wide.reindex(columns=list(w.index) + [benchmark])
+    returns = prices.pct_change(fill_method=None).iloc[1:]
+    market = returns[benchmark]
+    returns = returns[market.notna()]
+    market = market[market.notna()]
+    names = returns[list(w.index)]
+    proxied = names.isna()
+    beta = betas.reindex(w.index).fillna(1.0)
+    filled = names.where(~proxied, pd.DataFrame(np.outer(market, beta), index=names.index, columns=names.columns))
+    backcast = filled.clip(lower=-1.0) @ w
+    return backcast.rename("book"), (proxied * w).sum(axis=1).rename("weight_proxied")
+
+
+def stressed_var(backcast: pd.Series, confidence: float, window: int,
+                 weight_proxied: pd.Series | None = None) -> dict[str, object]:
+    """VaR estresado al estilo Basilea 2.5: el de la peor ventana de la historia.
+
+    Se calcula el VaR historico de la cartera actual en cada ventana movil de
+    `window` sesiones y se toma la peor. Frente al VaR normal responde a otra
+    pregunta: no "cuanto se pierde un dia malo de este ano", sino "cuanto se
+    perderia un dia malo si volviera el peor ano que hemos visto".
+    """
+    r = backcast.dropna()
+    if len(r) < window + 1:
+        return {}
+    tail = 1.0 - confidence
+    rolling = -r.rolling(window).quantile(tail)
+    end = rolling.idxmax()
+    start = r.index[r.index.get_loc(end) - window + 1]
+    stressed = r.loc[start:end]
+    cutoff = stressed.quantile(tail)
+    current = r.tail(window)
+    out = {
+        "stressed_var": float(rolling.max()),
+        "stressed_es": float(-stressed[stressed <= cutoff].mean()),
+        "window_start": start,
+        "window_end": end,
+        "current_var": float(-current.quantile(tail)),
+        "history_start": r.index[0],
+        "ratio": float(rolling.max() / -current.quantile(tail)) if current.quantile(tail) < 0 else float("nan"),
+    }
+    if weight_proxied is not None:
+        out["weight_proxied_in_window"] = float(weight_proxied.reindex(stressed.index).mean())
+    return out
+
+
+def _shocked_cov(cov: np.ndarray, vol_mult: float, corr_blend: float) -> np.ndarray:
+    sd = np.sqrt(np.clip(np.diag(cov), 0.0, None))
+    safe = np.where(sd > 0, sd, 1.0)
+    corr = cov / np.outer(safe, safe)
+    # Correlacion de crisis: cada correlacion se acerca a 1 en la fraccion
+    # `corr_blend`. Con 0.5, una correlacion de 0.3 pasa a 0.65. Mezclar con
+    # la matriz de unos conserva la semidefinicion positiva.
+    corr = (1.0 - corr_blend) * corr + corr_blend * np.ones_like(corr)
+    np.fill_diagonal(corr, 1.0)
+    sd = sd * vol_mult
+    return corr * np.outer(sd, sd)
+
+
+def covariance_shocks(weights: pd.Series, cov_daily: pd.DataFrame, scenarios,
+                      confidence: float = 0.99) -> pd.DataFrame:
+    """Volatilidad y VaR normal de la cartera con la covarianza estresada.
+
+    En una crisis no solo sube la volatilidad: sube la correlacion, y con ella
+    desaparece la diversificacion que la cartera daba por hecha. Separar los dos
+    efectos dice cual de los dos preocupa mas en este libro.
+    """
+    names = list(weights.index)
+    w = weights.astype(float).to_numpy()
+    cov = cov_daily.loc[names, names].to_numpy(dtype=float)
+    z = -NormalDist().inv_cdf(1.0 - confidence)
+    base_vol = float(np.sqrt(max(w @ cov @ w, 0.0)))
+    rows = []
+    for sc in scenarios:
+        shocked = _shocked_cov(cov, float(sc.get("vol_mult", 1.0)), float(sc.get("corr_blend", 0.0)))
+        vol = float(np.sqrt(max(w @ shocked @ w, 0.0)))
+        rows.append({
+            "scenario": sc["name"],
+            "vol_mult": float(sc.get("vol_mult", 1.0)),
+            "corr_blend": float(sc.get("corr_blend", 0.0)),
+            "vol_annual": vol * np.sqrt(TRADING_DAYS),
+            "var_1d": z * vol,
+            "vs_base": vol / base_vol if base_vol > 0 else float("nan"),
+        })
     return pd.DataFrame(rows)

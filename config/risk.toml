@@ -38,6 +38,14 @@ confidence = 0.99
 window_d   = 250           # ventana del VaR historico; tambien la de Basilea
 recent_d   = 250           # tramo final para el semaforo de Basilea
 
+[var.garch]
+# GARCH(1,1) con objetivo de varianza y Monte Carlo filtrado: residuos
+# historicos reinyectados en la recursion desde la volatilidad de hoy. Es el
+# VaR multi-dia de referencia: la volatilidad revierte a su media en vez de
+# quedarse fija como en la raiz del tiempo.
+n_paths    = 20_000
+horizons_d = [1, 21, 63]
+
 # ---------------------------------------------------------------------------
 #  MONTE CARLO
 # ---------------------------------------------------------------------------
@@ -79,6 +87,41 @@ adv_window_d      = 63     # mediana del volumen en dolares, 3 meses
 # el techo habitual; por encima, el impacto de mercado deja de ser despreciable
 # y el backtest (que no lo modela) deja de ser representativo.
 participation     = 0.20
+
+# ---------------------------------------------------------------------------
+#  MODELO FACTORIAL DE RIESGO
+#
+#  Regresion transversal diaria del universo sobre sectores, los cuatro
+#  estilos del modelo y tamano. Dice DE DONDE viene el riesgo: mercado y
+#  sectores, estilos (momentum, valor...) o riesgo propio de cada nombre.
+# ---------------------------------------------------------------------------
+[factor_model]
+window_d = 252
+
+# ---------------------------------------------------------------------------
+#  HISTORIA DEL RIESGO Y CALIBRACION
+# ---------------------------------------------------------------------------
+[history]
+rolling_window_d = 63      # ventana del riesgo movil (un trimestre)
+calibration_window_d = 252 # ano de retornos para la prevision de cada rebalanceo
+
+# ---------------------------------------------------------------------------
+#  LIQUIDEZ EN ESTRES Y CAPACIDAD
+#
+#  Impacto de mercado por la ley de la raiz cuadrada: Y x sigma x raiz(Q/V).
+#  Y ~ 1 en la literatura (Almgren et al. 2005, Toth et al. 2011).
+# ---------------------------------------------------------------------------
+[liquidity]
+impact_coef      = 1.0
+# Crisis: la mitad de volumen, el doble de volatilidad y el triple de coste
+# fijo (sobre todo spread). Orden de magnitud de marzo de 2020.
+stress_adv_mult  = 0.5
+stress_vol_mult  = 2.0
+stress_cost_mult = 3.0
+capacity_navs    = [1_000_000, 10_000_000, 50_000_000, 100_000_000, 500_000_000, 1_000_000_000]
+# Coste de impacto anual tolerable, fraccion del NAV. Por encima, el impacto
+# se come una parte material del exceso esperado (2-3 puntos, ver README).
+capacity_budget  = 0.01
 
 # ---------------------------------------------------------------------------
 #  PRUEBAS DE ESTRES
@@ -207,6 +250,32 @@ name    = "Rally basura (tipo 2020-11)"
 market  = 0.10
 factors = { quality = -0.05, lowvol = -0.05, value = 0.03 }
 
+# VaR estresado (Basilea 2.5): el VaR historico de la cartera actual en la
+# PEOR ventana de `window_d` sesiones desde `history_start`.
+[stress.stressed_var]
+window_d   = 250
+confidence = 0.99
+
+# Choques de covarianza sobre la cartera actual. `vol_mult` multiplica todas
+# las volatilidades; `corr_blend` acerca cada correlacion a 1 en esa
+# fraccion (0.5: una correlacion de 0.3 pasa a 0.65).
+[[stress.covariance]]
+name     = "Volatilidad x1.5"
+vol_mult = 1.5
+
+[[stress.covariance]]
+name     = "Volatilidad x2"
+vol_mult = 2.0
+
+[[stress.covariance]]
+name       = "Correlacion de crisis"
+corr_blend = 0.5
+
+[[stress.covariance]]
+name       = "Crisis completa (vol x2, correlacion de crisis)"
+vol_mult   = 2.0
+corr_blend = 0.5
+
 [stress.reverse]
 # Cuanto tiene que caer el mercado para que la cartera pierda esto.
 loss_thresholds = [0.10, 0.20, 0.30]
@@ -244,3 +313,9 @@ max_liquidation_days  = 3.0
 min_effective_names   = 15.0
 # Peor perdida absoluta de los escenarios hipoteticos.
 max_stress_loss       = 0.45
+# VaR 99% a un dia de la cartera actual en la peor ventana de su historia.
+# Unas dos veces el limite de VaR normal: una crisis como 2008 duplica la
+# volatilidad de un libro de beta alta.
+max_stressed_var_99_1d = 0.080
+# Coste de liquidar todo el libro en condiciones de crisis, fraccion de NAV.
+max_liquidation_cost  = 0.02

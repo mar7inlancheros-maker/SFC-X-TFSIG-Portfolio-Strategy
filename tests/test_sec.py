@@ -97,7 +97,7 @@ def test_se_queda_con_la_primera_publicacion_no_con_la_reexpresion():
     payload = _facts(
         Assets=("USD", [
             _entry(None, "2023-03-31", 1000.0, "2023-04-20", form="10-Q"),
-            # Un año despues la reexpresan: ese numero NO estaba disponible en 2023.
+            # Un ano despues la reexpresan: ese numero NO estaba disponible en 2023.
             _entry(None, "2023-03-31", 1250.0, "2024-04-22", form="10-K"),
         ])
     )
@@ -119,7 +119,7 @@ def _four_quarters(tag="Revenues", values=(100.0, 110.0, 120.0, 130.0)):
         ("2022-07-01", "2022-09-30", "2022-10-25"),
         ("2022-10-01", "2022-12-31", "2023-02-20"),
     ]
-    return ("USD", [_entry(s, e, v, f) for (s, e, f), v in zip(periods, values)])
+    return ("USD", [_entry(s, e, v, f) for (s, e, f), v in zip(periods, values, strict=True)])
 
 
 def test_ttm_suma_cuatro_trimestres_y_usa_la_presentacion_mas_tardia():
@@ -145,7 +145,7 @@ def test_ttm_no_suma_ventanas_con_hueco():
     assert out[out["concept"] == "revenue"].empty
 
 
-def test_ttm_deriva_trimestres_desde_acumulados_del_año_fiscal():
+def test_ttm_deriva_trimestres_desde_acumulados_del_ano_fiscal():
     """Caso 10-Q real: se publica el acumulado, no el trimestre suelto."""
     payload = _facts(Revenues=("USD", [
         _entry("2022-01-01", "2022-03-31", 100.0, "2022-04-25"),   # 3 meses
@@ -164,7 +164,7 @@ def test_ttm_deriva_trimestres_desde_acumulados_del_año_fiscal():
 
 
 def test_respaldo_anual_cuando_no_hay_trimestres():
-    """Emisor extranjero que solo presenta el año completo (20-F/40-F)."""
+    """Emisor extranjero que solo presenta el ano completo (20-F/40-F)."""
     payload = _facts(Revenues=("USD", [
         _entry("2022-01-01", "2022-12-31", 1000.0, "2023-03-15", form="40-F"),
         _entry("2023-01-01", "2023-12-31", 1200.0, "2024-03-15", form="40-F"),

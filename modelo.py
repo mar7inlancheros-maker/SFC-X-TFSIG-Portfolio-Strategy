@@ -18,6 +18,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from quant_engine.app import interactive  # noqa: E402
+from sfc_tfsig.console import keep_awake  # noqa: E402
 
 if __name__ == "__main__":
-    raise SystemExit(interactive())
+    with keep_awake():
+        raise SystemExit(interactive())

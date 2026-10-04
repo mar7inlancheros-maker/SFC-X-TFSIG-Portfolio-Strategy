@@ -49,7 +49,7 @@ def clusters(corr: pd.DataFrame, rho_threshold: float = 0.6) -> dict[int, list[s
     cut = float(np.sqrt(0.5 * (1.0 - rho_threshold)))
     labels = fcluster(z, t=cut, criterion="distance")
     groups: dict[int, list[str]] = {}
-    for ticker, label in zip(corr.index, labels):
+    for ticker, label in zip(corr.index, labels, strict=True):
         groups.setdefault(int(label), []).append(ticker)
     return groups
 

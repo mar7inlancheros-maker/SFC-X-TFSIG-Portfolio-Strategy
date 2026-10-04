@@ -9,7 +9,8 @@ procesos sin terminal que se quedaban esperando una contrasena.
 import pandas as pd
 import pytest
 
-from sfc_tfsig.data import cache, wrds as wrds_mod
+from sfc_tfsig.data import cache
+from sfc_tfsig.data import wrds as wrds_mod
 
 
 class FakeConnection:
@@ -56,6 +57,7 @@ def _patch_wrds(monkeypatch, conn):
 
     monkeypatch.setattr(wrds_mod, "_import_wrds",
                         lambda: type("W", (), {"Connection": staticmethod(fake_connection)})())
+    monkeypatch.setattr(wrds_mod, "_probe", lambda *a, **k: None)
     return captured
 
 
@@ -223,3 +225,33 @@ def test_setup_usa_el_usuario_del_env_no_el_de_windows(monkeypatch, tmp_path):
     wrds_mod.setup_pgpass(password="secreto")
     assert captured == {"wrds_username": "demo_user", "wrds_password": "secreto"}
     assert created["done"] and db.closed
+
+
+@pytest.mark.parametrize("server_msg,expected", [
+    ("connection to server failed: timeout expired", "Duo"),
+    ('FATAL:  PAM authentication failed for user "x"', "wrds --setup"),
+    ("could not translate host name", "no se pudo conectar"),
+    ("fe_sendauth: no password supplied", "pgpass no tiene una linea"),
+])
+def test_probe_traduce_fallos_a_instrucciones(monkeypatch, server_msg, expected):
+    import psycopg2
+
+    def boom(**kwargs):
+        assert kwargs["connect_timeout"] == 5
+        raise psycopg2.OperationalError(server_msg)
+
+    monkeypatch.setattr(psycopg2, "connect", boom)
+    with pytest.raises(RuntimeError, match=expected):
+        wrds_mod._probe("usuario", timeout=5)
+
+
+def test_sin_pgpass_y_con_terminal_no_se_sondea(monkeypatch, tmp_path):
+    """Sin contrasena guardada, wrds la pide por teclado: el sondeo no debe
+    adelantarse con un 'contrasena rechazada' falso."""
+    monkeypatch.setenv("WRDS_USERNAME", "usuario")
+    monkeypatch.setattr(wrds_mod, "_pgpass_path", lambda: tmp_path / "no_existe.conf")
+    monkeypatch.setattr(wrds_mod.sys.stdin, "isatty", lambda: True, raising=False)
+    conn = FakeConnection()
+    _patch_wrds(monkeypatch, conn)  # deja _probe sin efecto; aqui se exige que ni se llame
+    monkeypatch.setattr(wrds_mod, "_probe", lambda *a, **k: pytest.fail("no debia sondear"))
+    assert wrds_mod.get_connection() is conn

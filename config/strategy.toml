@@ -32,10 +32,10 @@ base_currency = "USD"
 [universe]
 # Valores que la SEC emite de verdad en company_tickers_exchange.json:
 # "NYSE", "Nasdaq", "OTC", "CBOE" y vacio. No existe "NYSE American" como tal.
-# OTC queda fuera por liquidez y calidad de informacion, no por tamaño.
+# OTC queda fuera por liquidez y calidad de informacion, no por tamano.
 exchanges            = ["NYSE", "Nasdaq"]
 include_tsx_only     = false
-min_price            = 5.0          # USD. Debajo de esto el spread se come la señal
+min_price            = 5.0          # USD. Debajo de esto el spread se come la senal
 min_dollar_volume    = 3_000_000    # USD/dia, mediana de 63 sesiones
 min_market_cap       = 750_000_000  # USD. Micro caps: datos peores, costes peores
 min_history_months   = 24           # necesario para momentum 12-1 y vol de 12m
@@ -67,7 +67,7 @@ exclude_sic = [6189, 6199, 6221, 6726, 6770, 6798]
 start           = "2012-01-31"
 end             = ""      # vacio = ultimo cierre disponible
 rebalance       = "M"     # M = fin de mes | Q = fin de trimestre
-execution_lag_d = 1       # la señal se calcula en T y se ejecuta en T+1
+execution_lag_d = 1       # la senal se calcula en T y se ejecuta en T+1
 
 # ---------------------------------------------------------------------------
 #  FACTORES
@@ -112,7 +112,7 @@ lookback_m = 12   # 12 meses...
 skip_m     = 1    # ...saltando el ultimo, por la reversion de corto plazo
 
 [factors.lowvol]
-lookback_d = 252  # volatilidad realizada de los retornos diarios de 1 año
+lookback_d = 252  # volatilidad realizada de los retornos diarios de 1 ano
 
 # ---------------------------------------------------------------------------
 #  CONSTRUCCION DE CARTERA
@@ -124,7 +124,7 @@ max_weight       = 0.06          # techo por nombre
 min_weight       = 0.01
 max_sector_w     = 0.30          # techo por sector: el modelo no apuesta el book a un sector
 buffer_rank      = 45            # una posicion se mantiene mientras siga en el top 45.
-                                 # Amortigua el turnover sin cambiar la señal.
+                                 # Amortigua el turnover sin cambiar la senal.
 cash_buffer      = 0.02          # colchon para comisiones y ordenes parciales
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ risk_free_rate  = 0.04        # anual, para Sharpe. Aproximacion de T-bill.
 [validation]
 train_years    = 4
 test_years     = 1
-n_quantiles    = 5     # quintiles para el spread de la señal
+n_quantiles    = 5     # quintiles para el spread de la senal
 newey_west_lag = 6     # rezagos para los errores estandar de Fama-MacBeth
 
 # ---------------------------------------------------------------------------

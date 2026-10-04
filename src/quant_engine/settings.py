@@ -43,6 +43,7 @@ class EngineSettings:
     initial_capital: float
     transaction_cost: float
     borrow_cost: float
+    positions: tuple[tuple[str, int], ...] = ()
     raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     # -- derivados ---------------------------------------------------------
@@ -86,6 +87,36 @@ def parse_tickers(text: str) -> tuple[str, ...]:
     """'aapl, msft ,NVDA' -> ('AAPL', 'MSFT', 'NVDA'), sin duplicados, en orden."""
     items = [t.strip().upper() for t in str(text).replace(";", ",").split(",")]
     return tuple(dict.fromkeys(t for t in items if t))
+
+
+def parse_positions(text: str) -> tuple[tuple[str, int], ...]:
+    """'AAPL:500, tsla:-200' -> (('AAPL', 500), ('TSLA', -200)). Negativo = corto.
+
+    Acciones enteras, no pesos: el plan compara acciones con acciones. Un
+    ticker repetido es un error, no una suma: casi siempre es un tecleo.
+    """
+    out: dict[str, int] = {}
+    for item in str(text).replace(";", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        ticker, sep, qty = item.replace("=", ":").partition(":")
+        ticker = ticker.strip().upper()
+        if not sep or not ticker:
+            raise SettingsError(f"posicion '{item}' sin formato TICKER:ACCIONES (ej. AAPL:500, TSLA:-200)")
+        try:
+            shares = int(qty.strip().replace("+", "").replace("_", ""))
+        except ValueError:
+            raise SettingsError(f"'{qty.strip()}' no es un numero entero de acciones en '{item}'") from None
+        if ticker in out:
+            raise SettingsError(f"{ticker} aparece dos veces en las posiciones: deja una sola entrada")
+        if shares:
+            out[ticker] = shares
+    return tuple(out.items())
+
+
+def format_positions(positions: tuple[tuple[str, int], ...]) -> str:
+    return ",".join(f"{t}:{q}" for t, q in positions)
 
 
 def load_yaml(path: Path | None = None) -> dict[str, Any]:
@@ -161,6 +192,8 @@ def build_settings(
         values[key] = value
     values["benchmark"] = str(values["benchmark"]).upper()
 
+    if isinstance(values.get("positions"), str):
+        values["positions"] = parse_positions(values["positions"])
     longs_t = parse_tickers(longs) if isinstance(longs, str) else tuple(longs)
     shorts_t = parse_tickers(shorts) if isinstance(shorts, str) else tuple(shorts)
 

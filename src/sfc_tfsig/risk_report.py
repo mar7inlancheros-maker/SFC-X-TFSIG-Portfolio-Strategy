@@ -35,6 +35,7 @@ _METHOD_LABELS = {
     "historico_cartera": "Historico, cartera actual (1 ano)",
     "mc_normal": "Monte Carlo normal",
     "mc_t_student": "Monte Carlo t de Student",
+    "garch_fhs": "GARCH filtrado (Monte Carlo)",
 }
 
 _LIMITATIONS = """\
@@ -43,7 +44,8 @@ _LIMITATIONS = """\
 1. **El VaR no es la peor perdida.** Es donde empieza la cola. El ES dice cuanto
    pesa en media, y ni siquiera el ES acota lo que no esta en la muestra.
 2. **El bootstrap no inventa crisis.** Remuestrea dias reales del backtest, que
-   empieza en 2012: no contiene 2008. Las pruebas de estres existen para eso.
+   empieza en 2012: no contiene 2008. Las pruebas de estres y el VaR estresado
+   existen para eso.
 3. **El backtest hereda el sesgo de supervivencia.** Por eso el bootstrap se
    corre con el descuento anual declarado en `config/risk.toml`. Sin el, las
    probabilidades de perder saldrian optimistas.
@@ -55,6 +57,16 @@ _LIMITATIONS = """\
    nombres sin precios en un episodio historico se aproximan por su beta.
 6. **Los limites vigilan, no restringen.** Un limite excedido no cambia la
    cartera: se lleva al comite.
+7. **GARCH con parametros de toda la muestra.** La persistencia y la varianza
+   de largo plazo se estiman una vez; si el regimen cambia, el GARCH tarda en
+   enterarse. La historia de la cartera actual aproxima por beta los nombres
+   que no cotizaban, sin riesgo propio: en esos tramos subestima algo.
+8. **Modelo factorial pequeno.** Sectores SIC, cuatro estilos y tamano. No
+   modela divisa, tipos ni materias primas, que caen en el riesgo especifico
+   o en los sectores.
+9. **Impacto de mercado por formula.** La ley de la raiz cuadrada es una
+   regularidad empirica, no una medicion de este libro: la capacidad es un
+   orden de magnitud.
 """
 
 
@@ -330,6 +342,10 @@ def bootstrap_section(analysis: RiskAnalysis) -> str:
         line("ES 95% del horizonte", "es_95", _pct),
         line("Drawdown maximo mediano", "median_max_drawdown", _pct),
         line("Drawdown maximo p95", "p95_max_drawdown", _pct),
+        line("Racha mas larga bajo el maximo, mediana (sesiones)", "median_max_underwater_d",
+             lambda v: _num(v, 0)),
+        line("Racha mas larga bajo el maximo, p95 (sesiones)", "p95_max_underwater_d",
+             lambda v: _num(v, 0)),
     ]
     for column in [c for c in summary.columns if c.startswith("prob_dd_")]:
         rows.append(line(f"Probabilidad de drawdown >= {column.removeprefix('prob_dd_')}%",
@@ -417,6 +433,40 @@ def stress_section(analysis: RiskAnalysis) -> str:
         lines += ["", f"Lineal en la beta ex-ante ({_num(analysis.ex_ante.beta)}) y sin riesgo",
                   "especifico: un orden de magnitud, no una prevision.", ""]
 
+    sv = analysis.stressed
+    if sv:
+        lines += ["### VaR estresado: la cartera de hoy en su peor ano", ""]
+        lines += _rows(["Medida", "Valor"], [
+            ["Ventana mas dura", f"{pd.Timestamp(sv['window_start']).date()} a "
+                                 f"{pd.Timestamp(sv['window_end']).date()}"],
+            ["VaR 99% 1 dia estresado", f"{_pct(sv['stressed_var'])} ({_money(sv['stressed_var'] * nav)} USD)"],
+            ["ES 99% 1 dia estresado", f"{_pct(sv['stressed_es'])} ({_money(sv['stressed_es'] * nav)} USD)"],
+            ["VaR 99% 1 dia del ultimo ano", _pct(sv["current_var"])],
+            ["Estresado / actual", _num(sv.get("ratio"))],
+            ["Peso aproximado por beta en la ventana", _pct(sv.get("weight_proxied_in_window"), 0)],
+            ["Historia desde", str(pd.Timestamp(sv["history_start"]).date())],
+        ])
+        lines += ["",
+                  "VaR historico de la cartera actual en cada ventana movil de su historia",
+                  "reconstruida; se toma la peor (Basilea 2.5). Responde a 'cuanto se",
+                  "perderia un dia malo si volviera el peor ano', no a 'un dia malo de hoy'.",
+                  ""]
+
+    cov = analysis.covariance_stress
+    if cov is not None and not cov.empty:
+        lines += ["### Choques de volatilidad y correlacion", ""]
+        lines += _rows(
+            ["Escenario", "Vol x", "Hacia correlacion 1", "Volatilidad anual", "VaR normal 99% 1d",
+             "USD", "Frente a base"],
+            [[r["scenario"], _num(r["vol_mult"], 1), _pct(r["corr_blend"], 0), _pct(r["vol_annual"]),
+              _pct(r["var_1d"]), _money(r["var_1d"] * nav), f"x{_num(r['vs_base'])}"]
+             for _, r in cov.iterrows()],
+        )
+        lines += ["",
+                  "La correlacion de crisis sola mide cuanta diversificacion da por",
+                  "hecha la cartera: si multiplica el riesgo casi como doblar la",
+                  "volatilidad, los treinta nombres se comportan como pocos.", ""]
+
     worst = analysis.worst_windows
     if worst is not None and not worst.empty:
         lines += ["### Peores ventanas de la estrategia en el backtest", ""]
@@ -453,6 +503,148 @@ def liquidity_section(analysis: RiskAnalysis, top: int = 5) -> str:
               "La capacidad es el NAV al que la posicion menos liquida tardaria el",
               "limite de dias en venderse. Por encima, los costes fijos del backtest",
               "dejan de ser creibles y habria que modelar impacto de mercado.", ""]
+
+    liq = analysis.liquidation
+    if liq is not None and not liq.empty:
+        lines += ["### Coste de liquidar todo el libro", ""]
+        lines += _rows(
+            ["Condiciones", "Coste", "USD"],
+            [["Normales" if idx == "normal" else "Crisis (volumen /2, vol x2, coste fijo x3)",
+              _pct(r["cost"]), _money(r["cost_usd"])] for idx, r in liq.iterrows()],
+        )
+        lines += ["", "Coste fijo del backtest mas impacto por la ley de la raiz cuadrada.",
+                  "Es la perdida que se suma a la del mercado cuando hay que vender a la fuerza.", ""]
+
+    cap = analysis.capacity
+    if cap is not None and not cap.empty:
+        lines += ["### Capacidad: coste anual de rebalancear segun el capital", ""]
+        lines += _rows(
+            ["NAV", "Coste fijo anual", "Impacto anual", "Total anual", "Mayor fraccion del volumen diario"],
+            [[_money(nav_level), _pct(r["fixed_annual"]), _pct(r["impact_annual"]),
+              _pct(r["total_annual"]), _pct(r["max_participation"], 1)] for nav_level, r in cap.iterrows()],
+        )
+        lines += ["",
+                  f"NAV al que el impacto anual llega al presupuesto de la politica: "
+                  f"{_money(analysis.capacity_nav)} USD. El backtest no cobra impacto: por",
+                  "encima de esa cifra su exceso ya no es alcanzable.", ""]
+    return "\n".join(lines) + "\n"
+
+
+def factor_section(analysis: RiskAnalysis) -> str:
+    fr = analysis.factor_risk
+    if fr is None:
+        return ""
+    lines = [
+        "## Modelo factorial: de donde viene el riesgo",
+        "",
+        f"Regresion transversal diaria del universo ({fr.n_days} dias, R2 medio",
+        f"{_pct(fr.mean_r2, 1)}) sobre sectores, los cuatro estilos del modelo y tamano.",
+        "",
+        f"Volatilidad del modelo factorial: {_pct(fr.total_vol)}, frente a",
+        f"{_pct(analysis.ex_ante.volatility)} de Ledoit-Wolf. No miden lo mismo: Ledoit-Wolf",
+        "promedia como se movieron estos nombres el ultimo ano; el modelo factorial",
+        "aplica las exposiciones de HOY a la volatilidad de los factores. Si el",
+        "factorial sale mas alto, la cartera esta hoy mas cargada de algun estilo",
+        "que durante el ano, y la cifra que mira hacia delante es la factorial.",
+        "",
+    ]
+    lines += _rows(
+        ["Fuente", "Del riesgo total (varianza)", "Contribucion a la volatilidad"],
+        [[group, _pct(r["variance_share"], 1), _pct(r["vol_contribution"])]
+         for group, r in fr.decomposition.iterrows()],
+    )
+    styles = fr.factor_contributions[~fr.factor_contributions.index.str.startswith("sector_")]
+    if not styles.empty:
+        lines += ["", "### Exposicion a los estilos", ""]
+        lines += _rows(
+            ["Factor", "Exposicion (z)", "Volatilidad del factor", "Del riesgo total"],
+            [[f, _num(r["exposure"]), _pct(r["factor_vol"]), _pct(r["variance_share"], 1)]
+             for f, r in styles.iterrows()],
+        )
+    lines += [
+        "",
+        "Un riesgo especifico bajo con treinta nombres quiere decir que la cartera",
+        "es sobre todo una apuesta a mercado, sectores y estilos: la seleccion de",
+        "nombres pesa menos de lo que parece. Un estilo con mucha fraccion del",
+        "riesgo es la apuesta real del libro, se haya buscado o no.",
+        "",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def conditional_section(analysis: RiskAnalysis) -> str:
+    if not analysis.garch_fits:
+        return ""
+    nav = analysis.nav
+    lines = ["## Volatilidad condicional: GARCH y Monte Carlo filtrado", ""]
+    lines += _rows(
+        ["Serie", "Alfa", "Beta", "Persistencia", "Vida media (sesiones)",
+         "Volatilidad hoy", "Volatilidad de largo plazo"],
+        [[label, _num(f.alpha, 3), _num(f.beta, 3), _num(f.persistence, 3), _num(f.half_life_d, 0),
+          _pct(f.current_vol), _pct(f.long_run_vol)] for label, f in analysis.garch_fits.items()],
+    )
+    terms = analysis.vol_terms
+    if terms is not None and not terms.empty:
+        lines += ["", "### Volatilidad anual prevista por horizonte", ""]
+        lines += _rows(
+            ["Horizonte (sesiones)"] + list(terms.columns),
+            [[int(h)] + [_pct(v) for v in row] for h, row in terms.iterrows()],
+        )
+    cond = analysis.conditional_var
+    if cond is not None and not cond.empty:
+        lines += ["", "### VaR y ES condicionales", ""]
+        lines += _rows(
+            ["Serie", "Horizonte", "Confianza", "VaR", "VaR USD", "ES", "ES USD"],
+            [[r["series"], f"{int(r['horizon_d'])}d", f"{r['confidence']:.0%}", _pct(r["var"]),
+              _money(r["var"] * nav), _pct(r["es"]), _money(r["es"] * nav)]
+             for _, r in cond.sort_values(["series", "horizon_d", "confidence"]).iterrows()],
+        )
+    lines += [
+        "",
+        "Residuos historicos reinyectados en la recursion GARCH desde la volatilidad",
+        "de hoy: cada trayectoria tiene racimos de volatilidad y la volatilidad",
+        "revierte a su media con la vida media de la tabla. Es el VaR a varios dias",
+        "de referencia; la raiz del tiempo lo exagera tras un pico y lo recorta en",
+        "calma. 'cartera' es la cartera de hoy sobre su historia reconstruida.",
+        "",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def history_section(analysis: RiskAnalysis) -> str:
+    summary = analysis.rolling_summary
+    calib = analysis.calibration_summary
+    if (summary is None or summary.empty) and not calib:
+        return ""
+    labels = {"vol": "Volatilidad", "beta": "Beta", "tracking_error": "Tracking error",
+              "benchmark_vol": f"Volatilidad {analysis.benchmark}"}
+    lines = ["## Historia del riesgo y calibracion del modelo", ""]
+    if summary is not None and not summary.empty:
+        fmt = lambda key, v: _num(v) if key == "beta" else _pct(v)  # noqa: E731
+        lines += ["### Riesgo movil: hoy frente a la historia de la estrategia", ""]
+        lines += _rows(
+            ["Medida", "Hoy", "Mediana", "p10", "p90", "Percentil de hoy"],
+            [[labels.get(k, k), fmt(k, r["current"]), fmt(k, r["median"]), fmt(k, r["p10"]),
+              fmt(k, r["p90"]), _pct(r["percentile"], 0)] for k, r in summary.iterrows()],
+        )
+        lines.append("")
+    if calib:
+        lines += ["### Calibracion: volatilidad prevista frente a realizada", ""]
+        lines += _rows(["Medida", "Valor"], [
+            ["Periodos entre rebalanceos evaluados", str(calib["n_periods"])],
+            ["Estadistico de sesgo (desviacion de retorno / prevista)", _num(calib["bias_statistic"])],
+            ["Intervalo del 95% si el modelo acierta",
+             f"{_num(calib['ci_low'])} a {_num(calib['ci_high'])}"],
+            ["Volatilidad prevista media", _pct(calib["mean_predicted_vol"])],
+            ["Volatilidad realizada media", _pct(calib["mean_realized_vol"])],
+            ["Periodos fuera de 2 desviaciones", _pct(calib["share_beyond_2sd"], 1)],
+            ["Veredicto", calib["verdict"]],
+        ])
+        lines += ["",
+                  "En cada rebalanceo se calcula la volatilidad que el modelo habria",
+                  "previsto con el ano anterior, sin datos posteriores. Si el sesgo sale",
+                  "por encima del intervalo, el modelo subestima el riesgo y todos los",
+                  "VaR ex-ante de este reporte son optimistas en esa proporcion.", ""]
     return "\n".join(lines) + "\n"
 
 
@@ -484,11 +676,14 @@ def build_risk_report(analysis: RiskAnalysis, cfg: Config, risk_cfg: Config) -> 
         "\n".join(header),
         limits_section(analysis),
         ex_ante_section(analysis),
+        factor_section(analysis),
         var_section(analysis),
+        conditional_section(analysis),
         backtest_section(analysis),
         tail_section(analysis),
         bootstrap_section(analysis),
         stress_section(analysis),
+        history_section(analysis),
         liquidity_section(analysis),
     ]
     if analysis.warnings:
@@ -517,6 +712,14 @@ def render_pre_trade(analysis: RiskAnalysis) -> str:
         f"({_money(analysis.measures.get('var_99_1d', float('nan')) * analysis.nav)} USD)",
         f"- Numero efectivo de nombres: {_num(analysis.concentration.get('effective_names'), 1)}",
     ]
+    if analysis.stressed:
+        lines.append(f"- VaR 99% 1 dia estresado: {_pct(analysis.stressed['stressed_var'])} "
+                     f"(peor ventana desde {pd.Timestamp(analysis.stressed['window_start']).date()})")
+    if analysis.factor_risk is not None:
+        decomposition = analysis.factor_risk.decomposition["variance_share"]
+        top = decomposition.drop("especifico", errors="ignore").idxmax()
+        lines.append(f"- Mayor fuente de riesgo: {top} ({_pct(decomposition[top], 1)}); "
+                     f"especifico {_pct(decomposition.get('especifico'), 1)}")
     if worst is not None:
         lines.append(f"- Peor escenario hipotetico: {worst['scenario']}, {_pct(worst['portfolio'])} "
                      f"({_money(worst['portfolio'] * analysis.nav)} USD)")
@@ -564,20 +767,26 @@ def save_risk_artifacts(analysis: RiskAnalysis, name: str = "riesgo") -> dict[st
         "estres_historico": analysis.historical_detail,
         "estres_hipotetico": analysis.hypothetical_detail,
         "liquidez": analysis.liquidity,
+        "choques_covarianza": analysis.covariance_stress,
+        "var_condicional": analysis.conditional_var,
+        "calibracion": analysis.calibration,
+        "capacidad": analysis.capacity,
+        "factores": (analysis.factor_risk.factor_contributions
+                     if analysis.factor_risk is not None else None),
     }
     paths: dict[str, Path] = {}
     for label, frame in frames.items():
         if frame is None or frame.empty:
             continue
         path = REPORT_DIR / f"{name}_{stamp}_{label}.csv"
-        keep_index = label in ("backtest_var", "montecarlo", "liquidez")
+        keep_index = label in ("backtest_var", "montecarlo", "liquidez", "capacidad", "factores")
         frame.to_csv(path, index=keep_index)
         paths[label] = path
     return paths
 
 
 def save_risk_charts(analysis: RiskAnalysis, name: str = "riesgo") -> Path | None:
-    """Abanico del Monte Carlo, backtest del VaR y riesgo frente a peso por sector."""
+    """Abanico del Monte Carlo, backtest del VaR, volatilidad en el tiempo y riesgo por sector."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -587,8 +796,8 @@ def save_risk_charts(analysis: RiskAnalysis, name: str = "riesgo") -> Path | Non
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORT_DIR / f"{name}_{_stamp()}_graficos.png"
-    fig, axes = plt.subplots(3, 1, figsize=(11, 12))
-    ax_fan, ax_var, ax_sector = axes
+    fig, axes = plt.subplots(4, 1, figsize=(11, 16))
+    ax_fan, ax_var, ax_vol, ax_sector = axes
 
     boot = analysis.bootstrap
     if boot is not None and not boot.fan.empty:
@@ -615,6 +824,23 @@ def save_risk_charts(analysis: RiskAnalysis, name: str = "riesgo") -> Path | Non
         ax_var.set_title("Backtest del VaR (ultimos 3 anos)")
         ax_var.legend(loc="lower left")
         ax_var.grid(alpha=0.3)
+
+    rolling = analysis.rolling
+    if rolling is not None and not rolling.empty:
+        ax_vol.plot(rolling.index, rolling["vol"] * 100, linewidth=1.0, label="estrategia, movil")
+        if "benchmark_vol" in rolling:
+            ax_vol.plot(rolling.index, rolling["benchmark_vol"] * 100, linewidth=0.9, alpha=0.7,
+                        label=f"{analysis.benchmark}, movil")
+        fit = analysis.garch_fits.get("estrategia")
+        if fit is not None:
+            ax_vol.plot(fit.sigma.index, fit.sigma * np.sqrt(TRADING_DAYS) * 100, linewidth=0.8,
+                        color="crimson", alpha=0.8, label="GARCH condicional")
+            ax_vol.axhline(fit.long_run_vol * 100, color="grey", linestyle="--", linewidth=0.8,
+                           label="GARCH largo plazo")
+        ax_vol.set_ylabel("% anual")
+        ax_vol.set_title("Volatilidad en el tiempo")
+        ax_vol.legend(loc="upper left")
+        ax_vol.grid(alpha=0.3)
 
     sectors = analysis.ex_ante.sectors
     if not sectors.empty:

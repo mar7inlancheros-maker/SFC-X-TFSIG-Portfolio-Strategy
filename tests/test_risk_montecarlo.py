@@ -118,3 +118,76 @@ def test_una_covarianza_no_definida_positiva_no_rompe_la_simulacion():
         w, cov, horizons_d=[1], confidences=[0.99], n_sims=5000, t_dof=5, seed=4
     )
     assert np.isfinite(table["var"]).all()
+
+
+def test_la_racha_bajo_el_agua_se_mide_en_sesiones():
+    # Siempre cae: toda la trayectoria esta bajo el maximo inicial.
+    down = _rets({"strategy": np.full(300, -0.001)})
+    res = montecarlo.bootstrap_paths(down, [21, 252], n_paths=100, mean_block=10, seed=1)
+    assert (res.max_underwater[252] == 252).all()
+    assert (res.max_underwater[21] == 21).all()
+    # Siempre sube: nunca esta bajo el agua.
+    up = _rets({"strategy": np.full(300, 0.001)})
+    summary = montecarlo.bootstrap_summary(
+        montecarlo.bootstrap_paths(up, [252], n_paths=100, mean_block=10, seed=1), [0.05]
+    )
+    assert summary.loc[252, "p95_max_underwater_d"] == 0
+
+
+def test_los_bloques_conservan_la_autocorrelacion():
+    """Con retornos autocorrelacionados, bloques largos dan mas dispersion a 21
+    dias que remuestrear dia a dia: el bootstrap por bloques conserva la
+    dependencia que un bootstrap simple destruiria."""
+    rng = np.random.default_rng(3)
+    eps = rng.normal(0, 0.01, 3000)
+    ar = np.empty_like(eps)
+    ar[0] = eps[0]
+    for t in range(1, len(eps)):
+        ar[t] = 0.5 * ar[t - 1] + eps[t]
+    r = _rets({"strategy": ar})
+    blocks = montecarlo.bootstrap_paths(r, [21], n_paths=4000, mean_block=50, seed=1)
+    iid = montecarlo.bootstrap_paths(r, [21], n_paths=4000, mean_block=1, seed=1)
+    assert blocks.terminal[21][:, 0].std() > 1.3 * iid.terminal[21][:, 0].std()
+
+
+def test_el_abanico_es_ordenado_y_empieza_en_uno():
+    rng = np.random.default_rng(4)
+    r = _rets({"strategy": rng.normal(0.0004, 0.01, 1000)})
+    fan = montecarlo.bootstrap_paths(r, [252], n_paths=1000, mean_block=21, seed=2).fan
+    assert (fan.loc[0] == 1.0).all()
+    assert (fan["p5"] <= fan["p25"]).all() and (fan["p25"] <= fan["p50"]).all()
+    assert (fan["p50"] <= fan["p75"]).all() and (fan["p75"] <= fan["p95"]).all()
+
+
+def test_el_var_t_coincide_con_la_t_escalada_de_scipy():
+    """La cartera simulada es una t con la desviacion de la covarianza estimada:
+    su escala es sigma x raiz((dof - 2) / dof). Sin ese factor, el VaR t sale
+    un 29% inflado con 5 grados de libertad."""
+    stats = pytest.importorskip("scipy.stats")
+    cov = _cov()
+    w = pd.Series(0.2, index=cov.index)
+    table, _ = montecarlo.parametric_portfolio_mc(
+        w, cov, horizons_d=[1], confidences=[0.99], n_sims=300_000, t_dof=5, seed=5
+    )
+    sigma = float(np.sqrt(w @ cov @ w))
+    expected = -stats.t.ppf(0.01, 5) * sigma * np.sqrt(3 / 5)
+    t_var = table[table["distribution"] == "t_student"]["var"].iloc[0]
+    assert t_var == pytest.approx(expected, rel=0.03)
+
+
+def test_el_drawdown_se_mide_desde_el_ultimo_maximo():
+    """Dias de +5% y -4.5% al azar: en un ano siempre hay un -4.5% despues de un
+    maximo. Medido desde el capital inicial, media trayectoria saldria sin caida."""
+    rng = np.random.default_rng(6)
+    r = _rets({"strategy": rng.choice([0.05, -0.045], size=2000)})
+    res = montecarlo.bootstrap_paths(r, [252], n_paths=2000, mean_block=1, seed=7)
+    assert (res.max_drawdown[252] <= -0.045 + 1e-12).all()
+
+
+def test_el_retorno_anual_mediano_se_anualiza_bien():
+    r = _rets({"strategy": np.full(800, 0.0004)})
+    res = montecarlo.bootstrap_paths(r, [252, 756], n_paths=200, mean_block=10, seed=1)
+    summary = montecarlo.bootstrap_summary(res, [0.1])
+    annual = 1.0004 ** 252 - 1
+    assert summary.loc[252, "median_annualized"] == pytest.approx(annual)
+    assert summary.loc[756, "median_annualized"] == pytest.approx(annual)

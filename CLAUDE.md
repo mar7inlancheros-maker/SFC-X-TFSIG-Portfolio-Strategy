@@ -8,7 +8,7 @@ rompe en silencio*.
 
 ```bash
 python -c "import sys; print(sys.prefix)"   # comprueba el entorno
-python -m pytest                            # 50+ tests, sin red, ~2 segundos
+python -m pytest                            # 600+ tests, sin red, ~1 minuto
 ```
 
 Los tests no tocan la red. Si un cambio los rompe, se rompió la lógica, no
@@ -22,7 +22,8 @@ config ──> universe ──┐
 data/{sec,prices} ────┘                                    └──> validation ──┘
                                                            └──> orders
 
-backtest, metrics, universe ──> risk/{var, exposure, montecarlo, stress, limits}
+backtest, metrics, universe ──> risk/{var, exposure, garch, montecarlo, factor_model,
+                                        stress, history, liquidity, limits}
                                   ──> risk/analysis ──> risk_report
 ```
 
@@ -41,6 +42,26 @@ equivocado.
   backtest deja de ser válido y nada falla ni avisa. Cualquier cambio ahí exige
   correr `tests/test_sec.py` y mirar los resultados, no solo el "passed".
 
+- **Smart App Control de Windows bloquea binarios concretos, y cambia de
+  criterio sin aviso.** El 3 de octubre de 2026 empezo a bloquear
+  `pyarrow\_parquet.pyd` (pyarrow 25.0.1; las 22-24 cargan) y `_cvxcore.pyd`,
+  que el dia 1 cargaban. Cayo todo: cache, backtest y motor long/short. Por eso
+  la cache es pickle (Python puro) y `cvxpy` resuelve con
+  `canon_backend=cp.SCIPY_CANON_BACKEND`. No volver a parquet ni quitar ese
+  argumento. Para diagnosticar un `DLL load failed ... Control de
+  aplicaciones`: `Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational'`
+  dice que fichero se bloqueo. Antes de anadir una dependencia compilada,
+  importarla y usarla una vez en esta maquina.
+- **El portátil se suspende y congela las corridas.** Con la pantalla apagada
+  por inactividad entra en suspensión moderna y Windows congela los programas:
+  el 3 y el 4 de octubre de 2026 dos corridas se quedaron horas paradas sin
+  error. `console.keep_awake()` envuelve `cli.main` y `modelo.py` y pide
+  pantalla encendida mientras corre. Para diagnosticar una corrida que "se
+  cuelga" sin salida, mirar primero los eventos 506/507 de Kernel-Power en el
+  registro System.
+- **pickle ejecuta codigo al cargar.** En `data/cache/` solo ficheros que
+  escribio este proyecto; nunca copiar ahi la cache de otra persona. Un pickle
+  de otra version de pandas que no carga cuenta como cache ausente.
 - **`cache.read_frame()` devuelve `None` o un DataFrame.** Nunca escribir
   `cache.read_frame(x) or default`: el valor de verdad de un DataFrame es
   ambiguo y lanza `ValueError`. Ya pasó una vez en `prices.py`.
@@ -114,6 +135,33 @@ equivocado.
   o no dato. Borrar `prices_fetched.json` provoca una descarga extra, no un
   error.
 
+- **Con `calendar.end` vacío, el panel en caché caduca al cerrar cada mes.**
+  `panel.expected_last_date` da el último fin de mes (o trimestre) cerrado; si
+  al panel le falta, `_require_panel` lo reconstruye. Antes no caducaba nunca:
+  el 4 de octubre `ordenes` sacó las órdenes con el panel del 31 de agosto, sin
+  avisar.
+
+- **Un error de Yahoo no es "no hay datos".** En lotes de 150, Yahoo a veces
+  corta y yfinance anota `TypeError: 'NoneType' object is not subscriptable`
+  para empresas vivas (VRT, TPG, OZK). Antes, en una actualización de cola, el
+  ticker se anotaba en el registro como bajado hasta hoy aunque no llegara
+  nada: un hueco permanente que nunca se volvía a pedir (71 tickers en
+  septiembre de 2026). Ahora `transient_failures` separa el error del "no hay"
+  por el mensaje de yfinance, se reintenta en lotes de 25 y lo que siga
+  fallando no se anota ni como pedido ni como fallo de 7 días.
+
+- **La barra de hoy nunca entra en la caché de precios.** Con el mercado
+  abierto, Yahoo devuelve un precio de media sesión. El 30 de septiembre de
+  2026 una descarga de las 10:40 lo guardó como cierre y el registro dio el día
+  por bajado. `settled_end` limita lo anotado a ayer y `_drop_unsettled` tira
+  la barra de hoy. Por la derecha se pide la cola en cuanto falta UN día
+  hábil: la tolerancia de 5 días dejaba sin bajar el 1 y el 2 de octubre.
+
+- **El backtest no renormaliza cuando falta un precio de ejecución.** Ese peso
+  queda en caja, igual que en `apply_caps`. Renormalizar repartió el peso de
+  24 nombres sin precio entre 7: 11-17% cada uno con un tope del 6%, y el
+  reporte de riesgo analizó ese libro como si fuera la estrategia.
+
 - **`PANEL_VERSION` en `panel.py` también se sube a mano.** La caché del panel
   lleva en el nombre el fingerprint del TOML *y* esta versión. El fingerprint
   solo cambia con el TOML; si cambia el código que lo aplica, sin subir la
@@ -159,6 +207,28 @@ equivocado.
   corte actúa: el nombre pierde su peso entero. Es conservador y el reporte
   enseña el peso aproximado; no quitar el corte, que daría pérdidas imposibles.
 
+- **El modelo factorial explica el día `d` con el panel ANTERIOR a `d`.**
+  `searchsorted(..., side="left") - 1` en `estimate_factor_model`. Con
+  `side="right"`, el panel de fin de mes explicaría el retorno de ese mismo día
+  con datos de su cierre. Hay un test.
+
+- **Modelo factorial y Ledoit-Wolf pueden discrepar, y no es un fallo.** LW
+  promedia cómo se movieron los nombres el último año; el factorial aplica las
+  exposiciones de hoy. En sep-2026 la exposición a momentum pasó de −0,22 a
+  2,29 en un año y el factorial daba 34% de volatilidad frente a 24% de LW
+  (correlación de su predicción con la cartera real: 0,90). El análisis avisa
+  por encima de un 25% de diferencia. No "arreglar" una para que cuadre con la
+  otra.
+
+- **El GARCH usa objetivo de varianza y rejilla, no scipy.** La varianza de
+  largo plazo es la muestral; solo se estiman alfa y beta, con alfa + beta <
+  0,999. scipy no es dependencia del proyecto: no introducirla para esto.
+
+- **La calibración del riesgo solo mira hacia atrás en cada rebalanceo.** La
+  covarianza de la fecha `e` usa precios hasta `e`. Hay un test que altera los
+  precios finales y exige que las previsiones anteriores no cambien. Si se
+  rompe, el estadístico de sesgo sale perfecto y no vale nada.
+
 ## Añadir un escenario de estrés o un límite
 
 1. Escenario: un bloque `[[stress.historical]]` (nombre, inicio y fin) o
@@ -169,6 +239,39 @@ equivocado.
    medida no existe, se calcula en `risk/analysis._measures`.
 3. `python -m pytest tests/test_risk_*.py` y `python main.py riesgo --sin-red`
    redirigido a fichero, para comprobar que la salida sigue en ASCII.
+4. Un mutante en `tools/risk_mutants.py` que rompa la lógica nueva, y
+   `python tools/risk_mutation.py <palabra>` hasta que salga cazado.
+
+## Calidad de los tests de riesgo
+
+```bash
+python tools/risk_coverage.py --min 98        # cobertura de líneas, sin instalar nada
+python tools/risk_mutation.py --jobs 4        # ¿cazan los tests bugs plausibles?
+python tools/risk_mutation.py --list          # el catálogo
+```
+
+- **La cobertura dice qué se ejecuta; la mutación, si algún test se daría
+  cuenta de que está mal.** Con 99% de líneas cubiertas, la primera pasada de
+  mutación dejó vivos 15 de 50 bugs plausibles: la t de Student sin reescalar
+  la covarianza (VaR un 29% inflado), Cornish-Fisher con la asimetría al
+  revés, el GARCH sin condición de estacionariedad, la beta con la varianza de
+  la cartera, la liquidación de crisis con el volumen normal. Hoy están los 64
+  del catálogo cazados; mantenerlo así.
+- **La mutación nunca toca el árbol de trabajo.** Copia `src/`, `tests/` y
+  `config/` a un directorio temporal y muta ahí. Se puede correr con el editor
+  abierto o con otra sesión trabajando en el repo.
+- **Cada mutante describe un fragmento exacto del código.** Si una línea cambia
+  y su mutante deja de aplicarse, `tests/test_risk_tools.py` falla y dice cuál:
+  actualizar el fragmento en el catálogo, no borrar el mutante.
+- **Un mutante que sobrevive es un test que falta**, no un mutante que sobra.
+  Solo se quita si es equivalente (no cambia ningún resultado), y se dice por
+  qué en el commit.
+- **`tests/risk_helpers.py` tiene los datos sintéticos compartidos** (mercado,
+  cartera, estrategia completa y política ligera). Las fixtures de cada fichero
+  los llaman; no copiar el mercado sintético en un fichero nuevo.
+- **`tests/test_risk_cli.py` sustituye disco y red con `monkeypatch`.** Si
+  `cmd_riesgo` u `ordenes` empiezan a leer algo nuevo (un fichero, una
+  descarga), hay que sustituirlo ahí también o el test tocará la máquina real.
 
 ## Añadir una métrica nueva
 
@@ -227,6 +330,16 @@ Trampas:
   No reutiliza los pesos de `primary`: tras un FLIP o un NO TRADE esos pesos
   apuntan al lado equivocado. Si solo queda una pata, no hay cartera y el plan
   da niveles sin tamaño.
+- **El plan cubre la beta que dejan sus propias correcciones.** `risk_parity`
+  no es beta-neutral por construcción; que la primaria saliera con beta ~0 fue
+  casualidad. Tras un NO TRADE en un corto de beta alta y los recortes por
+  riesgo, el libro quedó en +0,22. `beta_hedge` lo lleva a cero con el
+  benchmark; no quitarlo para que el plan "se vea más limpio".
+- **La cobertura se calcula sobre las posiciones FINALES**, después de los
+  HOLD y de los NO TRADE que mantienen una posición contra research, no sobre
+  el plan teórico. Si no, se cubre un libro que no es el que queda.
+- **Una posición en el benchmark es la cobertura.** Si la beta no necesita
+  cobertura, el plan la cierra. Con `hedge_beta: false` pasa a NOT ANALYZED.
 - **En `trade_plan.hit_rate`, un día que toca stop y TP cuenta como stop.** Sin
   datos intradía no se sabe el orden; suponer el TP inflaría la tasa base.
 
@@ -254,6 +367,14 @@ Trampas:
   vacios y el resto se renormaliza.
 - **Las consultas de WRDS del motor llevan la fecha del analisis en el SQL**:
   asi la cache (hash del SQL) se renueva cada dia sin `refresh`.
+- **`_probe` prueba la conexion antes de `wrds.Connection`.** Si la
+  autenticacion falla, `wrds` no lanza: pide usuario por teclado (EOFError sin
+  terminal) y, con una aprobacion Duo pendiente, se cuelga sin limite. El
+  sondeo usa psycopg2 con `connect_timeout` y traduce el fallo a que hacer.
+  Los tests que llaman a `get_connection` tienen que parchear `_probe`, o
+  tocan la red y tardan 45 s.
+- **Un plan sin WRDS se avisa en rojo** en la seccion 14, en la senal final y
+  en el HTML. Cambia los veredictos (INTC: NO TRADE con WRDS, FLIP sin el).
 - **`pd.NA` de WRDS revienta `float()`**: todo pasa por `wrds_data._numeric`.
 - **La revision de EPS compara el MISMO ejercicio fiscal** (`fpedats`) y va
   acotada a +-100%. Con base cerca de cero explotaba (Boeing: -133%).

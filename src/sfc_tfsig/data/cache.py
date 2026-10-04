@@ -6,17 +6,34 @@ y la SEC bloquea por IP a quien abusa. Con cache, la primera corrida tarda y las
 siguientes son instantaneas; y cuando alguien del equipo dice "a mi me dio otro
 numero", lo primero que se compara es la fecha de la cache.
 
-Formato: parquet si hay pyarrow (conserva tipos y fechas), CSV comprimido si no.
-La degradacion es explicita -- `backend()` dice cual esta activo -- porque un
-CSV que pierde el tipo de `filed` y lo deja como texto convierte una comparacion
-de fechas en una comparacion de cadenas, y eso ordena "2019-1-5" antes que
-"2019-12-31" sin avisar.
+Formato: pickle de pandas comprimido con gzip de nivel 1 (`.pkl.gz`). Conserva
+tipos y fechas exactamente: un `filed` sigue siendo fecha y no texto, y una
+comparacion de fechas no se convierte en una de cadenas (que ordena "2019-1-5"
+antes que "2019-12-31" sin avisar).
+
+Por que no parquet: desde octubre de 2026, Smart App Control de Windows bloquea
+en esta maquina la DLL de parquet de pyarrow 25.0.1 (`_parquet.pyd`), y con
+ella caia todo el proyecto: ni se leia ni se escribia la cache. pickle es
+Python puro sobre pandas y numpy, sin ninguna libreria compilada mas. A cambio
+ocupa ~30% mas que parquet y lee unas dos veces mas lento; con estos volumenes
+(16 millones de filas de precios en 1,6 s) no importa.
+
+Las caches viejas en parquet se migran solas la primera vez que se leen, si hay
+un motor de parquet que cargue. Si no lo hay, cuentan como ausentes y se
+vuelven a descargar.
+
+pickle ejecuta codigo al cargar: en `data/cache/` solo debe haber ficheros que
+escribio este proyecto. Nunca copiar ahi la cache de otra persona.
 """
 
 from __future__ import annotations
 
+import gzip
 import json
+import os
+import pickle
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -24,22 +41,60 @@ import pandas as pd
 
 from ..paths import CACHE_DIR
 
-try:  # pragma: no cover - depende del entorno
-    import pyarrow  # noqa: F401
+SUFFIX = ".pkl.gz"
+_LEGACY_SUFFIX = ".parquet"
+# Nivel 1: casi toda la reduccion de tamano de gzip a una fraccion del tiempo
+# del nivel 9 por defecto, que escribia el panel cuatro veces mas lento.
+_COMPRESSION = {"method": "gzip", "compresslevel": 1}
 
-    _HAS_PARQUET = True
-except ImportError:  # pragma: no cover
-    _HAS_PARQUET = False
+# Lo que puede romper la lectura de una cache: fichero truncado, gzip corrupto,
+# o un pickle de otra version de pandas cuyas clases internas ya no existen.
+# Cualquiera de ellos equivale a "no hay cache": se vuelve a bajar.
+_READ_ERRORS = (OSError, EOFError, ValueError, pickle.UnpicklingError, AttributeError,
+                ImportError, TypeError, gzip.BadGzipFile)
 
 
 def backend() -> str:
-    """'parquet' o 'csv'. Se imprime en los diagnosticos a proposito."""
-    return "parquet" if _HAS_PARQUET else "csv"
+    """Formato activo. Se imprime en los diagnosticos a proposito."""
+    return "pickle+gzip"
 
 
 def _path(name: str) -> Path:
-    suffix = ".parquet" if _HAS_PARQUET else ".csv.gz"
-    return CACHE_DIR / f"{name}{suffix}"
+    return CACHE_DIR / f"{name}{SUFFIX}"
+
+
+@lru_cache(maxsize=1)
+def _parquet_readable() -> bool:
+    """Si hay un motor de parquet que cargue. Solo para migrar caches viejas.
+
+    Se intenta una vez por proceso: con Smart App Control activo, cada intento
+    deja un evento de bloqueo en el registro de Windows.
+    """
+    try:
+        import pyarrow.parquet  # noqa: F401, PLC0415
+    except (ImportError, OSError):
+        return False
+    return True
+
+
+def migrate_legacy(name: str) -> bool:
+    """Copia la cache parquet de `name` a pickle. True si quedo migrada.
+
+    Conserva la fecha de modificacion del fichero original: la caducidad se
+    mide con ella, y una migracion no puede hacer pasar por recientes unos
+    precios de hace una semana.
+    """
+    legacy = CACHE_DIR / f"{name}{_LEGACY_SUFFIX}"
+    if not legacy.exists() or not _parquet_readable():
+        return False
+    try:
+        df = pd.read_parquet(legacy)
+    except (OSError, ValueError, ImportError):
+        return False
+    stat = legacy.stat()
+    path = write_frame(name, df)
+    os.utime(path, (stat.st_atime, stat.st_mtime))
+    return True
 
 
 def age_days(name: str) -> float | None:
@@ -57,30 +112,27 @@ def read_frame(name: str, max_age_days: float | None = None) -> pd.DataFrame | N
     ya no cambian (un 10-K de 2015 no se reescribe).
     """
     path = _path(name)
-    if not path.exists():
+    if not path.exists() and not migrate_legacy(name):
         return None
     if max_age_days is not None:
         age = age_days(name)
         if age is not None and age > max_age_days:
             return None
     try:
-        if _HAS_PARQUET:
-            return pd.read_parquet(path)
-        return pd.read_csv(path, compression="gzip")
-    except (OSError, ValueError, pd.errors.ParserError):
-        # Cache corrupta (descarga interrumpida, disco lleno). Se ignora y se
-        # vuelve a bajar: nunca se propaga un fichero a medias al panel.
+        df = pd.read_pickle(path, compression="gzip")
+    except _READ_ERRORS:
+        # Cache corrupta (descarga interrumpida, disco lleno) o de otra version
+        # de pandas. Se ignora y se vuelve a bajar: nunca se propaga un fichero
+        # a medias al panel.
         return None
+    return df if isinstance(df, pd.DataFrame) else None
 
 
 def write_frame(name: str, df: pd.DataFrame) -> Path:
     path = _path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    if _HAS_PARQUET:
-        df.to_parquet(tmp, index=False)
-    else:
-        df.to_csv(tmp, index=False, compression="gzip")
+    tmp = path.with_name(path.name + ".tmp")
+    df.to_pickle(tmp, compression=_COMPRESSION, protocol=pickle.HIGHEST_PROTOCOL)
     # Escritura atomica: si el proceso muere a mitad, la cache anterior sigue
     # intacta en vez de quedar truncada.
     tmp.replace(path)

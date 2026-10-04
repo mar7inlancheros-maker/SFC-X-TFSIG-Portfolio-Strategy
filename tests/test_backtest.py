@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sfc_tfsig.backtest import benchmark_nav, run_backtest
 from sfc_tfsig import metrics
+from sfc_tfsig.backtest import benchmark_nav, run_backtest
 
 
 def _sessions(start="2020-01-01", periods=400):
@@ -243,3 +243,27 @@ def test_la_rotacion_anualizada_usa_los_rebalanceos_reales_no_doce(make_cfg):
     assert f"{esperado * 100:.2f}%" in texto
     # Y no la version inflada:
     assert f"{result.average_turnover * 12 * 100:.2f}%" not in texto
+
+
+def test_sin_precio_de_ejecucion_el_peso_queda_en_caja_y_no_rompe_el_tope(make_cfg):
+    """El 1-oct-2026 faltaban 24 de 30 precios: renormalizar dio 7 nombres al 11-17%."""
+    cfg = make_cfg(**{"portfolio.n_positions": 10, "portfolio.buffer_rank": 10,
+                      "portfolio.max_sector_w": 1.0, "portfolio.max_weight": 0.1,
+                      "portfolio.cash_buffer": 0.0})
+    sessions = _sessions(periods=200)
+    tickers = [f"T{i:02d}" for i in range(10)]
+    close = _flat_prices(tickers, sessions)
+    dates = pd.date_range("2020-01-31", periods=3, freq="ME")
+    panel = _panel(dates, tickers)
+    # El dia de ejecucion de la primera senal solo cotizan 3 de los 10.
+    execution = sessions[sessions > dates[0]][0]
+    close.loc[execution, tickers[3:]] = np.nan
+
+    result = run_backtest(panel, close, cfg, progress=False)
+
+    first = result.holdings[result.holdings["date"] == execution]
+    assert len(first) == 3
+    # El peso se mide sobre el NAV ya descontado el coste: 10% del NAV previo
+    # es un poco mas del 10% del posterior. Renormalizar habria dado ~33%.
+    assert first["weight"].max() == pytest.approx(0.1, rel=2e-3)
+    assert result.rebalances.iloc[0]["cash"] > 0.6 * float(cfg.get("backtest.initial_capital"))

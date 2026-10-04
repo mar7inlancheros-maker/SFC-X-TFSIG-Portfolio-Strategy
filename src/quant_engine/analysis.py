@@ -14,9 +14,9 @@ tests, y ningun numero se recalcula de forma distinta en dos sitios.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -25,7 +25,14 @@ from .backtest import engine as bt
 from .backtest import metrics as btm
 from .data import cleaning, loader, validation, wrds_data
 from .factors import beta as beta_mod
-from .factors import factor_model, liquidity, mean_reversion, momentum, performance, volatility
+from .factors import (
+    factor_model,
+    liquidity,
+    mean_reversion,
+    momentum,
+    performance,
+    volatility,
+)
 from .inference import correlation, covariance, tests
 from .portfolio import analytics as pa
 from .portfolio import construction, neutral
@@ -356,7 +363,6 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     progress("estres")
     w = primary["weights"]
-    port_daily = pa.static_returns(w, r_eval)
     # Beta de cartera en el peor caso razonable: cada largo con el percentil 95
     # de su beta movil observada, cada corto con el percentil 5. Un corto con
     # beta baja cubre MENOS, asi que su peor caso es la beta baja, no la alta.

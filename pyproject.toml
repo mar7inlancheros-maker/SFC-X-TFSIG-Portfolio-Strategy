@@ -22,8 +22,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Parquet para las caches y el panel. Sin el se cae a CSV comprimido: pierde
-# tipos, no pierde datos.
+# Solo para migrar caches parquet antiguas a pickle (`cache.migrate_legacy`).
+# Las caches se escriben en pickle desde que Smart App Control bloquea la DLL
+# de parquet de pyarrow 25.0.1 en Windows; ver `sfc_tfsig/data/cache.py`.
 fast = ["pyarrow>=15"]
 
 # Graficos del reporte trimestral. Todo el analisis corre sin ellos.

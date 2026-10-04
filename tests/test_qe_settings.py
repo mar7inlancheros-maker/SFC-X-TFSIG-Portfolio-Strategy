@@ -12,7 +12,6 @@ from quant_engine.data.loader import MarketData
 from quant_engine.settings import SettingsError, build_settings, parse_tickers
 from quant_engine.signals import agreement, composite
 
-
 # ---------------------------------------------------------------------------
 #  Configuracion
 # ---------------------------------------------------------------------------
@@ -209,3 +208,14 @@ def test_long_fuera_de_la_lista_se_rechaza():
 
     with pytest.raises(SettingsError, match="no estan en la lista"):
         split_long_short(("A", "B"), "Z")
+
+
+def test_parse_positions():
+    from quant_engine.settings import SettingsError, parse_positions
+
+    assert parse_positions("aapl:500, TSLA:-200 ; nvda=+1_000") == (("AAPL", 500), ("TSLA", -200), ("NVDA", 1000))
+    assert parse_positions("") == ()
+    assert parse_positions("AAPL:0") == ()
+    for bad in ("AAPL 500", "AAPL:1.5", "AAPL:10,AAPL:20"):
+        with pytest.raises(SettingsError):
+            parse_positions(bad)

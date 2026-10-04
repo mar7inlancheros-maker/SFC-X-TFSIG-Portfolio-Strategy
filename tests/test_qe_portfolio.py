@@ -11,7 +11,12 @@ from quant_engine.data.cleaning import daily_rf
 from quant_engine.portfolio import analytics as pa
 from quant_engine.portfolio import construction as C
 from quant_engine.portfolio import neutral as N
-from quant_engine.portfolio.constraints import ConstructionParams, cap_leg, check, exposures
+from quant_engine.portfolio.constraints import (
+    ConstructionParams,
+    cap_leg,
+    check,
+    exposures,
+)
 from quant_engine.risk import montecarlo, stress
 
 NAMES = list("ABCDEFGHIJ")
@@ -59,7 +64,7 @@ def test_minima_varianza_no_supera_a_equiponderado(market):
 
 def test_max_sharpe_sin_solucion_se_declara_no_se_fuerza(market):
     """Si los cortos esperan mas que los largos, no hay Sharpe positivo con esos signos."""
-    r, cov, vol, _ = market
+    _r, cov, vol, _ = market
     mu = pd.Series(0.0, index=NAMES)
     mu[SIGNS > 0], mu[SIGNS < 0] = -0.001, 0.001
     res = C.build("max_sharpe", SIGNS, cov=cov, vol=vol, params=PARAMS, mu=mu)
@@ -93,7 +98,7 @@ def test_james_stein_contrae_hacia_la_media():
 def test_beta_neutral_anula_la_beta_y_mueve_la_neta(market):
     _, _, _, betas = market
     ew = C.equal_weight(SIGNS, PARAMS)
-    bn, note = N.beta_neutral_legs(ew, betas, PARAMS)
+    bn, _note = N.beta_neutral_legs(ew, betas, PARAMS)
     assert N.portfolio_beta(bn, betas) == pytest.approx(0.0, abs=1e-9)
     assert exposures(bn)["gross"] == pytest.approx(2.0)
     assert exposures(bn)["net"] != pytest.approx(0.0)
@@ -113,7 +118,7 @@ def test_sector_neutral_reduce_la_exposicion_y_declara_lo_imposible():
                "F": "Tech", "G": "Energy", "H": "Energy", "I": "Health", "J": "Health"}
     ew = C.equal_weight(SIGNS, PARAMS)
     before = N.sector_exposure(ew, sectors).abs().sum()
-    w, note, one_sided = N.sector_neutral(SIGNS, sectors, PARAMS)
+    w, _note, one_sided = N.sector_neutral(SIGNS, sectors, PARAMS)
     after = N.sector_exposure(w, sectors).abs().sum()
     assert after < before
     assert one_sided == ["Health"]

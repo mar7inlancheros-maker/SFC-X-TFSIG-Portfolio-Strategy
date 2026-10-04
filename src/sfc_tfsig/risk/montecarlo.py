@@ -25,7 +25,7 @@ numero del reporte se puede reproducir.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -46,6 +46,8 @@ class BootstrapResult:
     fan: pd.DataFrame
     series: list[str]
     haircut: float
+    # horizonte -> vector (n_paths,) de la racha mas larga bajo el maximo, en sesiones
+    max_underwater: dict[int, np.ndarray] = field(default_factory=dict)
 
 
 def bootstrap_paths(
@@ -87,9 +89,15 @@ def bootstrap_paths(
     wealth = np.ones((n_paths, n_series))
     peak = np.ones(n_paths)
     worst = np.zeros(n_paths)
+    # Racha actual y maxima bajo el agua. El comite pregunta tanto "cuanto se
+    # puede caer" como "cuanto tiempo se puede tardar en volver": un -20% que
+    # se recupera en tres meses se aguanta; uno que dura tres anos, no.
+    run = np.zeros(n_paths, dtype=np.int64)
+    longest = np.zeros(n_paths, dtype=np.int64)
 
     terminal: dict[int, np.ndarray] = {}
     drawdowns: dict[int, np.ndarray] = {}
+    underwater: dict[int, np.ndarray] = {}
     fan_rows: list[dict] = [{"day": 0, **{f"p{q}": 1.0 for q in _PERCENTILES}}]
 
     for step in range(1, horizon_max + 1):
@@ -99,13 +107,16 @@ def bootstrap_paths(
         wealth *= 1.0 + data[index]
         peak = np.maximum(peak, wealth[:, 0])
         worst = np.minimum(worst, wealth[:, 0] / peak - 1.0)
+        run = np.where(wealth[:, 0] < peak, run + 1, 0)
+        longest = np.maximum(longest, run)
 
         if step in horizons:
             terminal[step] = wealth.copy() - 1.0
             drawdowns[step] = worst.copy()
+            underwater[step] = longest.copy()
         if step % fan_step == 0 or step == horizon_max:
             levels = np.percentile(wealth[:, 0], _PERCENTILES)
-            fan_rows.append({"day": step, **{f"p{q}": float(v) for q, v in zip(_PERCENTILES, levels)}})
+            fan_rows.append({"day": step, **{f"p{q}": float(v) for q, v in zip(_PERCENTILES, levels, strict=True)}})
 
     return BootstrapResult(
         horizons_d=horizons,
@@ -114,6 +125,7 @@ def bootstrap_paths(
         fan=pd.DataFrame(fan_rows).set_index("day"),
         series=list(returns.columns),
         haircut=haircut_annual,
+        max_underwater=underwater,
     )
 
 
@@ -136,6 +148,9 @@ def bootstrap_summary(result: BootstrapResult, drawdown_thresholds) -> pd.DataFr
             "median_max_drawdown": float(np.median(result.max_drawdown[h])),
             "p95_max_drawdown": float(np.quantile(result.max_drawdown[h], 0.05)),
         }
+        if h in result.max_underwater:
+            row["median_max_underwater_d"] = float(np.median(result.max_underwater[h]))
+            row["p95_max_underwater_d"] = float(np.quantile(result.max_underwater[h], 0.95))
         if paths.shape[1] > 1:
             row["prob_underperform"] = float((strategy < paths[:, 1]).mean())
             row["benchmark_p50"] = float(np.median(paths[:, 1]))

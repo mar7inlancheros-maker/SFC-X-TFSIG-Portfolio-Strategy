@@ -15,7 +15,7 @@ mas temprano: es el numero que el mercado tuvo delante ese dia. Usar la
 reexpresion es la otra mitad del mismo sesgo.
 
 **TTM reconstruido.** Los flujos (ingresos, beneficio, caja operativa) se
-publican unas veces por trimestre y otras acumulados en el año fiscal. Se
+publican unas veces por trimestre y otras acumulados en el ano fiscal. Se
 normalizan a trimestres -- diferenciando los acumulados que comparten fecha de
 inicio -- y se suman en ventanas de cuatro. Si no hay cuatro trimestres limpios,
 se cae al anual. Si tampoco, el dato falta: falta, no se inventa.
@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import pandas as pd
 import requests
@@ -454,7 +455,7 @@ def quarterly_segments(flows: pd.DataFrame) -> pd.DataFrame:
 
     Dos casos:
     - Ya viene trimestral (duracion ~90 dias): se toma tal cual.
-    - Viene acumulado del año fiscal (mismo `start`, `end` creciente): el
+    - Viene acumulado del ano fiscal (mismo `start`, `end` creciente): el
       trimestre es la diferencia con el acumulado anterior. La fecha de
       presentacion del trimestre derivado es la del acumulado mas reciente de
       los dos, que es cuando el numero se pudo calcular.
@@ -472,14 +473,14 @@ def quarterly_segments(flows: pd.DataFrame) -> pd.DataFrame:
 
     native = df[df["duration"].between(75, 115)].copy()
 
-    # Acumulados: mismo concepto y mismo inicio de año fiscal, varios cierres.
+    # Acumulados: mismo concepto y mismo inicio de ano fiscal, varios cierres.
     #
     # Se agrupa sobre TODAS las filas que comparten `start`, no solo sobre las
-    # de duracion larga. El primer trimestre del año fiscal se publica como
+    # de duracion larga. El primer trimestre del ano fiscal se publica como
     # "3 meses desde el inicio", y es a la vez trimestre nativo y el acumulado
     # contra el que se resta el semestre. Excluirlo dejaba Q2 sin calcular.
     pieces: list[pd.DataFrame] = [native]
-    for (concept, start), group in df.groupby(["concept", "start"], dropna=False):
+    for (concept, _start), group in df.groupby(["concept", "start"], dropna=False):
         group = group.sort_values("end")
         if len(group) < 2 or group["duration"].max() <= 115:
             continue
@@ -531,7 +532,7 @@ def trailing_twelve_months(flows: pd.DataFrame) -> pd.DataFrame:
             window = group.iloc[i - 3 : i + 1]
             span_days = (window["end"].iloc[-1] - window["start"].iloc[0]).days
             if not 330 <= span_days <= 400:
-                continue  # hueco o solape: no es un año limpio
+                continue  # hueco o solape: no es un ano limpio
             results.append(
                 {
                     "concept": concept,

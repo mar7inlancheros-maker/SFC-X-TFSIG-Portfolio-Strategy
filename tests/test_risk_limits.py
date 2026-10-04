@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import tomllib
 
+import pandas as pd
 import pytest
 
 from sfc_tfsig.config import ConfigError, risk_config_from_dict
@@ -61,3 +62,29 @@ def test_el_estado_general_es_el_peor(risk_data):
     assert limits.overall_status(checks) == "EXCEDIDO"
     assert checks.set_index("limit").loc["max_ex_ante_vol", "action"] != ""
     assert checks.set_index("limit").loc["max_beta", "action"] == ""
+
+
+def test_todo_en_verde_da_ok(risk_data):
+    cfg = _cfg(risk_data, max_ex_ante_vol=0.25, min_effective_names=15.0)
+    checks = limits.check_limits({"ex_ante_vol": 0.10, "effective_names": 30.0}, cfg)
+    assert limits.overall_status(checks) == "OK"
+
+
+def test_justo_en_el_limite_es_alerta_y_no_excedido(risk_data):
+    cfg = _cfg(risk_data, max_ex_ante_vol=0.25, min_effective_names=15.0)
+    checks = limits.check_limits({"ex_ante_vol": 0.25, "effective_names": 15.0}, cfg).set_index("limit")
+    assert checks.loc["max_ex_ante_vol", "status"] == "ALERTA"
+    assert checks.loc["min_effective_names", "status"] == "ALERTA"
+    assert checks.loc["max_ex_ante_vol", "usage"] == pytest.approx(1.0)
+
+
+def test_sin_limites_el_estado_es_sin_dato():
+    assert limits.overall_status(pd.DataFrame()) == "SIN DATO"
+
+
+def test_el_uso_de_un_limite_minimo_crece_al_acercarse_al_suelo(risk_data):
+    cfg = _cfg(risk_data, min_effective_names=15.0)
+    holgado = limits.check_limits({"effective_names": 30.0}, cfg).iloc[0]
+    justo = limits.check_limits({"effective_names": 16.0}, cfg).iloc[0]
+    assert holgado["usage"] == pytest.approx(0.5)
+    assert justo["usage"] > holgado["usage"]

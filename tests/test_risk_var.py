@@ -137,3 +137,147 @@ def test_estadisticas_de_cola_marcan_la_curtosis():
     assert stats["excess_kurtosis"] > 3
     assert stats["freq_below_3sigma"] > stats["normal_freq_below_3sigma"]
     assert math.isfinite(stats["tail_ratio"])
+
+
+# ---------------------------------------------------------------------------
+#  Propiedades: lo que cualquier medida de riesgo seria tiene que cumplir
+# ---------------------------------------------------------------------------
+
+_PUNTUALES = {
+    "historico": (var.historical_var, var.historical_es),
+    "normal": (var.normal_var, var.normal_es),
+    "cornish_fisher": (var.cornish_fisher_var, var.cornish_fisher_es),
+}
+
+
+def _colas_gordas(seed: int, n: int = 3000) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    return _serie(0.0003 + rng.standard_t(4, n) * 0.01)
+
+
+@pytest.mark.parametrize("method", sorted(_PUNTUALES))
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_duplicar_la_posicion_duplica_el_var_y_el_es(method, seed):
+    """Homogeneidad positiva: el riesgo de 2x la cartera es 2x el riesgo."""
+    var_fn, es_fn = _PUNTUALES[method]
+    r = _colas_gordas(seed)
+    assert var_fn(r * 2, 0.99) == pytest.approx(2 * var_fn(r, 0.99), rel=1e-9)
+    assert es_fn(r * 2, 0.99) == pytest.approx(2 * es_fn(r, 0.99), rel=1e-9)
+
+
+@pytest.mark.parametrize("method", sorted(_PUNTUALES))
+def test_un_retorno_fijo_extra_reduce_la_perdida_en_la_misma_cuantia(method):
+    """Invarianza a traslaciones: sumar caja segura resta exactamente su retorno."""
+    var_fn, es_fn = _PUNTUALES[method]
+    r = _colas_gordas(4)
+    assert var_fn(r + 0.001, 0.99) == pytest.approx(var_fn(r, 0.99) - 0.001, abs=1e-9)
+    assert es_fn(r + 0.001, 0.99) == pytest.approx(es_fn(r, 0.99) - 0.001, abs=1e-9)
+
+
+@pytest.mark.parametrize("method", sorted(_PUNTUALES))
+@pytest.mark.parametrize("seed", [5, 6])
+def test_es_cubre_al_var_y_ambos_crecen_con_la_confianza(method, seed):
+    var_fn, es_fn = _PUNTUALES[method]
+    r = _colas_gordas(seed)
+    levels = [0.90, 0.95, 0.975, 0.99]
+    vars_ = [var_fn(r, c) for c in levels]
+    ess = [es_fn(r, c) for c in levels]
+    assert vars_ == sorted(vars_)
+    assert ess == sorted(ess)
+    assert all(e >= v - 1e-12 for e, v in zip(ess, vars_, strict=True))
+
+
+@pytest.mark.parametrize("seed", [7, 8, 9])
+def test_el_es_historico_es_subaditivo(seed):
+    """Diversificar nunca aumenta el ES (el VaR si puede; el ES no)."""
+    rng = np.random.default_rng(seed)
+    a = _serie(rng.standard_t(3, 4000) * 0.01)
+    b = _serie(rng.standard_t(3, 4000) * 0.01)
+    assert var.historical_es(a + b, 0.975) <= var.historical_es(a, 0.975) + var.historical_es(b, 0.975)
+
+
+def test_la_tabla_cumple_es_mayor_o_igual_que_var_en_todas_las_filas():
+    table = var.var_table(_colas_gordas(10), [0.95, 0.99], [1, 5, 21], 0.94)
+    assert (table["es"] >= table["var"] - 1e-12).all()
+    assert table[["var", "es"]].notna().all().all()
+
+
+# ---------------------------------------------------------------------------
+#  Contraste de la estadistica hecha a mano contra scipy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stat", [0.0, 0.5, 3.84, 6.63, 25.0])
+@pytest.mark.parametrize("df", [1, 2])
+def test_la_cola_chi_cuadrado_coincide_con_scipy(stat, df):
+    stats = pytest.importorskip("scipy.stats")
+    assert var._chi2_sf(stat, df) == pytest.approx(stats.chi2.sf(stat, df), abs=1e-12)
+
+
+def test_kupiec_coincide_con_la_razon_de_verosimilitud_de_scipy():
+    stats = pytest.importorskip("scipy.stats")
+    n, x, p = 1000, 18, 0.01
+    lr, p_value = var.kupiec_pof(n, x, p)
+    expected = -2 * (stats.binom.logpmf(x, n, p) - stats.binom.logpmf(x, n, x / n))
+    assert lr == pytest.approx(expected, rel=1e-9)
+    assert p_value == pytest.approx(stats.chi2.sf(expected, 1), rel=1e-9)
+
+
+@pytest.mark.parametrize("exceptions", [3, 4, 5, 9, 10, 11])
+def test_el_semaforo_usa_la_binomial_exacta(exceptions):
+    stats = pytest.importorskip("scipy.stats")
+    cumulative = stats.binom.cdf(exceptions, 250, 0.01)
+    expected = "verde" if cumulative < 0.95 else "amarillo" if cumulative < 0.9999 - 1e-6 else "rojo"
+    assert var.basel_zone(exceptions, 250, 0.01) == expected
+
+
+# ---------------------------------------------------------------------------
+#  Bordes: series cortas, sin excepciones, grados de libertad no soportados
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fn", [var.historical_var, var.historical_es, var.normal_var,
+                                var.normal_es, var.cornish_fisher_var, var.cornish_fisher_es])
+def test_con_muy_pocos_datos_no_se_inventa_un_var(fn):
+    assert np.isnan(fn(_serie(np.full(10, -0.01)), 0.99))
+
+
+def test_fhs_y_ewma_con_series_vacias_o_cortas():
+    assert np.isnan(var.fhs_var_es(_serie(np.zeros(5)), 0.99, 0.94)[0])
+    sigma, sigma_next = var.ewma_sigma(pd.Series(dtype=float), 0.94)
+    assert sigma.empty and np.isnan(sigma_next)
+    assert var.tail_statistics(_serie(np.zeros(5))) == {}
+
+
+def test_sin_ninguna_excepcion_christoffersen_no_rechaza():
+    assert var.christoffersen_independence(np.zeros(500, dtype=bool)) == (0.0, 1.0)
+    assert np.isnan(var.christoffersen_independence(np.array([True]))[1])
+
+
+def test_la_cola_chi_cuadrado_solo_admite_uno_o_dos_grados():
+    with pytest.raises(ValueError, match="1 o 2"):
+        var._chi2_sf(1.0, 3)
+    assert np.isnan(var._chi2_sf(-1.0, 1))
+
+
+def test_cornish_fisher_aplica_la_formula_de_libro():
+    """Cuantil de Cornish-Fisher escrito aparte: z + (z2-1)S/6 + (z3-3z)K/24 - (2z3-5z)S2/36."""
+    rng = np.random.default_rng(12)
+    r = _serie(-np.abs(rng.standard_t(5, 5000)) * 0.01 + rng.normal(0, 0.005, 5000))
+    x = r.to_numpy()
+    mu, sd = x.mean(), x.std(ddof=1)
+    c = (x - mu) / sd
+    s, k = np.mean(c ** 3), np.mean(c ** 4) - 3
+    z = NormalDist().inv_cdf(0.01)
+    z_cf = z + (z ** 2 - 1) * s / 6 + (z ** 3 - 3 * z) * k / 24 - (2 * z ** 3 - 5 * z) * s ** 2 / 36
+    assert var.cornish_fisher_var(r, 0.99) == pytest.approx(-(mu + z_cf * sd), rel=1e-9)
+    # Asimetria negativa: la cola izquierda pesa mas que en la normal.
+    assert s < 0
+    assert var.cornish_fisher_var(r, 0.99) > var.normal_var(r, 0.99)
+
+
+def test_dias_bajo_menos_tres_sigma_se_cuentan_a_tres_sigma():
+    r = _colas_gordas(13)
+    stats = var.tail_statistics(r)
+    x = r.to_numpy()
+    assert stats["freq_below_3sigma"] == pytest.approx(np.mean(x < x.mean() - 3 * x.std(ddof=1)))

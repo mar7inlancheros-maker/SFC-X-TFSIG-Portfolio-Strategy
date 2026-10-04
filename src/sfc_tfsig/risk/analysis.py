@@ -2,14 +2,15 @@
 
 Dos niveles, porque hay dos momentos en que se mira el riesgo:
 
-- **`analyze_book`**: solo la cartera y los precios del ultimo ano. Es lo que
-  se puede calcular ANTES de operar, sobre la cartera objetivo de `ordenes`:
-  riesgo ex-ante, concentracion, liquidez, Monte Carlo parametrico, estres
-  hipotetico y limites.
+- **`analyze_book`**: la cartera y los precios. Es lo que se puede calcular
+  ANTES de operar, sobre la cartera objetivo de `ordenes`: riesgo ex-ante,
+  modelo factorial, concentracion, liquidez y su coste en crisis, Monte Carlo
+  parametrico, GARCH filtrado y VaR estresado de la cartera, estres
+  hipotetico y de covarianza, y limites.
 - **`analyze`**: lo anterior mas todo lo que necesita la historia de la
-  estrategia -- VaR por cuatro metodos y su backtest, bootstrap a varios anos,
-  estres historico, peores ventanas y drawdown actual. Es el reporte de riesgo
-  del comite.
+  estrategia -- VaR por cinco metodos y su backtest, bootstrap a varios anos,
+  estres historico, riesgo movil, calibracion del modelo de riesgo,
+  capacidad y drawdown actual. Es el reporte de riesgo del comite.
 
 Nada toca red ni disco: entran DataFrames ya cargados, sale un `RiskAnalysis`.
 """
@@ -24,9 +25,20 @@ import pandas as pd
 from ..config import Config, ConfigError
 from ..metrics import TRADING_DAYS, drawdown_series
 from ..universe import SECTORS
-from . import exposure, limits, montecarlo, stress, var
+from . import (
+    exposure,
+    factor_model,
+    garch,
+    history,
+    limits,
+    liquidity,
+    montecarlo,
+    stress,
+    var,
+)
 
 WORST_WINDOWS_D = (1, 5, 21, 63)
+VOL_TERM_HORIZONS_D = (1, 5, 21, 63, 252)
 
 
 @dataclass
@@ -52,6 +64,18 @@ class RiskAnalysis:
     limits: pd.DataFrame
     status: str
     warnings: list[str] = field(default_factory=list)
+    # -- de la cartera, con historia de precios de sus nombres --------------------
+    factor_risk: factor_model.FactorRisk | None = None
+    covariance_stress: pd.DataFrame | None = None
+    stressed: dict | None = None
+    garch_fits: dict = field(default_factory=dict)
+    garch_sims: dict = field(default_factory=dict)
+    conditional_var: pd.DataFrame | None = None
+    vol_terms: pd.DataFrame | None = None
+    liquidation: pd.DataFrame | None = None
+    liquidation_detail: pd.DataFrame | None = None
+    capacity: pd.DataFrame | None = None
+    capacity_nav: float = float("nan")
     # -- solo con historia de la estrategia (None en la comprobacion previa) --
     strategy_var: pd.DataFrame | None = None
     var_backtest: pd.DataFrame | None = None
@@ -62,6 +86,10 @@ class RiskAnalysis:
     historical: pd.DataFrame | None = None
     historical_detail: pd.DataFrame | None = None
     worst_windows: pd.DataFrame | None = None
+    rolling: pd.DataFrame | None = None
+    rolling_summary: pd.DataFrame | None = None
+    calibration: pd.DataFrame | None = None
+    calibration_summary: dict | None = None
     current_drawdown: float = float("nan")
 
 
@@ -115,7 +143,7 @@ def book_from_target(target: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
 
 
 # ---------------------------------------------------------------------------
-#  Analisis
+#  Piezas
 # ---------------------------------------------------------------------------
 
 
@@ -136,22 +164,92 @@ def _book_historical_var(returns: pd.DataFrame, weights: pd.Series, confidences)
             for c in confidences]
 
 
-def _measures(ex_ante: exposure.ExAnteRisk, conc: dict, liq_summary: dict,
-              book_var: pd.DataFrame, hypothetical: pd.DataFrame) -> dict[str, float]:
+def _garch_block(label: str, returns: pd.Series, risk_cfg: Config, confidences,
+                 seed: int) -> tuple[garch.GarchFit, garch.FilteredSimulation, pd.DataFrame]:
+    fit = garch.fit_garch(returns)
+    sim = garch.simulate_filtered(
+        fit, [int(h) for h in risk_cfg.get("var.garch.horizons_d")],
+        n_paths=int(risk_cfg.get("var.garch.n_paths")), seed=seed,
+    )
+    table = garch.simulation_var_table(sim, confidences).assign(series=label)
+    return fit, sim, table
+
+
+def _set_garch(result: RiskAnalysis, label: str, returns: pd.Series, risk_cfg: Config,
+               confidences, seed: int) -> None:
+    """Ajusta, simula y guarda un bloque GARCH; si no hay historia, avisa."""
+    try:
+        fit, sim, table = _garch_block(label, returns, risk_cfg, confidences, seed)
+    except ValueError as exc:
+        result.warnings.append(f"GARCH de la {label}: {exc}")
+        return
+    result.garch_fits[label] = fit
+    result.garch_sims[label] = sim
+    others = (result.conditional_var[result.conditional_var["series"] != label]
+              if result.conditional_var is not None else pd.DataFrame())
+    result.conditional_var = pd.concat([others, table], ignore_index=True)
+    terms = garch.vol_term_structure(fit, VOL_TERM_HORIZONS_D)["vol_annual"].rename(label)
+    result.vol_terms = (terms.to_frame() if result.vol_terms is None
+                        else result.vol_terms.drop(columns=label, errors="ignore").join(terms, how="outer"))
+
+
+def _set_book_history(result: RiskAnalysis, prices: pd.DataFrame, risk_cfg: Config,
+                      confidences, seed: int) -> bool:
+    """VaR estresado y GARCH de la cartera de hoy sobre su historia reconstruida.
+
+    False si no se pudo reconstruir (sin precios del benchmark): se avisa y el
+    reporte sigue, como hace el estres historico, en vez de tumbar `riesgo`.
+    """
+    try:
+        backcast, proxied = stress.book_backcast(
+            result.weights, result.ex_ante.betas, prices, result.benchmark
+        )
+    except ValueError as exc:
+        result.warnings.append(f"historia de la cartera: {exc}")
+        return False
+    sv_cfg = risk_cfg.section("stress.stressed_var")
+    result.stressed = stress.stressed_var(
+        backcast, float(sv_cfg["confidence"]), int(sv_cfg["window_d"]), proxied
+    ) or None
+    if result.stressed is None:
+        result.warnings.append("historia de precios insuficiente para el VaR estresado")
+    _set_garch(result, "cartera", backcast, risk_cfg, confidences, seed)
+    return True
+
+
+def _measures(result: RiskAnalysis) -> dict[str, float]:
+    book_var = result.book_var
     t_rows = book_var[(book_var["method"] == "mc_t_student") & (book_var["confidence"] == 0.99)]
     t_rows = t_rows[t_rows["horizon_d"] == t_rows["horizon_d"].min()] if len(t_rows) else t_rows
-    worst_stress = hypothetical["portfolio"].min() if not hypothetical.empty else float("nan")
+    hyp = result.hypothetical
+    worst_stress = hyp["portfolio"].min() if not hyp.empty else float("nan")
+    liq = result.liquidation
     return {
-        "ex_ante_vol": ex_ante.volatility,
+        "ex_ante_vol": result.ex_ante.volatility,
         "var_99_1d": float(t_rows["var"].iloc[0]) if len(t_rows) else float("nan"),
-        "beta": ex_ante.beta,
-        "tracking_error": ex_ante.tracking_error,
-        "max_name_risk_share": float(ex_ante.contributions["risk_share"].max()),
-        "max_sector_risk_share": float(ex_ante.sectors["risk_share"].max()),
-        "max_liquidation_days": liq_summary.get("max_days", float("nan")),
-        "effective_names": conc.get("effective_names", float("nan")),
+        "beta": result.ex_ante.beta,
+        "tracking_error": result.ex_ante.tracking_error,
+        "max_name_risk_share": float(result.ex_ante.contributions["risk_share"].max()),
+        "max_sector_risk_share": float(result.ex_ante.sectors["risk_share"].max()),
+        "max_liquidation_days": result.liquidity_summary.get("max_days", float("nan")),
+        "effective_names": result.concentration.get("effective_names", float("nan")),
         "max_stress_loss": max(0.0, -float(worst_stress)) if np.isfinite(worst_stress) else float("nan"),
+        "stressed_var_99_1d": (result.stressed or {}).get("stressed_var", float("nan")),
+        "liquidation_cost_stress": (float(liq.loc["crisis", "cost"])
+                                    if liq is not None and "crisis" in liq.index else float("nan")),
+        "current_drawdown": result.current_drawdown,
     }
+
+
+def _refresh_limits(result: RiskAnalysis, risk_cfg: Config) -> None:
+    result.measures = _measures(result)
+    result.limits = limits.check_limits(result.measures, risk_cfg)
+    result.status = limits.overall_status(result.limits)
+
+
+# ---------------------------------------------------------------------------
+#  Analisis
+# ---------------------------------------------------------------------------
 
 
 def analyze_book(
@@ -166,9 +264,22 @@ def analyze_book(
     volume_wide: pd.DataFrame | None = None,
     factor_scores: pd.DataFrame | None = None,
     universe_scores: pd.DataFrame | None = None,
+    panel: pd.DataFrame | None = None,
+    cost_bps: float | None = None,
+    turnover: float | None = None,
+    rebalances_per_year: float | None = None,
     strategy_fingerprint: str = "",
+    book_history: bool = True,
 ) -> RiskAnalysis:
-    """Riesgo de una cartera concreta sin historia de la estrategia."""
+    """Riesgo de una cartera concreta sin historia de la estrategia.
+
+    `panel` (el panel puntuado) activa el modelo factorial. `cost_bps` es el
+    coste fijo por lado del backtest, para el coste de liquidacion; `turnover`
+    y `rebalances_per_year` activan la curva de capacidad. `book_history=False`
+    deja el VaR estresado y el GARCH de la cartera para quien llama: `analyze`
+    los calcula con la historia larga, y hacerlos aqui tambien costaba el doble
+    y dejaba en el reporte avisos de la pasada corta que la larga ya resolvia.
+    """
     validate_policy(risk_cfg)
     weights = weights[weights.abs() > 0].astype(float)
     sectors = sectors.reindex(weights.index).fillna("Unknown")
@@ -248,10 +359,7 @@ def analyze_book(
     reverse = stress.reverse_stress(ex_ante.beta, conc.get("invested", 0.0),
                                     risk_cfg.get("stress.reverse.loss_thresholds"))
 
-    measures = _measures(ex_ante, conc, liq_summary, book_var, hypothetical)
-    checks = limits.check_limits(measures, risk_cfg)
-
-    return RiskAnalysis(
+    result = RiskAnalysis(
         as_of=as_of,
         nav=float(nav),
         weights=weights,
@@ -269,11 +377,94 @@ def analyze_book(
         hypothetical=hypothetical,
         hypothetical_detail=hypothetical_detail,
         reverse=reverse,
-        measures=measures,
-        limits=checks,
-        status=limits.overall_status(checks),
+        measures={},
+        limits=pd.DataFrame(),
+        status="SIN DATO",
         warnings=warnings,
     )
+
+    # -- estres de covarianza --------------------------------------------------
+    result.covariance_stress = stress.covariance_shocks(
+        weights, ex_ante.cov_daily,
+        [{"name": "Base", "vol_mult": 1.0, "corr_blend": 0.0}]
+        + list(risk_cfg.get("stress.covariance", [])),
+    )
+
+    # -- VaR estresado y GARCH de la cartera ------------------------------------
+    if book_history:
+        _set_book_history(result, close_wide, risk_cfg, confidences, seed)
+
+    # -- modelo factorial ------------------------------------------------------------
+    if panel is not None and not panel.empty:
+        try:
+            result.factor_risk = factor_model.factor_risk(
+                weights, sectors, close_wide, panel, as_of,
+                int(risk_cfg.get("factor_model.window_d")),
+            )
+            result.warnings += result.factor_risk.warnings
+            ratio = result.factor_risk.total_vol / ex_ante.volatility if ex_ante.volatility else np.nan
+            if np.isfinite(ratio) and ratio > 1.25:
+                # La covarianza de Ledoit-Wolf promedia el ano; el modelo
+                # factorial aplica las exposiciones de HOY. Si las de hoy son
+                # mas extremas, el riesgo que viene es el factorial.
+                result.warnings.append(
+                    f"el modelo factorial ve {ratio - 1:.0%} mas volatilidad que Ledoit-Wolf "
+                    f"({result.factor_risk.total_vol:.1%} frente a {ex_ante.volatility:.1%}): las "
+                    "exposiciones de hoy son mas extremas que las del ano de la covarianza, y los "
+                    "VaR ex-ante basados en ella se quedan cortos"
+                )
+            elif np.isfinite(ratio) and ratio < 1 / 1.25:
+                # El caso inverso tambien es una discrepancia de mas del 25%: las
+                # exposiciones de hoy son mas suaves que las del ano y los VaR
+                # ex-ante salen conservadores. No es alarma, pero hay que saberlo.
+                result.warnings.append(
+                    f"el modelo factorial ve {1 - ratio:.0%} menos volatilidad que Ledoit-Wolf "
+                    f"({result.factor_risk.total_vol:.1%} frente a {ex_ante.volatility:.1%}): las "
+                    "exposiciones de hoy son mas suaves que las del ano de la covarianza, y los "
+                    "VaR ex-ante basados en ella salen conservadores"
+                )
+        except ValueError as exc:
+            result.warnings.append(f"modelo factorial: {exc}")
+
+    # -- coste de liquidacion y capacidad ------------------------------------------
+    liq_cfg = risk_cfg.section("liquidity")
+    if cost_bps is None:
+        cost_bps = 0.0
+        result.warnings.append("sin coste fijo por lado: el coste de liquidacion solo cuenta impacto")
+    daily_vol = pd.Series(np.sqrt(np.clip(np.diag(ex_ante.cov_daily.loc[weights.index, weights.index]), 0.0, None)),
+                          index=weights.index)
+    if adv.notna().any():
+        _, normal_cost = liquidity.liquidation_cost(
+            weights, nav, adv, daily_vol, cost_bps=cost_bps,
+            impact_coef=float(liq_cfg["impact_coef"]),
+        )
+        crisis_detail, crisis_cost = liquidity.liquidation_cost(
+            weights, nav, adv, daily_vol, cost_bps=cost_bps,
+            impact_coef=float(liq_cfg["impact_coef"]),
+            adv_mult=float(liq_cfg["stress_adv_mult"]),
+            vol_mult=float(liq_cfg["stress_vol_mult"]),
+            spread_mult=float(liq_cfg["stress_cost_mult"]),
+        )
+        result.liquidation = pd.DataFrame(
+            {"cost": [normal_cost, crisis_cost]}, index=["normal", "crisis"]
+        ).assign(cost_usd=lambda f: f["cost"] * nav)
+        result.liquidation_detail = crisis_detail
+        if turnover is not None and rebalances_per_year:
+            result.capacity = liquidity.capacity_curve(
+                weights, adv, daily_vol, turnover=float(turnover),
+                rebalances_per_year=float(rebalances_per_year), cost_bps=cost_bps,
+                impact_coef=float(liq_cfg["impact_coef"]),
+                navs=[float(v) for v in liq_cfg["capacity_navs"]],
+            )
+            result.capacity_nav = liquidity.capacity_at_budget(
+                weights, adv, daily_vol, turnover=float(turnover),
+                rebalances_per_year=float(rebalances_per_year),
+                impact_coef=float(liq_cfg["impact_coef"]),
+                budget=float(liq_cfg["capacity_budget"]),
+            )
+
+    _refresh_limits(result, risk_cfg)
+    return result
 
 
 def analyze(
@@ -291,18 +482,28 @@ def analyze(
     stress_close: pd.DataFrame | None = None,
     factor_scores: pd.DataFrame | None = None,
     universe_scores: pd.DataFrame | None = None,
+    panel: pd.DataFrame | None = None,
+    holdings: pd.DataFrame | None = None,
+    cost_bps: float | None = None,
+    turnover: float | None = None,
+    rebalances_per_year: float | None = None,
     strategy_fingerprint: str = "",
 ) -> RiskAnalysis:
     """Reporte de riesgo completo: la cartera de hoy y la historia de la estrategia.
 
     `stress_close` son precios con historia larga (desde `stress.history_start`)
-    para las posiciones actuales y el benchmark. Si no llega, el estres
-    historico usa `close_wide` y los episodios anteriores quedan sin datos.
+    para las posiciones actuales y el benchmark. Si llega, el estres historico,
+    el VaR estresado y el GARCH de la cartera usan esa historia; si no, la de
+    `close_wide`. `holdings` (las posiciones de cada rebalanceo del backtest)
+    activa la calibracion del modelo de riesgo.
     """
+    long_history = stress_close is not None and not stress_close.empty
     result = analyze_book(
         weights, sectors, nav, close_wide, benchmark, risk_cfg,
         as_of=as_of, volume_wide=volume_wide, factor_scores=factor_scores,
-        universe_scores=universe_scores, strategy_fingerprint=strategy_fingerprint,
+        universe_scores=universe_scores, panel=panel, cost_bps=cost_bps,
+        turnover=turnover, rebalances_per_year=rebalances_per_year,
+        strategy_fingerprint=strategy_fingerprint, book_history=not long_history,
     )
     lam = float(risk_cfg.get("var.ewma_lambda"))
     confidences = _confidences(risk_cfg)
@@ -322,6 +523,7 @@ def analyze(
         recent_d=int(risk_cfg.get("var.backtest.recent_d")),
     )
     result.tail = var.tail_statistics(returns)
+    _set_garch(result, "estrategia", returns, risk_cfg, confidences, seed)
 
     # -- bootstrap -----------------------------------------------------------------
     frame = returns.rename("strategy").to_frame()
@@ -342,8 +544,8 @@ def analyze(
         result.bootstrap, [float(x) for x in boot_cfg["drawdown_thresholds"]]
     )
 
-    # -- estres historico y peores ventanas -----------------------------------------
-    prices = stress_close if stress_close is not None and not stress_close.empty else close_wide
+    # -- estres historico, VaR estresado con historia larga y peores ventanas ----
+    prices = stress_close if long_history else close_wide
     result.historical, result.historical_detail = stress.historical_stress(
         result.weights, result.ex_ante.betas, prices, benchmark,
         risk_cfg.get("stress.historical", []), strategy_nav=nav_series,
@@ -355,11 +557,22 @@ def analyze(
                 f"{len(missing)} episodios historicos sin precios del benchmark: "
                 f"{', '.join(missing['scenario'])}"
             )
+    # Si la historia larga no sirve (sin benchmark), se cae a la del panel: un
+    # VaR estresado sobre menos anos es mejor que ninguno, y el aviso lo dice.
+    if long_history and not _set_book_history(result, stress_close, risk_cfg, confidences, seed):
+        _set_book_history(result, close_wide, risk_cfg, confidences, seed)
     result.worst_windows = stress.worst_windows(nav_series, benchmark_nav, WORST_WINDOWS_D)
+
+    # -- historia del riesgo y calibracion -------------------------------------------
+    hist_cfg = risk_cfg.section("history")
+    result.rolling = history.rolling_risk(nav_series, benchmark_nav, int(hist_cfg["rolling_window_d"]))
+    result.rolling_summary = history.rolling_summary(result.rolling)
+    if holdings is not None and not holdings.empty:
+        result.calibration, result.calibration_summary = history.risk_model_calibration(
+            holdings, close_wide, nav_series, window=int(hist_cfg["calibration_window_d"])
+        )
 
     # -- drawdown actual y limites con historia ----------------------------------
     result.current_drawdown = float(-drawdown_series(nav_series).iloc[-1])
-    result.measures["current_drawdown"] = result.current_drawdown
-    result.limits = limits.check_limits(result.measures, risk_cfg)
-    result.status = limits.overall_status(result.limits)
+    _refresh_limits(result, risk_cfg)
     return result

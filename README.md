@@ -64,6 +64,13 @@ python main.py riesgo
 Todo lo que se descarga se cachea en `data/cache/`. La primera corrida tarda;
 las siguientes son minutos. `python main.py limpiar` vacía la caché.
 
+La caché se guarda en pickle comprimido (`.pkl.gz`), no en parquet. Smart App
+Control de Windows bloquea desde octubre de 2026 la DLL de parquet de pyarrow
+25.0.1 y el núcleo C++ de `cvxpy` en esta máquina; el proyecto ya no depende de
+ninguno de los dos (los optimizadores usan la canonicalización en Python de
+`cvxpy`). Las cachés parquet antiguas se migran solas si hay un pyarrow que
+cargue.
+
 ---
 
 ## Toda decisión de inversión vive en `config/strategy.toml`
@@ -117,12 +124,17 @@ Los topes impiden invertir el 100% del capital
 │   │   ├── var.py                VaR, ES y su backtest                  [puro]
 │   │   ├── exposure.py           covarianza, contribuciones, liquidez   [puro]
 │   │   ├── montecarlo.py         bootstrap y simulación paramétrica     [puro]
-│   │   ├── stress.py             escenarios históricos, hipotéticos, inverso [puro]
+│   │   ├── garch.py              GARCH(1,1) y Monte Carlo filtrado      [puro]
+│   │   ├── factor_model.py       riesgo por sectores, estilos y propio  [puro]
+│   │   ├── stress.py             históricos, hipotéticos, inverso, VaR estresado [puro]
+│   │   ├── history.py            riesgo móvil y calibración del modelo  [puro]
+│   │   ├── liquidity.py          coste de salida en crisis y capacidad  [puro]
 │   │   ├── limits.py             límites de vigilancia y semáforo       [puro]
 │   │   └── analysis.py           junta todo sobre una cartera           [puro]
 │   ├── risk_report.py            reporte de riesgo y control previo a operar
 │   └── cli.py                    los seis comandos
-└── tests/                        50+ tests, sin red, con datos sintéticos
+├── tools/                        cobertura y prueba de mutación de los tests de riesgo
+└── tests/                        600+ tests, sin red, con datos sintéticos
 ```
 
 `[puro]` significa funciones sin red, sin disco y sin estado: entra un DataFrame
@@ -195,6 +207,17 @@ Qué calcula, y por qué cada pieza:
   sesiones, al 95% y al 99%, en porcentaje y en dólares. Para la cartera actual,
   además, Monte Carlo normal y t de Student con la misma covarianza: la
   diferencia es la prima de cola gorda.
+- **Modelo factorial de riesgo.** Regresión transversal diaria del universo
+  sobre sectores, los cuatro estilos del modelo y tamaño. Dice de dónde viene
+  el riesgo: mercado y sectores, un estilo concreto o el riesgo propio de cada
+  nombre. Aplica las exposiciones de *hoy*: si la cartera está hoy más cargada
+  de un estilo que durante el año, ve más riesgo que Ledoit-Wolf, y el reporte
+  lo avisa.
+- **Volatilidad condicional GARCH(1,1) y Monte Carlo filtrado.** Estimado por
+  máxima verosimilitud; los residuos históricos se reinyectan en la recursión
+  desde la volatilidad de hoy. Da el VaR a 1, 21 y 63 sesiones con racimos de
+  volatilidad y reversión a la media, para la estrategia y para la cartera
+  actual sobre su historia reconstruida desde 2007.
 - **Backtest del VaR.** Cada día se reestima con información del cierre
   anterior y se cuentan las excepciones: Kupiec (frecuencia), Christoffersen
   (racimos) y semáforo de Basilea. Un VaR sin backtest es una opinión.
@@ -207,10 +230,20 @@ Qué calcula, y por qué cada pieza:
   se aproximan por su beta, y el reporte dice cuánto peso se aproximó).
   Hipotéticas: beta × mercado + extra sectorial + choque de factor × z-score,
   incluido un crash de momentum. Inversa: qué caída del mercado produce una
-  pérdida dada.
+  pérdida dada. **VaR estresado** (Basilea 2.5): el VaR de la cartera de hoy en
+  la peor ventana de un año de su historia. **Choques de covarianza**:
+  volatilidades ×1,5 y ×2 y correlaciones de crisis, por separado y juntas.
+- **Historia y calibración del riesgo.** Volatilidad, beta y tracking error
+  móviles frente a su historia. En cada rebalanceo del backtest se compara la
+  volatilidad que el modelo de riesgo habría previsto con la realizada
+  (estadístico de sesgo de Barra): si sale por encima de su intervalo, todos
+  los VaR ex-ante son optimistas.
 - **Liquidez y capacidad**: días para liquidar cada posición al 20% del volumen
-  diario, y el NAV a partir del cual los costes fijos del backtest dejan de ser
-  creíbles.
+  diario; coste de liquidar el libro entero en condiciones normales y de crisis
+  con impacto por la ley de la raíz cuadrada; y curva de capacidad: el NAV al
+  que el impacto de rebalancear, que el backtest no cobra, llega al 1% anual.
+- **Tiempo bajo el agua** en el Monte Carlo: la racha más larga por debajo del
+  máximo, mediana y p95, a 1, 3 y 5 años.
 - **Semáforo de límites**: OK, ALERTA (80% del límite) o EXCEDIDO. Un límite
   excedido no toca la cartera: se escala al comité, que actúa o lo acepta por
   escrito.
@@ -230,6 +263,7 @@ y mide si se sostienen cuantitativamente como cartera long/short.
 ```bash
 python modelo.py                                 # interactivo: pide tickers y corre todo
 python main.py research --long AAPL,MSFT,NVDA,AMZN,META --short TSLA,INTC,BA,PYPL,NKE
+python main.py research --long ... --short ... --positions AAPL:300,TSLA:-100
 python main.py research --long ... --short ... --signals senales.csv   # modo B
 ```
 
@@ -266,8 +300,49 @@ stop no cueste más del 1% del capital. Los niveles van por volatilidad, no por
 porcentajes fijos: un 5% es ruido en TSLA y mucho en MSFT. `P(TP1)` y `P(TP2)`
 son la fracción de entradas pasadas en esa acción, con los mismos múltiplos de
 ATR, que tocaron el objetivo antes que el stop en 63 sesiones: una tasa base
-histórica, no un pronóstico. Todo configurable en la sección `trade_plan` del
-YAML.
+histórica, no un pronóstico.
+
+Las correcciones y los recortes cambian el libro que construyó el optimizador:
+quitar un corto de beta alta (INTC, beta ~3) deja la cartera larga de mercado
+sin que nadie lo haya decidido. Si la beta del libro final pasa de 0,05, el
+plan añade una línea **BETA HEDGE** en el benchmark (vender o comprar SPY) que
+la devuelve a cero. Todo configurable en la sección `trade_plan` del YAML.
+
+**Señal final: qué hacer hoy.** El modo interactivo pregunta las posiciones
+actuales (`AAPL:300,TSLA:-100`, negativo = corto; Enter = ninguna). Lo último
+que imprime el reporte es una línea por ticker con la orden para pasar de lo
+que hay al plan:
+
+| Señal | Cuándo |
+|---|---|
+| BUY / SELL SHORT | abrir, o ampliar del mismo lado |
+| SELL / BUY TO COVER | reducir o cerrar |
+| FLIP TO LONG / FLIP TO SHORT | la posición está del lado contrario al plan |
+| HOLD | mismo lado y el ajuste no llega al 0,5% del capital (`hold_band`) |
+| NO TRADE | no hay posición y el plan no abre |
+| NOT ANALYZED | posición en un ticker que no está en la lista: no se toca |
+
+Un NO TRADE cierra la posición si va en la dirección de research (el dato la
+contradice) y la mantiene si va en contra (el dato tampoco respalda a
+research). Una posición en el benchmark se trata como la cobertura. Las
+órdenes se guardan en `orders_<fecha>.csv`.
+
+**Cómo se entrega.** En pantalla sale solo lo que hay que leer para operar:
+cabecera, resumen de 6 líneas, sección 14 y la señal final (~120 líneas). Las
+trece secciones de análisis van a disco y al menú `[5]`. Además, cada corrida
+genera `trade_plan_<fecha>.html`: una página autocontenida (CSS y gráficos
+dentro) con órdenes, qué corrigió el modelo y por qué (los componentes que
+empujan a favor y en contra), niveles con P(TP) frente a su break-even,
+cobertura, un gráfico por posición con entrada, stop y objetivos, y los
+límites. En modo interactivo se abre sola en el navegador; se imprime a PDF
+con Ctrl+P. Por comando: `--open` la abre, `--full` imprime todo en pantalla.
+
+**Si WRDS no conecta, el plan lo dice en rojo.** Sin WRDS faltan valor,
+calidad, analistas e interés en corto (la mitad del Quant Score) y los
+veredictos cambian: en una misma fecha INTC salió NO TRADE con WRDS y FLIP sin
+él. La conexión se prueba primero con un tiempo máximo (45 s,
+`WRDS_CONNECT_TIMEOUT`); si WRDS la deja esperando, casi siempre es una
+aprobación Duo pendiente en el celular del titular de la cuenta.
 
 **Dos modos, y la diferencia importa:**
 
@@ -359,7 +434,7 @@ cada reporte, no en un anexo.
 
 ## Estado
 
-Motor completo y probado (136 tests). Historial de iteraciones, con lo que cada
+Motor completo y probado (600+ tests). Historial de iteraciones, con lo que cada
 una cambió y por qué:
 
 | Iteración | Cambio | Efecto |

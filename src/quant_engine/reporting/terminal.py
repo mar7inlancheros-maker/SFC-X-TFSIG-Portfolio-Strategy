@@ -3,12 +3,16 @@
 Regla de redaccion del motor: DESCRIBIR, nunca recomendar. "NVDA tiene el
 mayor score de momentum del universo", nunca "compra NVDA". Las frases de
 interpretacion de abajo estan escritas asi a proposito.
+
+La excepcion son el plan de operacion (14) y la senal final: ahi si salen
+BUY / SELL, pero como aplicacion mecanica de reglas declaradas en el YAML
+(umbrales, ATR, tope de riesgo), no como opinion. El texto lo dice.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Callable
+from collections.abc import Callable
 
 import pandas as pd
 from rich import box
@@ -20,6 +24,20 @@ from ..analysis import AnalysisResult
 
 Fmt = Callable[[object], str]
 LINE = "=" * 60
+
+# `box.SIMPLE_HEAD` en ASCII. El original subraya la cabecera con U+2500, y todo
+# lo que se imprime va en ASCII: la consola de Windows usa cp1252 al redirigir.
+ASCII_SIMPLE_HEAD = box.Box(
+    "    \n"
+    "    \n"
+    " -- \n"
+    "    \n"
+    "    \n"
+    "    \n"
+    "    \n"
+    "    \n",
+    ascii=True,
+)
 
 
 def pct(v: object, d: int = 1) -> str:
@@ -41,7 +59,7 @@ def money(v: object) -> str:
 def table(frame: pd.DataFrame, formats: dict[str, Fmt] | None = None, title: str | None = None,
           index_name: str = "") -> Table:
     formats = formats or {}
-    t = Table(title=title, box=box.SIMPLE_HEAD, show_edge=False, title_justify="left")
+    t = Table(title=title, box=ASCII_SIMPLE_HEAD, show_edge=False, title_justify="left")
     t.add_column(index_name or (frame.index.name or ""), style="bold")
     for col in frame.columns:
         t.add_column(str(col), justify="right")
@@ -330,7 +348,7 @@ def risk_analysis(console: Console, r: AnalysisResult) -> None:
         "Win rate (positions)": pct(sm.get("win_rate_positions")), "Avg win": pct(sm.get("avg_win"), 2),
         "Avg loss": pct(sm.get("avg_loss"), 2), "Profit factor": num(sm.get("profit_factor")),
     }
-    t = Table(box=box.SIMPLE_HEAD, show_edge=False)
+    t = Table(box=ASCII_SIMPLE_HEAD, show_edge=False)
     t.add_column("Metric", style="bold")
     t.add_column("Value", justify="right")
     for k, v in rows.items():
@@ -415,6 +433,13 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
     tp = r.trade_plan
     if not tp:
         return
+    missing = tp.get("wrds_missing")
+    if missing:
+        console.print(f"[bold red]WARNING: WRDS unavailable. Value, quality, analyst and short-interest "
+                      f"({missing['weight']:.0%} of the Quant Score) are missing; verdicts below use price data "
+                      f"only and can differ from a run with WRDS.[/]")
+        console.print(f"  Reason: {escape(missing['reason'])}")
+        console.print()
     plan = tp["plan"]
     p = tp["params"]
     corr = tp["corrections"]
@@ -452,13 +477,23 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
                   f"Size: portfolio weight with the corrected directions ({r.primary['method']}), capped so a "
                   f"stop costs at most {p.max_risk_per_trade:.0%} of capital (risk_cap)"
                   + (f" (capped: {', '.join(capped)})" if capped else "") + ".")
-    console.print(f"Book after corrections: gross {num(tp['gross'])}, net {signed(tp['net'])}. "
+    h = tp.get("hedge")
+    if h:
+        console.print(f"[bold]BETA HEDGE:[/] {h['action']} {h['shares']:,} {h['ticker']} at {h['price']:,.2f} "
+                      f"(notional {money(h['notional'])}). Book beta {signed(h['beta_before'])} -> "
+                      f"{signed(h['beta_after'])}. Corrections and risk caps changed the book the optimizer "
+                      "built; without this line it carries market exposure nobody chose.")
+    elif not p.hedge_beta:
+        console.print(f"[bold]Beta hedge disabled[/] (trade_plan.hedge_beta: false): the book carries beta "
+                      f"{signed(tp.get('beta', float('nan')))} as is.")
+    console.print(f"Book after corrections: gross {num(tp['gross'])}, net {signed(tp['net'])}, "
+                  f"beta {signed(tp.get('beta', float('nan')))} before hedge. "
                   f"P(TP): share of past entries in this stock ({p.horizon_d}-session horizon, "
                   "same ATR multiples) that hit the target before the stop. A historical base rate, not a "
                   "forecast. Review at the next rebalance or before earnings.")
 
 
-def summary(console: Console, r: AnalysisResult) -> None:
+def summary(console: Console, r: AnalysisResult, show_warnings: bool = True) -> None:
     console.print()
     console.print(LINE)
     console.print("FINAL QUANTITATIVE SUMMARY")
@@ -471,7 +506,7 @@ def summary(console: Console, r: AnalysisResult) -> None:
         f"net exposure {signed(ex.get('net'))} and ex-ante annualized volatility of {pct(ex.get('vol_annual'))}.",
         f"- On the hypothetical path (Mode A) its Sharpe was {num(sm.get('sharpe'))} with max drawdown "
         f"{pct(sm.get('max_drawdown'))}; the basket selection is in-sample.",
-        f"- Research/quant agreement: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items()) + ".",
+        "- Research/quant agreement: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items()) + ".",
     ]
     if r.spread:
         lines.append(f"- LONG minus SHORT daily spread: {pct(r.spread['mean_annual'])}/yr, p = "
@@ -487,18 +522,83 @@ def summary(console: Console, r: AnalysisResult) -> None:
                      f"{num(r.robustness['sharpe_max'])}.")
     for line in lines:
         console.print(line)
-    if r.warnings:
+    if r.warnings and not show_warnings:
+        console.print(f"- {len(dict.fromkeys(r.warnings))} warning(s): see the full report.")
+    elif r.warnings:
         console.print()
         console.print("[bold]Warnings[/]")
         for w in dict.fromkeys(r.warnings):
             console.print(f"  ! {escape(w)}")
+
+
+_NOTES = {
+    "REDUCE": "half size, quant data neutral",
+    "NO TRADE": "not traded, quant data contradicts research",
+    "FLIP": "direction flipped, quant data strongly contradicts research",
+    "NOT ANALYZED": "not in the ticker list: no signal, position left as is and outside the beta hedge",
+}
+
+
+def final_signal(console: Console, r: AnalysisResult) -> None:
+    tp = r.trade_plan
+    if not tp:
+        return
+    orders = tp["orders"]
     console.print()
-    console.print("This engine describes; it does not recommend. It is a research and risk-analysis tool, "
-                  "not an investment adviser.")
+    console.print(LINE)
+    if tp.get("wrds_missing"):
+        console.print("[bold red]PRICE-ONLY SIGNAL: WRDS unavailable, see the warning in [14].[/]")
+    console.print("FINAL SIGNAL" + ("  (orders from current positions to the plan)" if tp.get("has_positions")
+                                    else "  (no current positions given: orders open the plan from zero)"))
+    console.print(LINE)
+    console.print(f"{'Ticker':7}{'Signal':15}{'Qty':>7}  {'Now':>7} -> {'Target':<7}{'Stop':>9}{'TP1':>9}{'TP2':>9}")
+    fmt = lambda v: "" if v is None or pd.isna(v) else f"{v:,.2f}"  # noqa: E731
+    for t, o in orders.iterrows():
+        tail = ("   beta hedge" if o["verdict"] == "HEDGE"
+                else "" if o["signal"] == "NOT ANALYZED"
+                else f"{fmt(o.get('stop')):>9}{fmt(o.get('tp1')):>9}{fmt(o.get('tp2')):>9}")
+        qty = f"{int(o['qty']):,}" if o["qty"] else "-"
+        console.print(f"{t:7}{o['signal']:15}{qty:>7}  {int(o['current']):>7,} -> {int(o['target']):<7,}{tail}")
+    notes = []
+    for verdict, text in _NOTES.items():
+        names = list(orders.index[orders["verdict"] == verdict])
+        if names:
+            notes.append(f"{', '.join(names)}: {text}.")
+    reason = orders.get("hold_reason", pd.Series("", index=orders.index)).fillna("")
+    band = list(orders.index[reason == "within hold band"])
+    if band:
+        notes.append(f"{', '.join(band)}: HOLD, already within {tp['params'].hold_band:.1%} of capital of the target.")
+    no_book = list(orders.index[reason == "no long/short book: kept as is"])
+    if no_book:
+        notes.append(f"{', '.join(no_book)}: HOLD, after the corrections only one leg is left, so there is "
+                     "no long/short book to size against.")
+    kept = list(orders.index[reason == "kept against research"])
+    if kept:
+        notes.append(f"{', '.join(kept)}: current position is against research and the data does not back "
+                     "research either: kept, with levels for the side you hold.")
+    for n in notes:
+        console.print(f"  {n}")
+    console.print(f"Orders at market next session. Levels from the {r.clean.close.index[-1]:%Y-%m-%d} close; stop and TP apply to "
+                  "the whole resulting position.")
+    console.print("Mechanical output of the rules in config/quant_engine.yaml (thresholds, ATR, risk cap). "
+                  "Not investment advice: review before executing.")
+
+
+def brief(r: AnalysisResult, console: Console) -> None:
+    """Lo que se ve en pantalla por defecto: contexto, resumen y que hacer.
+
+    Las trece secciones de analisis van al informe en disco; en pantalla
+    enterraban el plan al final de ~600 lineas.
+    """
+    header(console, r)
+    summary(console, r, show_warnings=False)
+    trade_plan(console, r)
+    final_signal(console, r)
 
 
 def render(r: AnalysisResult, console: Console) -> None:
     header(console, r)
     for fn in (data_quality, performance, risk, momentum, beta_alpha, correlation, factor_exposure, signals,
-               long_vs_short, portfolio_construction, risk_analysis, stress_test, robustness, trade_plan, summary):
+               long_vs_short, portfolio_construction, risk_analysis, stress_test, robustness, trade_plan, summary,
+               final_signal):
         fn(console, r)
