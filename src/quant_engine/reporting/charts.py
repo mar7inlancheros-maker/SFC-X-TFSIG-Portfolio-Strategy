@@ -100,14 +100,18 @@ def render_all(r: AnalysisResult, directory: Path, stamp: str) -> list[Path]:
     ax.set_title(f"Portfolio weights ({r.primary['method']})")
     out.append(_save(fig, directory / f"06_weights_{stamp}.png"))
 
-    # 7. Cesta larga frente a corta
+    # 7. Cesta larga frente a corta (solo LONG: frente al benchmark)
     fig, ax = plt.subplots(figsize=(10, 5))
     lb = (1 + r_eval[r.longs].mean(axis=1).fillna(0)).cumprod() - 1
-    sb = (1 + r_eval[r.shorts].mean(axis=1).fillna(0)).cumprod() - 1
     ax.plot(lb.index, lb, color=LONG_COLOR, label="LONG basket (EW)")
-    ax.plot(sb.index, sb, color=SHORT_COLOR, label="SHORT basket (EW, as held long)")
+    if r.shorts:
+        sb = (1 + r_eval[r.shorts].mean(axis=1).fillna(0)).cumprod() - 1
+        ax.plot(sb.index, sb, color=SHORT_COLOR, label="SHORT basket (EW, as held long)")
+        ax.set_title("LONG vs SHORT basket cumulative return")
+    else:
+        ax.plot(bench.index, bench - 1, color=BENCH_COLOR, label=r.settings.benchmark)
+        ax.set_title("LONG basket vs benchmark, cumulative return")
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.set_title("LONG vs SHORT basket cumulative return")
     ax.legend()
     ax.grid(alpha=0.3)
     out.append(_save(fig, directory / f"07_long_vs_short_{stamp}.png"))

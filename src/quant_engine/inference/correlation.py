@@ -74,6 +74,6 @@ def correlation_summary(returns: pd.DataFrame, longs: list[str], shorts: list[st
         "avg_pairwise": average_pairwise(pearson),
         "avg_within_long": average_pairwise(pearson.loc[L, L]) if len(L) > 1 else float("nan"),
         "avg_within_short": average_pairwise(pearson.loc[S, S]) if len(S) > 1 else float("nan"),
-        "avg_long_short": float(np.nanmean(cross)),
+        "avg_long_short": float(np.nanmean(cross)) if L and S else float("nan"),
         "clusters": clusters(pearson),
     }

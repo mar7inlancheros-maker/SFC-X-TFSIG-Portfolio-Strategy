@@ -62,6 +62,10 @@ class WrdsData:
     analysts: pd.DataFrame = field(default_factory=pd.DataFrame)      # ticker -> consenso y revisiones
     short_interest: pd.DataFrame = field(default_factory=pd.DataFrame)  # ticker -> shortint, fecha
     unmatched: list[str] = field(default_factory=list)
+    fundq: pd.DataFrame = field(default_factory=pd.DataFrame)         # trimestres crudos, para la historia
+    ibes_recs: pd.DataFrame = field(default_factory=pd.DataFrame)     # consenso mensual crudo
+    ibes_eps: pd.DataFrame = field(default_factory=pd.DataFrame)      # estimaciones mensuales crudas
+    short_interest_raw: pd.DataFrame = field(default_factory=pd.DataFrame)  # quincenal crudo
 
     @property
     def sectors(self) -> dict[str, str]:
@@ -75,18 +79,87 @@ class WrdsData:
 # ---------------------------------------------------------------------------
 
 
-def pick_primary_security(securities: pd.DataFrame) -> pd.DataFrame:
+CANADIAN_SUFFIXES = (".TO", ".V", ".NE", ".CN")
+
+
+def compustat_ticker(yahoo: str) -> tuple[str, str]:
+    """Ticker de Compustat y pais de la emision para un ticker de Yahoo.
+
+    Compustat guarda los listados de Toronto con su propio `tic`: sin clase,
+    con un punto final (Aritzia: Yahoo `ATZ.TO`, Compustat `ATZ.`); con clase,
+    punto y clase (Yahoo `TECK-B.TO`, Compustat `TECK.B`). Las clases de EE.UU.
+    van igual (`BRK-B` -> `BRK.B`). Buscar el ticker de Yahoo tal cual dejaba
+    sin fundamentales ni analistas a todo nombre canadiense.
+    """
+    t = yahoo.upper()
+    for suffix in CANADIAN_SUFFIXES:
+        if t.endswith(suffix):
+            base = t[: -len(suffix)]
+            return (base.replace("-", ".") if "-" in base else base + "."), "CAN"
+    return t.replace("-", "."), "USA"
+
+
+def match_securities(securities: pd.DataFrame, wanted: dict[str, tuple[str, str]]) -> pd.DataFrame:
+    """Una fila por ticker de Yahoo: su emision en Compustat.
+
+    `securities` trae todas las emisiones de las empresas buscadas. Si la
+    emision elegida no tiene ticker de IBES (el listado de Toronto de Aritzia
+    no lo tiene; su ADR de EE.UU. si), se toma el de una emision hermana de la
+    misma empresa: IBES cubre empresas, no bolsas.
+    """
+    rows = {}
+    for yahoo, (tic, country) in wanted.items():
+        candidates = securities[securities["tic"] == tic]
+        if candidates.empty:
+            continue
+        row = pick_primary_security(candidates, country=country).iloc[0].copy()
+        if pd.isna(row.get("ibtic")):
+            siblings = securities[(securities["gvkey"] == row["gvkey"]) & securities["ibtic"].notna()]
+            if len(siblings):
+                order = siblings.assign(
+                    _same=siblings["excntry"].eq(country),
+                    _active=siblings.get("secstat", pd.Series("A", index=siblings.index)).fillna("A").eq("A"))
+                row["ibtic"] = order.sort_values(["_same", "_active"], ascending=False).iloc[0]["ibtic"]
+        rows[yahoo] = row
+    if not rows:
+        return pd.DataFrame(columns=[c for c in securities.columns if c != "tic"])
+    return pd.DataFrame(rows).T
+
+
+def price_in_currency(prices_usd: pd.Series, currencies: pd.Series,
+                      usd_per_unit: dict[str, float]) -> pd.Series:
+    """Precio de cada nombre en la moneda en que reporta sus estados financieros.
+
+    El rendimiento por beneficio es beneficio / capitalizacion: los dos tienen
+    que ir en la misma moneda. Aritzia reporta en CAD; Shopify cotiza en Toronto
+    y reporta en USD. Sin moneda declarada se supone USD (Compustat EE.UU.); con
+    una moneda sin tipo de cambio, NaN: mejor sin ratio de valor que uno 30%
+    equivocado.
+    """
+    out = {}
+    for t, price in prices_usd.items():
+        ccy = currencies.get(t) if len(currencies) else None
+        if ccy is None or pd.isna(ccy) or ccy == "USD":
+            out[t] = price
+        else:
+            out[t] = price / usd_per_unit[ccy] if usd_per_unit.get(ccy) else np.nan
+    return pd.Series(out, dtype=float)
+
+
+def pick_primary_security(securities: pd.DataFrame, country: str | None = None) -> pd.DataFrame:
     """Una fila por ticker: la emision principal.
 
     Un mismo `tic` puede tener varias filas en Compustat (clases, mercados).
-    Preferencia: activa, emision '01', cotizada en EE.UU. o Canada.
+    Preferencia: activa, del pais pedido (o de EE.UU. o Canada), emision '01'
+    ('01C' en Toronto).
     """
     if securities.empty:
         return securities
     s = securities.copy()
     s["_active"] = s.get("secstat", pd.Series("A", index=s.index)).fillna("A").eq("A")
-    s["_main"] = s["iid"].astype(str).eq("01")
-    s["_na"] = s.get("excntry", pd.Series("USA", index=s.index)).isin(["USA", "CAN"])
+    s["_main"] = s["iid"].astype(str).str.startswith("01")
+    places = [country] if country else ["USA", "CAN"]
+    s["_na"] = s.get("excntry", pd.Series("USA", index=s.index)).isin(places)
     s = s.sort_values(["tic", "_active", "_na", "_main"], ascending=[True, False, False, False])
     return s.drop_duplicates("tic").set_index("tic").drop(columns=["_active", "_main", "_na"])
 
@@ -110,7 +183,7 @@ def ttm_fundamentals(fundq: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series | No
     Devuelve None si no hay 4 trimestres consecutivos: un TTM con huecos mezcla
     periodos y no significa nada.
     """
-    f = _numeric(fundq, ("gvkey", "datadate", "rdq"))
+    f = _numeric(fundq, ("gvkey", "datadate", "rdq", "curcdq"))
     f["datadate"] = pd.to_datetime(f["datadate"])
     f["rdq"] = pd.to_datetime(f["rdq"]).fillna(f["datadate"] + pd.Timedelta(days=90))
     f = f[f["rdq"] <= as_of].sort_values("datadate").drop_duplicates("datadate", keep="last")
@@ -149,7 +222,25 @@ def ttm_fundamentals(fundq: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series | No
         "shares_growth": (latest.get("cshoq") / shares_prev - 1.0) if shares_prev and shares_prev > 0 else np.nan,
         "fiscal_period_end": latest["datadate"],
         "report_date": latest["rdq"],
+        "currency": latest.get("curcdq") if pd.notna(latest.get("curcdq")) else "USD",
     })
+
+
+def ttm_panel(fundq: pd.DataFrame, ids: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
+    """Conceptos TTM de cada ticker con lo publicado hasta `as_of` (point-in-time).
+
+    La misma funcion sirve para hoy y para cada fecha de la validacion del
+    score: un trimestre con `rdq` posterior a `as_of` no existe todavia.
+    """
+    rows = {}
+    if fundq.empty or ids.empty:
+        return pd.DataFrame()
+    for t, row in ids.iterrows():
+        block = fundq[fundq["gvkey"] == row["gvkey"]]
+        ttm = ttm_fundamentals(block, as_of) if len(block) else None
+        if ttm is not None:
+            rows[t] = ttm
+    return pd.DataFrame(rows).T
 
 
 def fundamental_metrics(concepts: pd.DataFrame, prices: pd.Series) -> pd.DataFrame:
@@ -212,6 +303,47 @@ def analyst_signals(recs: pd.DataFrame, eps: pd.DataFrame, as_of: pd.Timestamp) 
     return pd.Series(out) if out else None
 
 
+# Dias entre la fecha de liquidacion del interes corto y su publicacion. FINRA
+# publica unos 8 dias habiles despues; 14 naturales es conservador. Solo para la
+# historia: hoy, lo que esta en WRDS ya esta publicado.
+SHORT_INTEREST_LAG_DAYS = 14
+
+
+def analyst_panel(recs: pd.DataFrame, eps: pd.DataFrame, ids: pd.DataFrame,
+                  as_of: pd.Timestamp) -> pd.DataFrame:
+    """Senales de analistas de cada ticker con los resumenes de IBES hasta `as_of`.
+
+    La misma funcion para hoy y para cada fecha de la validacion del score.
+    """
+    if ids.empty or "ibtic" not in ids or recs is None or eps is None:
+        return pd.DataFrame()
+    rows = {}
+    for t, ib in ids["ibtic"].dropna().items():
+        sig = analyst_signals(recs[recs["ticker"] == ib], eps[eps["ticker"] == ib], as_of)
+        if sig is not None:
+            rows[t] = sig
+    return pd.DataFrame(rows).T
+
+
+def short_interest_at(raw: pd.DataFrame, ids: pd.DataFrame, as_of: pd.Timestamp,
+                      lag_days: int = 0) -> pd.DataFrame:
+    """Ultimo interes corto de cada ticker liquidado hasta `as_of - lag_days`.
+
+    Por emision (gvkey + iid): el interes corto es de una bolsa concreta.
+    """
+    if raw is None or raw.empty or ids.empty:
+        return pd.DataFrame()
+    cutoff = as_of - pd.Timedelta(days=lag_days)
+    dates = pd.to_datetime(raw["datadate"])
+    rows = {}
+    for t, row in ids.iterrows():
+        block = raw[(raw["gvkey"] == row["gvkey"]) & (raw["iid"] == row["iid"]) & (dates <= cutoff)]
+        if len(block):
+            last = block.sort_values("datadate").iloc[-1]
+            rows[t] = {"shortint": float(last["shortint"]), "si_date": pd.Timestamp(last["datadate"])}
+    return pd.DataFrame(rows).T
+
+
 def short_interest_metrics(si: pd.DataFrame, shares_mm: pd.Series, adv_shares: pd.Series) -> pd.DataFrame:
     """% de acciones en corto y dias para cubrir.
 
@@ -254,59 +386,63 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
         factors["date"] = pd.to_datetime(factors["date"])
         factors = factors.set_index("date").astype(float)
 
+        wanted = {t: compustat_ticker(t) for t in tickers}
+        # Todas las emisiones de las empresas buscadas: el ibtic puede estar en una hermana.
+        tics = _in_list(sorted({tic for tic, _ in wanted.values()}))
         secs = q(f"select s.tic, s.gvkey, s.iid, s.ibtic, s.excntry, s.secstat, c.gsector, c.gind, c.conm "
                  f"from comp.security s join comp.company c using (gvkey) "
-                 f"where s.tic in ({_in_list(tickers)})", f"ids_{day}")
-        ids = pick_primary_security(secs)
+                 f"where s.gvkey in (select gvkey from comp.security where tic in ({tics}))", f"ids_{day}")
+        ids = match_securities(secs, wanted)
         unmatched = [t for t in tickers if t not in ids.index]
 
         gvkeys = list(ids["gvkey"].dropna().unique())
-        fund_rows, analyst_rows, si = {}, {}, pd.DataFrame()
+        si, raw_si, analysts = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        recs, eps = pd.DataFrame(), pd.DataFrame()
+        fundamentals, fq = pd.DataFrame(), pd.DataFrame()
+        # Trimestres desde 15 meses antes del inicio de los datos: la validacion
+        # del score necesita un TTM publicado en su primera fecha.
+        fq_start = min(start, as_of - pd.DateOffset(years=3)) - pd.DateOffset(months=15)
         if gvkeys:
-            fq = q("select gvkey, datadate, rdq, fyearq, fqtr, saleq, cogsq, niq, oiadpq, xintq, oancfy, capxy, "
+            fq = q("select gvkey, datadate, rdq, curcdq, fyearq, fqtr, saleq, cogsq, niq, oiadpq, xintq, oancfy, "
+                   "capxy, "
                    "ceqq, atq, ltq, dlttq, dlcq, cheq, actq, lctq, cshoq from comp.fundq "
                    f"where gvkey in ({_in_list(gvkeys)}) and indfmt='INDL' and datafmt='STD' and consol='C' "
-                   f"and popsrc='D' and datadate >= '{as_of - pd.DateOffset(years=3):%Y-%m-%d}' "
+                   f"and popsrc='D' and datadate >= '{fq_start:%Y-%m-%d}' "
                    f"and datadate <= '{day}'", f"fundq_{day}")
-            for t, row in ids.iterrows():
-                block = fq[fq["gvkey"] == row["gvkey"]]
-                ttm = ttm_fundamentals(block, as_of) if len(block) else None
-                if ttm is not None:
-                    fund_rows[t] = ttm
+            fundamentals = ttm_panel(fq, ids, as_of)
 
+            # Desde el inicio de los datos: la validacion del score lo necesita.
             raw_si = q("select gvkey, iid, shortint, shortintadj, datadate from comp.sec_shortint "
-                       f"where gvkey in ({_in_list(gvkeys)}) and datadate >= '{as_of - pd.DateOffset(months=3):%Y-%m-%d}' "
+                       f"where gvkey in ({_in_list(gvkeys)}) and datadate >= '{start:%Y-%m-%d}' "
                        f"and datadate <= '{day}'", f"shortint_{day}")
-            rows = {}
-            for t, row in ids.iterrows():
-                block = raw_si[(raw_si["gvkey"] == row["gvkey"]) & (raw_si["iid"] == row["iid"])]
-                if len(block):
-                    last = block.sort_values("datadate").iloc[-1]
-                    rows[t] = {"shortint": float(last["shortint"]), "si_date": pd.Timestamp(last["datadate"])}
-            si = pd.DataFrame(rows).T
+            si = short_interest_at(raw_si, ids, as_of)
 
         ibtics = ids["ibtic"].dropna()
         if len(ibtics):
-            since = f"{as_of - pd.DateOffset(months=6):%Y-%m-%d}"
+            since = f"{min(start, as_of - pd.DateOffset(months=6)):%Y-%m-%d}"
             recs = q(f"select ticker, statpers, meanrec, numrec from ibes.recdsum where ticker in "
                      f"({_in_list(ibtics.unique())}) and statpers >= '{since}' and statpers <= '{day}'",
                      f"ibes_rec_{day}")
-            eps = q(f"select ticker, statpers, fpedats, meanest, stdev, numest, numup, numdown "
-                    f"from ibes.statsum_epsus where ticker in ({_in_list(ibtics.unique())}) and fpi='1' "
-                    f"and measure='EPS' and statpers >= '{since}' and statpers <= '{day}'", f"ibes_eps_{day}")
-            for t, ib in ibtics.items():
-                sig = analyst_signals(recs[recs["ticker"] == ib], eps[eps["ticker"] == ib], as_of)
-                if sig is not None:
-                    analyst_rows[t] = sig
+            # Las empresas sin listado en EE.UU. estan en el fichero internacional de IBES.
+            where = (f"where ticker in ({_in_list(ibtics.unique())}) and fpi='1' and measure='EPS' "
+                     f"and statpers >= '{since}' and statpers <= '{day}'")
+            cols = "ticker, statpers, fpedats, meanest, stdev, numest, numup, numdown"
+            eps = q(f"select {cols} from ibes.statsum_epsus {where} union all "
+                    f"select {cols} from ibes.statsum_epsint {where}", f"ibes_eps_{day}")
+            analysts = analyst_panel(recs, eps, ids, as_of)
 
         return WrdsData(
             available=True,
             factors=factors,
             ids=ids,
-            fundamentals=pd.DataFrame(fund_rows).T,
-            analysts=pd.DataFrame(analyst_rows).T,
+            fundamentals=fundamentals,
+            analysts=analysts,
             short_interest=si,
             unmatched=unmatched,
+            fundq=fq,
+            ibes_recs=recs,
+            ibes_eps=eps,
+            short_interest_raw=raw_si,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("fallo leyendo WRDS")

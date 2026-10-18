@@ -29,6 +29,7 @@ class MarketData:
 
     ohlcv: dict[str, pd.DataFrame]
     failures: dict[str, str] = field(default_factory=dict)
+    stale: dict[str, pd.Timestamp] = field(default_factory=dict)  # ticker -> ultimo dato de la cache vieja
     sectors: dict[str, str] = field(default_factory=dict)
     sector_source: dict[str, str] = field(default_factory=dict)
 
@@ -68,6 +69,77 @@ def _download(tickers: list[str], start: pd.Timestamp, end: pd.Timestamp) -> dic
 
 
 _REQUESTED = "qe_ohlcv_requested"
+_RETRY_BATCH = 25
+
+
+def download_with_retry(tickers: list[str], start: pd.Timestamp, end: pd.Timestamp,
+                        download=None) -> dict[str, pd.DataFrame]:
+    """Descarga en un lote y reintenta lo que falte en lotes de 25.
+
+    En lotes grandes Yahoo corta a veces y yfinance da el ticker por "sin
+    datos" aunque cotice: el 17 de octubre de 2026 faltaron 16 de los 50 pares
+    de referencia (AMZN, JPM, V...) y un minuto despues bajaron todos. Un error
+    de Yahoo no es "no hay datos".
+    """
+    download = download or _download
+    out = download(tickers, start, end)
+    missing = [t for t in tickers if t not in out]
+    for i in range(0, len(missing), _RETRY_BATCH):
+        out.update(download(missing[i:i + _RETRY_BATCH], start, end))
+    return out
+
+# Sufijo de bolsa de Yahoo -> (moneda de cotizacion, unidades de esa moneda por
+# precio). Londres cotiza en peniques: 0.01 libras por unidad de precio. Yahoo
+# usa "-" para las clases (BRK-B) y "." solo para la bolsa, asi que un punto
+# en el ticker es siempre un sufijo de bolsa.
+QUOTE_CURRENCY = {
+    ".TO": ("CAD", 1.0), ".V": ("CAD", 1.0), ".NE": ("CAD", 1.0), ".CN": ("CAD", 1.0),
+    ".L": ("GBP", 0.01), ".PA": ("EUR", 1.0), ".DE": ("EUR", 1.0), ".AS": ("EUR", 1.0),
+    ".MI": ("EUR", 1.0), ".MC": ("EUR", 1.0), ".BR": ("EUR", 1.0), ".SW": ("CHF", 1.0),
+    ".T": ("JPY", 1.0), ".HK": ("HKD", 1.0), ".AX": ("AUD", 1.0), ".MX": ("MXN", 1.0),
+    ".SA": ("BRL", 1.0), ".KS": ("KRW", 1.0), ".ST": ("SEK", 1.0), ".OL": ("NOK", 1.0),
+    ".CO": ("DKK", 1.0),
+}
+BASE_CURRENCY = "USD"
+
+
+def quote_currency(ticker: str) -> tuple[str | None, float]:
+    """Moneda en que cotiza un ticker de Yahoo y la escala de su precio.
+
+    Sin sufijo: USD. Con un sufijo que no esta en la tabla: (None, 1.0), y quien
+    llama avisa; suponer USD daria betas y tamanos equivocados sin decirlo.
+    """
+    t = ticker.upper()
+    if t.startswith("^") or t.endswith("=X") or "." not in t:
+        return BASE_CURRENCY, 1.0
+    suffix = t[t.rindex("."):]
+    return QUOTE_CURRENCY.get(suffix, (None, 1.0))
+
+
+def fx_ticker(currency: str) -> str:
+    """Ticker de Yahoo con los USD que vale una unidad de `currency`."""
+    return f"{currency}{BASE_CURRENCY}=X"
+
+
+def load_fx(currencies, start: pd.Timestamp, end: pd.Timestamp) -> tuple[dict[str, pd.Series], dict[str, str]]:
+    """Cierre diario de USD por unidad de cada moneda, y las que fallaron.
+
+    Pasa por la misma cache que las acciones: el tipo de cambio de ayer no
+    cambia y no se vuelve a pedir.
+    """
+    wanted = sorted({c for c in currencies if c and c != BASE_CURRENCY})
+    if not wanted:
+        return {}, {}
+    market = load_ohlcv([fx_ticker(c) for c in wanted], start, end)
+    rates, failures = {}, {}
+    for c in wanted:
+        frame = market.ohlcv.get(fx_ticker(c))
+        close = None if frame is None else frame["Close"].where(frame["Close"] > 0).dropna()
+        if close is None or close.empty:
+            failures[c] = market.failures.get(fx_ticker(c), "sin datos")
+        else:
+            rates[c] = close[~close.index.duplicated(keep="last")].sort_index()
+    return rates, failures
 
 
 def load_ohlcv(
@@ -101,10 +173,21 @@ def load_ohlcv(
 
     if to_fetch:
         log.info("descargando %d tickers de Yahoo", len(to_fetch))
-        downloaded = _download(to_fetch, start, end)
+        downloaded = download_with_retry(to_fetch, start, end)
         for ticker in to_fetch:
             frame = downloaded.get(ticker)
             if frame is None:
+                # Si Yahoo falla y hay una cache de dias anteriores que cubre el
+                # inicio, se usa y se avisa: perder el nombre entero por un corte
+                # de Yahoo es peor que analizarlo con precios de hace unos dias.
+                old = cache.read_frame(_cache_name(ticker))
+                asked_from = requested.get(ticker)
+                if (old is not None and not old.empty and asked_from is not None
+                        and pd.Timestamp(asked_from) <= start + pd.Timedelta(days=7)):
+                    frame = old.set_index(pd.to_datetime(old["date"])).drop(columns="date")
+                    result.ohlcv[ticker] = frame.loc[frame.index >= start]
+                    result.stale[ticker] = frame.index.max()
+                    continue
                 result.failures[ticker] = "Yahoo no devolvio datos (ticker invalido, deslistado o sin historia)"
                 continue
             cache.write_frame(_cache_name(ticker), frame.reset_index())

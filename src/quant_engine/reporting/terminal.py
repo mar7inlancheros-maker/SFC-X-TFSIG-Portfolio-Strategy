@@ -92,13 +92,16 @@ def header(console: Console, r: AnalysisResult) -> None:
     console.print("UNIVERSE")
     console.print("-" * 60)
     console.print(f"Long:       {' '.join(r.longs)}")
-    console.print(f"Short:      {' '.join(r.shorts)}")
+    console.print(f"Short:      {' '.join(r.shorts) if r.shorts else 'none (long-only basket)'}")
     console.print(f"Benchmark:  {s.benchmark}")
     console.print(f"Period:     {s.lookback} ({r.eval_start.date()} to {r.as_of.date()})")
     console.print(f"Construction: {s.construction} | Rebalance: {s.rebalance} | "
                   f"Capital: {money(s.initial_capital)} | TC: {pct(s.transaction_cost, 2)} | "
                   f"Borrow: {pct(s.borrow_cost, 2)}/yr | rf: {pct(s.risk_free_rate, 2)}")
     console.print(f"Config fingerprint: {s.fingerprint}")
+    if r.reference_peers:
+        console.print(f"Quant Score against {len(r.reference_peers)} reference peers (scoring.reference_peers): "
+                      "they only score, they are never traded.")
     w = r.wrds
     if w is not None and w.available:
         console.print("Data: prices Yahoo | WRDS: Fama-French 5+UMD, GICS, Compustat fundamentals (point-in-time "
@@ -188,8 +191,11 @@ def correlation(console: Console, r: AnalysisResult) -> None:
     c = r.correlation
     console.print(table(c["pearson"], {k: lambda v: num(v, 2) for k in c["pearson"].columns},
                         title="Pearson correlation (daily returns)", index_name=""))
-    console.print(f"Average pairwise: {num(c['avg_pairwise'])} | within LONG: {num(c['avg_within_long'])} | "
-                  f"within SHORT: {num(c['avg_within_short'])} | LONG vs SHORT: {num(c['avg_long_short'])}")
+    if r.shorts:
+        console.print(f"Average pairwise: {num(c['avg_pairwise'])} | within LONG: {num(c['avg_within_long'])} | "
+                      f"within SHORT: {num(c['avg_within_short'])} | LONG vs SHORT: {num(c['avg_long_short'])}")
+    else:
+        console.print(f"Average pairwise: {num(c['avg_pairwise'])}")
     clusters = [g for g in c["clusters"].values() if len(g) > 1]
     console.print("Clusters (rho >= 0.6, average linkage, Mantegna distance): "
                   + ("; ".join(", ".join(g) for g in clusters) if clusters else "none"))
@@ -220,6 +226,56 @@ def factor_exposure(console: Console, r: AnalysisResult) -> None:
         console.print(f"Factor condition number: {num(f.condition_number, 1)}. VIF: "
                       + ", ".join(f"{k} {num(v, 1)}" for k, v in f.vif.items())
                       + ". VIF > 5: that factor's individual beta is unreliable.")
+
+
+_EVIDENCE_TEXT = {
+    "predictive": "the score ranked next-month returns well on this universe",
+    "none": "NO EVIDENCE that the score predicts on this universe: it ranks, it does not forecast",
+    "inverse": "the score ranked returns BACKWARDS on this universe: its verdicts are not reliable",
+}
+
+
+def validation_line(r: AnalysisResult) -> str:
+    """Una linea con el veredicto de la validacion del Quant Score."""
+    from ..signals.score_validation import evidence  # noqa: PLC0415
+
+    sv = getattr(r, "score_validation", None) or {}
+    if not sv:
+        return "Quant Score validation disabled (validation.enabled: false)."
+    if not sv.get("available"):
+        return f"Quant Score validation unavailable: {sv.get('reason')}."
+    return (f"Quant Score validation: IC {signed(sv['ic_mean'], 3)} (t {signed(sv['ic_t'], 1)}) over "
+            f"{sv['months']} months, {sv['avg_names']:.0f} names: {_EVIDENCE_TEXT[evidence(sv, 2.0)]}.")
+
+
+def score_validation_block(console: Console, r: AnalysisResult) -> None:
+    """Predice el Quant Score? El mismo score en cada fin de mes pasado frente al mes siguiente."""
+    sv = getattr(r, "score_validation", None) or {}
+    console.print()
+    console.print(escape(validation_line(r)))
+    if not sv.get("available"):
+        return
+    console.print(f"Same score recomputed at each month-end from {sv['first']:%Y-%m} to {sv['last']:%Y-%m} with the "
+                  f"data of that day (basket + reference peers), against the next {sv['horizon_d']} sessions. "
+                  f"IC positive in {pct(sv['ic_hit'], 0)} of months; top-minus-bottom tercile "
+                  f"{signed(sv['spread_mean'] * 100, 2)}%/month (t {signed(sv['spread_t'], 1)}).")
+    ph = sv.get("plan_horizon") or {}
+    if ph.get("available"):
+        console.print(f"Over the plan's {ph['horizon_d']}-session horizon: IC {signed(ph['ic_mean'], 3)} "
+                      f"(t {signed(ph['ic_t'], 1)}, Newey-West: windows overlap), positive in "
+                      f"{pct(ph['ic_hit'], 0)} of {ph['months']} months. The FLIP rule uses the "
+                      f"{sv['horizon_d']}-session test, which has no overlap.")
+    comps = sv.get("components")
+    if comps is not None and len(comps):
+        show = comps[["ic_mean", "ic_t", "hit_rate", "weight"]].rename(
+            columns={"ic_mean": "IC", "ic_t": "t", "hit_rate": "IC > 0", "weight": "weight"})
+        console.print(table(show, {"IC": lambda v: signed(v, 3), "t": lambda v: signed(v, 1),
+                                   "IC > 0": lambda v: pct(v, 0), "weight": lambda v: pct(v, 1)},
+                            title="Each component, same test", index_name="Component"))
+    if sv.get("not_validated"):
+        console.print("Not validated (no data: WRDS unavailable or no match): " + ", ".join(sv["not_validated"])
+                      + ". The validated score is the YAML score renormalized without them. Universe: today's "
+                      "large caps, so survivorship makes this test optimistic, not pessimistic.")
 
 
 def signals(console: Console, r: AnalysisResult) -> None:
@@ -260,8 +316,15 @@ def signals(console: Console, r: AnalysisResult) -> None:
     rs = r.rank_stability
     console.print(f"Rank stability under {rs['draws']} random weight draws: median Spearman "
                   f"{num(rs['median_spearman'])}, 5th pct {num(rs['p05_spearman'])}.")
-    console.print("With N = {} names, cross-sectional z-scores rest on {} points each; small score "
-                  "differences are noise.".format(len(a), len(a)))
+    score_validation_block(console, r)
+    if r.reference_peers:
+        n = len(a) + len(r.reference_peers)
+        console.print(f"Scored against the basket plus {len(r.reference_peers)} reference peers: z-scores rest on "
+                      f"{n} names and rank is out of {n}. A large-cap reference: liquidity and size can weigh "
+                      "against small caps.")
+    else:
+        console.print("With N = {} names, cross-sectional z-scores rest on {} points each; small score "
+                      "differences are noise.".format(len(a), len(a)))
     fm = r.feature_matrix
     console.print(table(fm, {c: signed for c in fm.columns}, title="Cross-sectional feature matrix (z-scores)",
                         index_name="Ticker"))
@@ -269,6 +332,9 @@ def signals(console: Console, r: AnalysisResult) -> None:
 
 def long_vs_short(console: Console, r: AnalysisResult) -> None:
     section(console, 9, "LONG VS SHORT")
+    if not r.shorts:
+        console.print("Long-only basket: there is no SHORT leg to compare against.")
+        return
     lvs = r.long_vs_short[["long_mean", "short_mean", "difference", "welch_p", "mw_p", "perm_p", "ci_low", "ci_high"]]
     console.print(table(lvs, {c: lambda v: num(v, 3) for c in lvs.columns}, index_name="Metric"))
     n_l, n_s = len(r.longs), len(r.shorts)
@@ -286,7 +352,7 @@ def long_vs_short(console: Console, r: AnalysisResult) -> None:
 
 def portfolio_construction(console: Console, r: AnalysisResult) -> None:
     section(console, 10, "PORTFOLIO CONSTRUCTION")
-    console.print("[bold yellow]MODE A - HYPOTHETICAL PATH.[/] Today's LONG/SHORT basket applied to the past. "
+    console.print("[bold yellow]MODE A - HYPOTHETICAL PATH.[/] Today's basket applied to the past. "
                   "Weights are estimated walk-forward (only data before each rebalance), but the SELECTION of "
                   "names uses today's information. This is NOT a backtest of the research process.")
     rows = {}
@@ -313,6 +379,9 @@ def portfolio_construction(console: Console, r: AnalysisResult) -> None:
     console.print(table(pd.DataFrame(weights), {k: signed for k in weights}, title="Current weights (fraction of capital)",
                         index_name="Ticker"))
 
+    if r.beta_comparison.empty:
+        console.print("Long-only basket: beta-neutral and sector-neutral books need a SHORT leg; not applicable.")
+        return
     console.print()
     console.print("[bold]50/50 vs beta-neutral[/] (equal weight within legs)")
     console.print(table(r.beta_comparison[["long", "short", "gross", "net", "beta"]],
@@ -377,8 +446,9 @@ def stress_test(console: Console, r: AnalysisResult) -> None:
     console.print(table(r.stress["covariance"].set_index("shock"),
                         {"vol_annual": pct, "var_95_1d_normal": lambda v: pct(v, 2)},
                         title="Volatility / correlation shocks (ex-ante)", index_name="Shock"))
-    console.print("In a long/short book higher correlation between the legs makes the hedge WORK, so "
-                  "'correlation -> 1' can lower risk. The dangerous case is the hedge breaking down.")
+    if r.shorts:
+        console.print("In a long/short book higher correlation between the legs makes the hedge WORK, so "
+                      "'correlation -> 1' can lower risk. The dangerous case is the hedge breaking down.")
     console.print(table(r.stress["market"].set_index("market_move"),
                         {"pnl_current_beta": pct, "pnl_adverse_beta": pct},
                         title="Market shock x portfolio beta", index_name="Market move"))
@@ -391,7 +461,7 @@ def stress_test(console: Console, r: AnalysisResult) -> None:
                   f"{pct(r.settings.get('stress.liquidity_participation', 0.1), 0)} participation. Forced-exit cost "
                   f"(TC x {r.settings.get('stress.liquidity_spread_multiplier', 3)}): {pct(r.stress['exit_cost'], 2)} of capital.")
     fund = r.fundamentals
-    if fund is not None and "si_pct_float" in fund.columns:
+    if fund is not None and "si_pct_float" in fund.columns and r.shorts:
         shorts = [t for t in r.shorts if t in fund.index]
         si = fund.loc[shorts, ["si_pct_float", "days_to_cover"]].apply(pd.to_numeric, errors="coerce")
         crowded = si[(si["si_pct_float"] > 0.10) | (si["days_to_cover"] > 5)]
@@ -443,10 +513,15 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
     plan = tp["plan"]
     p = tp["params"]
     corr = tp["corrections"]
+    console.print(escape(validation_line(r)))
     if len(corr):
         console.print("[bold]CORRECTIONS TO THE RESEARCH SIGNAL[/]")
         for t, row in corr.iterrows():
-            if row["verdict"] == "FLIP":
+            if row["verdict"] == "NO TRADE" and row.get("score_verdict") == "FLIP" and t in tp.get("unproven_flips", []):
+                msg = (f"research says {row['research']}, data points the other way (aligned score "
+                       f"{signed(row['aligned_score'])}), but the score has not shown it predicts: NO TRADE, "
+                       "not FLIP")
+            elif row["verdict"] == "FLIP":
                 msg = (f"research says {row['research']}, data points the other way (aligned score "
                        f"{signed(row['aligned_score'])}): model suggests {row['action']}")
             elif row["verdict"] == "NO TRADE":
@@ -455,15 +530,19 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
             else:
                 msg = (f"research says {row['research']}, data is neutral (aligned score "
                        f"{signed(row['aligned_score'])}): trade at {p.reduce_size:.0%} size")
-            console.print(f"  {t:6} {row['verdict']:9} {msg}")
+            console.print(f"  {t:{max(6, *(len(str(x)) for x in corr.index))}} {row['verdict']:9} {msg}")
     else:
         console.print("No corrections: the data supports every research signal.")
     console.print()
     order = plan.assign(_o=plan["action"].map({"BUY": 0, "SELL SHORT": 1, "NO TRADE": 2})).sort_values("_o")
     price = lambda v: f"{v:,.2f}"  # noqa: E731
-    console.print(table(order[["action", "verdict", "entry", "stop", "tp1", "tp2", "stop_pct"]],
+    # La moneda solo si hay alguna distinta de USD: los niveles van en la de cotizacion.
+    foreign = "currency" in order and order["currency"].ne("USD").any()
+    level_cols = ["action", "verdict", "entry", "stop", "tp1", "tp2", "stop_pct"] + (["currency"] if foreign else [])
+    console.print(table(order[level_cols],
                         {"entry": price, "stop": price, "tp1": price, "tp2": price, "stop_pct": pct},
-                        title="Levels", index_name="Ticker"))
+                        title="Levels" + (" (in each stock's trading currency; size and risk in USD)" if foreign
+                                          else ""), index_name="Ticker"))
     size = order[["shares", "notional", "weight", "risk_capital_pct", "p_tp1_before_stop", "p_tp2_before_stop"]]
     size = size.rename(columns={"risk_capital_pct": "risk_cap", "p_tp1_before_stop": "P(TP1)",
                                 "p_tp2_before_stop": "P(TP2)"})
@@ -483,6 +562,10 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
                       f"(notional {money(h['notional'])}). Book beta {signed(h['beta_before'])} -> "
                       f"{signed(h['beta_after'])}. Corrections and risk caps changed the book the optimizer "
                       "built; without this line it carries market exposure nobody chose.")
+    elif tp.get("long_only"):
+        console.print(f"Long-only basket: market beta ({signed(tp.get('beta', float('nan')))}) is the intended "
+                      "exposure, so there is no beta hedge." if tp.get("gross") else
+                      "Long-only basket: nothing to trade, so nothing to hedge.")
     elif not p.hedge_beta:
         console.print(f"[bold]Beta hedge disabled[/] (trade_plan.hedge_beta: false): the book carries beta "
                       f"{signed(tp.get('beta', float('nan')))} as is.")
@@ -491,6 +574,63 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
                   f"P(TP): share of past entries in this stock ({p.horizon_d}-session horizon, "
                   "same ATR multiples) that hit the target before the stop. A historical base rate, not a "
                   "forecast. Review at the next rebalance or before earnings.")
+    expectations(console, r)
+
+
+def _usd(v: object) -> str:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "n/a"
+    return "0" if abs(float(v)) < 0.5 else f"{float(v):+,.0f}"
+
+
+def expectations(console: Console, r: AnalysisResult) -> None:
+    """Backtest de la regla por nombre, del plan completo y de la canasta."""
+    tp = r.trade_plan
+    plan, p = tp["plan"], tp["params"]
+    cols = ["bt_trades", "bt_win_rate", "bt_exp_r", "bt_profit_factor", "bt_avg_days", "exp_return_pct", "exp_pnl"]
+    if all(c in plan.columns for c in cols):
+        if "bt_t_stat" in plan.columns:
+            cols = cols[:3] + ["bt_t_stat"] + cols[3:]
+        # Parentesis y no corchetes: `rich` lee "[ret]" como estilo y se lo come.
+        bt = plan[cols].rename(columns={"bt_trades": "n", "bt_win_rate": "win", "bt_exp_r": "E(R)",
+                                        "bt_t_stat": "t", "bt_profit_factor": "PF", "bt_avg_days": "days",
+                                        "exp_return_pct": "E(ret)", "exp_pnl": "E($)"})
+        console.print()
+        console.print(table(bt, {"n": lambda v: f"{int(v):,}", "win": lambda v: pct(v, 0), "E(R)": signed,
+                                 "t": lambda v: signed(v, 1), "PF": num, "days": lambda v: num(v, 0),
+                                 "E(ret)": lambda v: signed(v * 100, 1) + "%", "E($)": _usd},
+                            title=f"Rule backtest: these levels opened every day of the last {p.history_d // 252} "
+                                  f"years, {p.horizon_d}-session max, costs in", index_name="Ticker"))
+        console.print("E(R): average result per trade in multiples of the risk at the stop. t: E(R) over its "
+                      "Newey-West standard error (entries overlap); |t| < 2 is not distinguishable from zero. "
+                      "E(ret): on the position. E($): on today's size, 0 when nothing is traded. Same-day stop "
+                      "and target counts as stop; a gap through the stop fills at the day's worst price.")
+        traded = tp["orders"].reindex(plan.index)["target"].fillna(0) != 0
+        negative = plan[traded & (plan["bt_exp_r"] < 0)]
+        if len(negative):
+            t_of = plan["bt_t_stat"] if "bt_t_stat" in plan else pd.Series(dtype=float)
+            console.print("[bold]Negative historical expectancy on traded names:[/] "
+                          + ", ".join(f"{t} ({signed(v)}R" + (f", t {signed(t_of[t], 1)}" if t in t_of else "") + ")"
+                                      for t, v in negative["bt_exp_r"].items())
+                          + ". This rule lost money on these stocks in the past: review before entering.")
+    pb = tp.get("plan_backtest")
+    if pb:
+        console.print(f"[bold]Plan expectation:[/] the whole plan opened together on each of {pb['n_dates']} past "
+                      f"days ({pb['first']:%Y-%m-%d} to {pb['last']:%Y-%m-%d}): mean {_usd(pb['mean'])} "
+                      f"({signed(pb['mean_pct'] * 100)}% of capital), 90% of outcomes between {_usd(pb['p05'])} "
+                      f"and {_usd(pb['p95'])}, P(loss) {pct(pb['prob_loss'], 0)}, worst {_usd(pb['worst'])}. "
+                      "Same dates for every name, so the correlation between them is kept."
+                      + (" The beta hedge is not included." if tp.get("hedge") else ""))
+    pf = tp.get("portfolio") or {}
+    if pf.get("cagr") is not None:
+        console.print(f"[bold]Basket as a portfolio[/] ({pf.get('method')}, research directions, Mode A "
+                      f"in-sample): CAGR {pct(pf['cagr'])} vs {pct(pf.get('bench_cagr'))} for "
+                      f"{r.settings.benchmark}, Sharpe {num(pf.get('sharpe'))}, max DD {pct(pf.get('max_drawdown'))}. "
+                      f"Monte Carlo 1 year (neutral drift): median {pct(pf.get('mc_median_return'))}, 5%-95% "
+                      f"{pct(pf.get('mc_p05_return'))} to {pct(pf.get('mc_p95_return'))}, P(loss) "
+                      f"{pct(pf.get('mc_prob_loss'), 0)}, median max DD {pct(pf.get('mc_median_max_dd'))}.")
+    console.print("All of this is a historical base rate: it carries each stock's past trend and knows "
+                  "nothing about what comes next.")
 
 
 def summary(console: Console, r: AnalysisResult, show_warnings: bool = True) -> None:
@@ -502,7 +642,8 @@ def summary(console: Console, r: AnalysisResult, show_warnings: bool = True) -> 
     ex = r.primary.get("ex_ante", {})
     counts = r.agreement["agreement"].value_counts().to_dict()
     lines = [
-        f"- The {r.primary['method']} LONG/SHORT portfolio has an ex-ante beta of {signed(ex.get('beta'))}, "
+        f"- The {r.primary['method']} {'LONG/SHORT' if r.shorts else 'long-only'} portfolio has an ex-ante "
+        f"beta of {signed(ex.get('beta'))}, "
         f"net exposure {signed(ex.get('net'))} and ex-ante annualized volatility of {pct(ex.get('vol_annual'))}.",
         f"- On the hypothetical path (Mode A) its Sharpe was {num(sm.get('sharpe'))} with max drawdown "
         f"{pct(sm.get('max_drawdown'))}; the basket selection is in-sample.",
@@ -551,17 +692,24 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
     console.print("FINAL SIGNAL" + ("  (orders from current positions to the plan)" if tp.get("has_positions")
                                     else "  (no current positions given: orders open the plan from zero)"))
     console.print(LINE)
-    console.print(f"{'Ticker':7}{'Signal':15}{'Qty':>7}  {'Now':>7} -> {'Target':<7}{'Stop':>9}{'TP1':>9}{'TP2':>9}")
+    # Ancho del ticker segun el mas largo: "SHOP.TO" (7) se pegaba a la senal.
+    w = max(7, *(len(str(t)) + 1 for t in orders.index))
+    console.print(f"{'Ticker':{w}}{'Signal':15}{'Qty':>7}  {'Now':>7} -> {'Target':<7}{'Stop':>9}{'TP1':>9}{'TP2':>9}")
     fmt = lambda v: "" if v is None or pd.isna(v) else f"{v:,.2f}"  # noqa: E731
     for t, o in orders.iterrows():
         tail = ("   beta hedge" if o["verdict"] == "HEDGE"
                 else "" if o["signal"] == "NOT ANALYZED"
                 else f"{fmt(o.get('stop')):>9}{fmt(o.get('tp1')):>9}{fmt(o.get('tp2')):>9}")
         qty = f"{int(o['qty']):,}" if o["qty"] else "-"
-        console.print(f"{t:7}{o['signal']:15}{qty:>7}  {int(o['current']):>7,} -> {int(o['target']):<7,}{tail}")
+        console.print(f"{t:{w}}{o['signal']:15}{qty:>7}  {int(o['current']):>7,} -> {int(o['target']):<7,}{tail}")
     notes = []
+    if not tp.get("has_book", True):
+        notes.append("No book to size: after the corrections " + ("no LONG is left to trade" if tp.get("long_only")
+                     else "one leg has nothing left to trade") + ", so CONFIRM and REDUCE names get levels but "
+                     "no size.")
     for verdict, text in _NOTES.items():
-        names = list(orders.index[orders["verdict"] == verdict])
+        names = list(orders.index[(orders["verdict"] == verdict)
+                                  & ((orders["target"] != 0) | (verdict not in ("CONFIRM", "REDUCE")))])
         if names:
             notes.append(f"{', '.join(names)}: {text}.")
     reason = orders.get("hold_reason", pd.Series("", index=orders.index)).fillna("")
@@ -578,6 +726,10 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
                      "research either: kept, with levels for the side you hold.")
     for n in notes:
         console.print(f"  {n}")
+    pb = tp.get("plan_backtest")
+    if pb and tp.get("gross"):
+        console.print(f"Expected P&L of the plan (rule backtest): {_usd(tp.get('expected_pnl'))} per trade cycle; "
+                      f"90% range {_usd(pb['p05'])} to {_usd(pb['p95'])}, P(loss) {pct(pb['prob_loss'], 0)}.")
     console.print(f"Orders at market next session. Levels from the {r.clean.close.index[-1]:%Y-%m-%d} close; stop and TP apply to "
                   "the whole resulting position.")
     console.print("Mechanical output of the rules in config/quant_engine.yaml (thresholds, ATR, risk cap). "

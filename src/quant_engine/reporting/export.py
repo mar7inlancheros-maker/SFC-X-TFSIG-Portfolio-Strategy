@@ -76,8 +76,12 @@ def to_json(r: AnalysisResult) -> dict:
         "stress": {k: v for k, v in r.stress.items()},
         "montecarlo": {k: v for k, v in r.montecarlo.items() if k != "bootstrap_terminal"},
         "robustness": {k: v for k, v in r.robustness.items()} if r.robustness else {},
-        "trade_plan": ({k: r.trade_plan.get(k) for k in ("plan", "orders", "hedge", "beta", "gross", "net", "note")}
+        "trade_plan": ({**{k: r.trade_plan.get(k) for k in ("plan", "orders", "hedge", "beta", "gross", "net",
+                                                            "note", "expected_pnl", "portfolio")},
+                        "plan_backtest": {k: v for k, v in (r.trade_plan.get("plan_backtest") or {}).items()
+                                          if k != "pnl"}}
                        if r.trade_plan else None),
+        "score_validation": {k: v for k, v in (getattr(r, "score_validation", None) or {}).items() if k != "ic"},
         "warnings": r.warnings,
         "disclaimer": "Descriptive quantitative analysis. Not investment advice.",
     })

@@ -75,8 +75,14 @@ td.wrapcell { white-space:normal; text-align:left; min-width:220px; }
 .charts figure { margin:0; border:1px solid var(--line); border-radius:8px; padding:8px; }
 .charts img { width:100%; height:auto; display:block; }
 ul { padding-left:20px; } li { margin:3px 0; }
+.sub3 { font-size:15px; margin:22px 0 8px; }
 footer { margin-top:36px; color:var(--muted); font-size:12px; }
-@media print { main { padding:0; } h2 { break-after:avoid; } figure, tr { break-inside:avoid; } }
+@media print {
+  main { padding:0; } h2, h3 { break-after:avoid; } figure, tr, .kpi, .note { break-inside:avoid; }
+  .wrap { overflow:visible; break-inside:avoid; }
+  table { font-size:11px; } th, td { padding:5px 6px; white-space:normal; }
+  td.wrapcell { min-width:0; }
+}
 """
 
 
@@ -104,8 +110,8 @@ def _odds(p: float, breakeven: float) -> str:
 
 
 def _chart(r: AnalysisResult, ticker: str, o: pd.Series) -> str:
-    """Precio de los ultimos 6 meses con entrada, stop y objetivos."""
-    close = r.clean.close[ticker].dropna().iloc[-126:]
+    """Precio de los ultimos 6 meses con entrada, stop y objetivos (moneda local, como los niveles)."""
+    close = r.clean.local_prices(ticker)[0].dropna().iloc[-126:]
     side = 1 if o["target"] > 0 else -1
     color = LONG_COLOR if side > 0 else SHORT_COLOR
     fig, ax = plt.subplots(figsize=(5.2, 2.9))
@@ -131,7 +137,149 @@ def _chart(r: AnalysisResult, ticker: str, o: pd.Series) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _pnl_chart(pnl: pd.Series) -> str:
+    """Histograma del P&L del plan abierto en cada fecha historica."""
+    fig, ax = plt.subplots(figsize=(10, 3.2))
+    ax.hist(pnl.values, bins=40, color=LONG_COLOR, alpha=0.85)
+    ax.axvline(0, color=INK, lw=1)
+    ax.axvline(float(pnl.mean()), color=TP_COLOR, lw=1.5, ls="--", label=f"mean {pnl.mean():+,.0f}")
+    ax.axvline(float(pnl.quantile(0.05)), color=SHORT_COLOR, lw=1, ls=":", label=f"5% {pnl.quantile(0.05):+,.0f}")
+    ax.set_title("Plan P&L if opened on each past day (USD)", fontsize=10, loc="left")
+    ax.legend(fontsize=8, frameon=False)
+    ax.grid(alpha=0.25)
+    ax.tick_params(labelsize=8)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _equity_chart(r: AnalysisResult) -> str | None:
+    """Retorno acumulado de la canasta como cartera frente al benchmark."""
+    bt = (r.primary or {}).get("backtest")
+    if bt is None or len(bt.nav) < 2:
+        return None
+    nav = bt.nav / bt.nav.iloc[0] - 1
+    bench = (1 + r.clean.returns[r.settings.benchmark].reindex(bt.nav.index).fillna(0.0)).cumprod() - 1
+    fig, ax = plt.subplots(figsize=(10, 3.4))
+    ax.plot(nav.index, nav.values * 100, color=LONG_COLOR, lw=1.4, label=f"Basket ({r.primary.get('method')})")
+    ax.plot(bench.index, bench.values * 100, color="#7f7f7f", lw=1.2, label=str(r.settings.benchmark))
+    ax.axhline(0, color=INK, lw=0.6)
+    ax.set_title("Cumulative return, % (Mode A, hypothetical path)", fontsize=10, loc="left")
+    ax.legend(fontsize=8, frameon=False)
+    ax.grid(alpha=0.25)
+    ax.tick_params(labelsize=8)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _tstat(v) -> str:
+    return "" if v is None or pd.isna(v) else f"{v:+.1f}"
+
+
+def _usd(v) -> str:
+    if v is None or pd.isna(v):
+        return ""
+    return "0" if abs(v) < 0.5 else f"{v:+,.0f}"
+
+
+def _ticker(t: str, currency) -> str:
+    """Ticker con su moneda si no cotiza en USD: los niveles van en esa moneda."""
+    ccy = "" if currency in (None, "USD") or pd.isna(currency) else f" <span class='muted'>{escape(str(currency))}</span>"
+    return f"<b>{escape(t)}</b>{ccy}"
+
+
+def _expectations(r: AnalysisResult, tp: dict, plan: pd.DataFrame, p, h2) -> list[str]:
+    out = [h2("What to expect: backtests")]
+    cols = ["bt_trades", "bt_win_rate", "bt_exp_r", "bt_avg_win_r", "bt_avg_loss_r", "bt_profit_factor",
+            "bt_avg_days", "exp_return_pct", "exp_pnl"]
+    if all(c in plan.columns for c in cols):
+        rows = []
+        for t, row in plan.iterrows():
+            pf = row["bt_profit_factor"]
+            rows.append(
+                f"<tr><td class='l'><b>{escape(t)}</b></td><td class='l'>{_badge(row['action'])}</td>"
+                f"<td>{int(row['bt_trades']):,}</td><td>{_pct(row['bt_win_rate'], 0)}</td>"
+                f"<td>{row['bt_exp_r']:+.2f}</td><td>{_tstat(row.get('bt_t_stat'))}</td>"
+                f"<td>{row['bt_avg_win_r']:+.2f}</td><td>{row['bt_avg_loss_r']:+.2f}</td>"
+                f"<td>{'&infin;' if pd.notna(pf) and pf == float('inf') else f'{pf:.2f}'}</td>"
+                f"<td>{row['bt_avg_days']:.0f}</td><td>{row['exp_return_pct'] * 100:+.1f}%</td>"
+                f"<td>{_usd(row['exp_pnl'])}</td></tr>")
+        out.append("<h3 class='sub3'>Each trade: the same rule on this stock's past</h3>")
+        out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th class='l'>Plan</th><th>Trades</th>"
+                   "<th>Win rate</th><th>E[R]</th><th>t</th><th>Avg win</th><th>Avg loss</th><th>Profit factor</th>"
+                   "<th>Avg days</th><th>E[return]</th><th>E[P&amp;L] today</th></tr>" + "".join(rows)
+                   + "</table></div>")
+        out.append(f"<p class='muted'>The plan's levels (stop {p.stop_atr} ATR, TP1 {p.tp_r[0]}R, TP2 {p.tp_r[1]}R, "
+                   f"half out at TP1 and stop to entry) opened on every day of the last {p.history_d // 252} years, "
+                   f"closed after {p.horizon_d} sessions at most, net of transaction costs and, for shorts, borrow. "
+                   "E[R] is the average result in multiples of the risk at the stop; t is E[R] over its "
+                   "Newey-West standard error (daily entries overlap), so |t| below 2 is not distinguishable "
+                   "from zero; E[return] is on the position; "
+                   "E[P&amp;L] applies E[R] to today's size. Conservative fills: a day that touches stop and target "
+                   "counts as stop, and a gap through the stop fills at the day's worst price.</p>")
+        traded = tp["orders"].reindex(plan.index)["target"].fillna(0) != 0
+        negative = plan[traded & (plan["bt_exp_r"] < 0)]
+        if len(negative):
+            out.append("<p class='note warn'><b>Negative historical expectancy on traded names:</b> "
+                       + escape(", ".join(f"{t} ({v:+.2f}R)" for t, v in negative["bt_exp_r"].items()))
+                       + ". This rule lost money on these stocks in the past: review before entering.</p>")
+    pb = tp.get("plan_backtest")
+    if pb:
+        out.append("<h3 class='sub3'>The whole plan, opened together</h3>")
+        kpis = [(_usd(pb["mean"]), f"mean P&amp;L ({pb['mean_pct'] * 100:+.2f}% of capital)"),
+                (_usd(pb["median"]), "median P&amp;L"),
+                (f"{_usd(pb['p05'])} / {_usd(pb['p95'])}", "5th / 95th percentile"),
+                (_pct(pb["prob_loss"], 0), "probability of a loss"),
+                (_usd(pb["worst"]), "worst past outcome")]
+        out.append("<div class='kpis'>" + "".join(
+            f"<div class='kpi'><div class='v'>{v}</div><div class='l'>{l}</div></div>" for v, l in kpis) + "</div>")
+        out.append(f"<div class='charts' style='margin-top:14px'><figure><img alt='Plan P&amp;L distribution' "
+                   f"src='data:image/png;base64,{_pnl_chart(pb['pnl'])}'></figure></div>")
+        out.append(f"<p class='muted'>Today's positions, each managed with its own levels, opened together on each of "
+                   f"{pb['n_dates']} past days ({pb['first']:%Y-%m-%d} to {pb['last']:%Y-%m-%d}). Using the same "
+                   "dates for every name keeps the correlation between them: on a bad day for the market, all the "
+                   "longs suffer together." + (" The beta hedge is not included." if tp.get("hedge") else "")
+                   + "</p>")
+    pf = tp.get("portfolio") or {}
+    if pf.get("cagr") is not None:
+        out.append("<h3 class='sub3'>The basket as a portfolio</h3>")
+        kpis = [(_pct(pf.get("cagr")), f"CAGR &middot; {escape(str(r.settings.benchmark))} {_pct(pf.get('bench_cagr'))}"),
+                (f"{pf.get('sharpe'):.2f}" if pf.get("sharpe") is not None else "n/a", "Sharpe"),
+                (_pct(pf.get("max_drawdown")), "max drawdown"),
+                (_pct(pf.get("mc_median_return")), "Monte Carlo 1y median"),
+                (f"{_pct(pf.get('mc_p05_return'))} / {_pct(pf.get('mc_p95_return'))}", "Monte Carlo 5% / 95%"),
+                (_pct(pf.get("mc_prob_loss"), 0), "Monte Carlo P(loss)")]
+        out.append("<div class='kpis'>" + "".join(
+            f"<div class='kpi'><div class='v'>{v}</div><div class='l'>{l}</div></div>" for v, l in kpis) + "</div>")
+        equity = _equity_chart(r)
+        if equity:
+            out.append(f"<div class='charts' style='margin-top:14px'><figure><img alt='Basket cumulative return' "
+                       f"src='data:image/png;base64,{equity}'></figure></div>")
+        out.append(f"<p class='muted'>{escape(str(pf.get('method')))} portfolio with research's directions over the "
+                   "evaluation window (Mode A): today's basket applied to the past, so the selection is in-sample. "
+                   "The Monte Carlo resamples its daily returns with the historical mean removed (neutral drift): "
+                   "it measures risk, not expected return.</p>")
+    out.append("<p class='note warn'>Every number here is a historical base rate: it carries each stock's past "
+               "trend and knows nothing about what comes next. Use it to compare trades and size risk, not as a "
+               "promise.</p>")
+    return out
+
+
 def build(r: AnalysisResult) -> str:
+    counter = iter(range(1, 20))
+
+    def h2(title: str) -> str:
+        return f"<h2>{next(counter)}. {escape(title)}</h2>"
+
     tp = r.trade_plan
     s = r.settings
     plan, orders, p = tp["plan"], tp["orders"], tp["params"]
@@ -144,7 +292,8 @@ def build(r: AnalysisResult) -> str:
     n_corr = int((plan["verdict"] != "CONFIRM").sum())
 
     out: list[str] = []
-    out.append(f"<h1>Trade Plan</h1><p class='sub'>Long/short research basket &middot; levels from the "
+    kind = "Long-only" if tp.get("long_only") else "Long/short"
+    out.append(f"<h1>Trade Plan</h1><p class='sub'>{kind} research basket &middot; levels from the "
                f"{levels_date:%Y-%m-%d} close</p>")
     out.append("<div class='meta'>"
                f"<span>Research LONG: <b>{escape(' '.join(r.longs))}</b></span>"
@@ -155,6 +304,17 @@ def build(r: AnalysisResult) -> str:
                f"<span>Data: Yahoo prices{' + WRDS (Compustat, IBES, short interest, Fama-French)' if wrds_ok else ''}</span>"
                "</div>")
 
+    if r.excluded:
+        why = {t: (f"only {int(r.quality.loc[t, 'sessions'])} sessions of price history, the analysis needs "
+                   "a year" if r.quality.loc[t, "sessions"] else "no price data")
+               for t in r.excluded if t in r.quality.index}
+        out.append("<p class='note alert'><b>Not analyzed (data quality):</b> "
+                   + escape("; ".join(f"{t}: {why.get(t, 'insufficient data')}" for t in r.excluded))
+                   + ". The rest of the plan is built without it.</p>")
+    if not tp.get("has_book", True):
+        out.append("<p class='note warn'><b>No book to size.</b> After the corrections "
+                   + ("no LONG is left to trade" if tp.get("long_only") else "one leg has nothing left to trade")
+                   + ", so names the data supports get levels but no size.</p>")
     missing = tp.get("wrds_missing")
     if missing:
         out.append(
@@ -173,7 +333,7 @@ def build(r: AnalysisResult) -> str:
         f"<div class='kpi'><div class='v'>{v}</div><div class='l'>{l}</div></div>" for v, l in kpis) + "</div>")
 
     # 1. Ordenes
-    out.append("<h2>1. Orders</h2>")
+    out.append(h2("Orders"))
     if not tp.get("has_positions"):
         out.append("<p class='muted'>No current positions were given: every order opens from zero.</p>")
     rows = []
@@ -181,7 +341,7 @@ def build(r: AnalysisResult) -> str:
         qty = f"{int(o['qty']):,}" if o["qty"] else "&ndash;"
         is_hedge = o.get("verdict") == "HEDGE"
         rows.append(
-            f"<tr><td class='l'><b>{escape(t)}</b></td><td class='l'>{_badge(o['signal'])}</td><td>{qty}</td>"
+            f"<tr><td class='l'>{_ticker(t, o.get('currency'))}</td><td class='l'>{_badge(o['signal'])}</td><td>{qty}</td>"
             f"<td>{int(o['current']):,} &rarr; {int(o['target']):,}</td><td>{_price(o.get('price'))}</td>"
             f"<td>{'' if is_hedge else _price(o.get('stop'))}</td><td>{'' if is_hedge else _price(o.get('tp1'))}</td>"
             f"<td>{'' if is_hedge else _price(o.get('tp2'))}</td>"
@@ -193,7 +353,7 @@ def build(r: AnalysisResult) -> str:
                "position. Take 50% off at TP1 and move the stop to entry; the rest exits at TP2 or at that stop.</p>")
 
     # 2. Correcciones
-    out.append("<h2>2. What the model changed, and why</h2>")
+    out.append(h2("What the model changed, and why"))
     rows = []
     for t, row in plan.iterrows():
         rows.append(
@@ -205,6 +365,20 @@ def build(r: AnalysisResult) -> str:
     out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th class='l'>Research</th>"
                "<th class='l'>Verdict</th><th>Aligned score</th><th class='l'>Pushes for</th>"
                "<th class='l'>Pushes against</th><th class='l'>Meaning</th></tr>" + "".join(rows) + "</table></div>")
+    sv = getattr(r, "score_validation", None) or {}
+    if sv.get("available"):
+        from ..signals.score_validation import evidence  # noqa: PLC0415
+
+        ev = evidence(sv, 2.0)
+        text = {"predictive": "it ranked next-month returns well on this universe",
+                "none": "no evidence that it predicts on this universe: it ranks, it does not forecast",
+                "inverse": "it ranked returns backwards on this universe: treat its verdicts with caution"}[ev]
+        out.append(f"<p class='note{' warn' if ev != 'predictive' else ''}'><b>Does the Quant Score predict?</b> "
+                   f"Recomputed at {sv['months']} past month-ends with the data of each day, against the next "
+                   f"month: IC {sv['ic_mean']:+.3f} (t {sv['ic_t']:+.1f}), {escape(text)}."
+                   + (f" {escape(', '.join(tp['unproven_flips']))}: the score says FLIP, but going against "
+                      "research needs that evidence, so it stays NO TRADE." if tp.get("unproven_flips") else "")
+                   + "</p>")
     out.append(f"<p class='muted'>Aligned score = Quant Score &times; (+1 if research says LONG, &minus;1 if SHORT). "
                f"&ge; {p.weak:+.2f} confirm; between {p.conflict:+.2f} and {p.weak:+.2f} reduce to "
                f"{p.reduce_size:.0%}; up to {p.flip:+.2f} no trade; below {p.flip:+.2f} flip. Drivers are "
@@ -212,11 +386,11 @@ def build(r: AnalysisResult) -> str:
 
     # 3. Niveles y probabilidades
     be1, be2 = 1 / (1 + p.tp_r[0]), 1 / (1 + p.tp_r[1])
-    out.append("<h2>3. Levels, size and historical odds</h2>")
+    out.append(h2("Levels, size and historical odds"))
     rows = []
     for t, row in plan.iterrows():
         rows.append(
-            f"<tr><td class='l'><b>{escape(t)}</b></td><td class='l'>{_badge(row['action'])}</td>"
+            f"<tr><td class='l'>{_ticker(t, row.get('currency'))}</td><td class='l'>{_badge(row['action'])}</td>"
             f"<td>{_price(row['entry'])}</td><td>{_price(row['stop'])}</td><td>{_pct(row['stop_pct'])}</td>"
             f"<td>{_price(row['tp1'])}</td><td>{_price(row['tp2'])}</td><td>{int(row['shares']):,}</td>"
             f"<td>{_money(row['notional'])}</td><td>{row['weight'] * 100:+.1f}%</td>"
@@ -232,16 +406,25 @@ def build(r: AnalysisResult) -> str:
         + (f" (cap binds on {escape(', '.join(capped))})" if capped else "") + ". "
         f"P(TP) = share of past entries in this stock over the last {p.history_d // 252} years that reached the "
         f"target before the stop within {p.horizon_d} sessions. Green if above break-even for that target "
-        f"({be1:.0%} for TP1, {be2:.0%} for TP2), red if below. A historical base rate, not a forecast.</p>")
+        f"({be1:.0%} for TP1, {be2:.0%} for TP2), red if below. A historical base rate, not a forecast."
+        + (" Prices are in each stock's trading currency (shown next to the ticker); notional, weight and "
+           "risk are in USD." if "currency" in plan and plan["currency"].ne("USD").any() else "") + "</p>")
 
-    # 4. Cobertura
-    out.append("<h2>4. Market exposure</h2>")
+    # 4. Expectativas
+    out.extend(_expectations(r, tp, plan, p, h2))
+
+    # 5. Cobertura
+    out.append(h2("Market exposure"))
     if hedge:
         out.append(
             f"<p class='note warn'><b>Beta hedge: {escape(hedge['action'])} {hedge['shares']:,} "
             f"{escape(hedge['ticker'])}</b> at {_price(hedge['price'])} (notional {_money(hedge['notional'])}). "
             f"Book beta {hedge['beta_before']:+.2f} &rarr; {hedge['beta_after']:+.2f}. The corrections and risk caps "
             "changed the book the optimizer built; without the hedge it would carry market exposure nobody chose.</p>")
+    elif tp.get("long_only"):
+        out.append(f"<p class='note'>Long-only basket: market beta ({tp['beta']:+.2f}) is the intended "
+                   "exposure, so there is no beta hedge.</p>" if tp.get("gross") else
+                   "<p class='note'>Long-only basket: nothing to trade, so nothing to hedge.</p>")
     elif not p.hedge_beta:
         # Sin cobertura por configuracion, la beta se queda: decirlo, no
         # presentarlo como "dentro del umbral".
@@ -258,20 +441,20 @@ def build(r: AnalysisResult) -> str:
         out.append(f"<p class='note warn'>Positions outside the ticker list ({escape(', '.join(outside))}) are "
                    "left as they are and are not part of the beta hedge: their market exposure is on top of "
                    "the beta above.</p>")
-    if tp.get("note"):
+    if tp.get("note") and tp.get("has_book", True):
         out.append(f"<p class='note warn'>{escape(tp['note'])}</p>")
 
     # 5. Graficos
     live = orders[(orders["target"] != 0) & orders["stop"].notna()] if "stop" in orders else orders.iloc[0:0]
     if len(live):
-        out.append("<h2>5. Price and levels, last six months</h2><div class='charts'>")
+        out.append(h2("Price and levels, last six months") + "<div class='charts'>")
         for t, o in live.iterrows():
             out.append(f"<figure><img alt='{escape(t)} levels' src='data:image/png;base64,{_chart(r, t, o)}'>"
                        "</figure>")
         out.append("</div>")
 
     # 6. Limites
-    out.append("<h2>6. Read before executing</h2><ul>"
+    out.append(h2("Read before executing") + "<ul>"
                "<li>Entry is the last close. A gap at the open moves the entry and R; recompute size if it is large.</li>"
                "<li>A stop is not guaranteed: an earnings gap jumps it. Check earnings dates before opening.</li>"
                f"<li>{_pct(tp.get('risk_at_stops'), 1)} is the loss if every stop hits. In a market crash "

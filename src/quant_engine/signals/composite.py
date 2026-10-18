@@ -64,12 +64,39 @@ FEATURE_MATRIX_COLUMNS = {
 }
 
 
-def zscore(series: pd.Series) -> pd.Series:
+# Tope de los z-scores. Contra los pares de referencia (canastas solo LONG o
+# pequenas) un valor extremo llega a +-7: AMC daba -5,7 en volatilidad y un
+# componente del 5% pesaba como uno del 15%. Con +-3 cada componente pesa lo que
+# dice el YAML. En una canasta de 10 nombres el z maximo posible es 2,85, asi
+# que el tope no cambia nada ahi.
+Z_CAP = 3.0
+
+# Winsorizacion de la seccion cruzada antes del z-score. Un solo valor extremo
+# infla la desviacion y aplasta a todos los demas hacia cero: el flujo libre de
+# GOLD (104,6% del precio, efecto del capital circulante de un comerciante de
+# metales) decidia solo el rendimiento de caja de 54 nombres. Se recorta al
+# percentil 5-95, solo con 20 nombres o mas: con menos, los
+# percentiles extremos son el propio maximo y el recorte no significa nada.
+WINSOR_PCT = 0.05
+WINSOR_MIN_N = 20
+
+
+def winsorize(series: pd.Series, pct: float = WINSOR_PCT, min_n: int = WINSOR_MIN_N) -> pd.Series:
     s = pd.to_numeric(series, errors="coerce")
+    if s.notna().sum() < min_n:
+        return s
+    lo, hi = s.quantile(pct), s.quantile(1 - pct)
+    # Si casi todos valen lo mismo, los percentiles coinciden y el recorte
+    # borraria la unica diferencia: se deja al tope de +-3 del z-score.
+    return s.clip(lo, hi) if lo < hi else s
+
+
+def zscore(series: pd.Series) -> pd.Series:
+    s = winsorize(series)
     std = s.std(ddof=1)
     if s.notna().sum() < 3 or not std or np.isnan(std):
         return pd.Series(np.nan, index=s.index)
-    return (s - s.mean()) / std
+    return ((s - s.mean()) / std).clip(-Z_CAP, Z_CAP)
 
 
 def component_scores(features: pd.DataFrame) -> pd.DataFrame:

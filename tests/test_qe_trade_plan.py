@@ -175,3 +175,83 @@ def test_sin_cartera_no_se_liquida_lo_que_el_modelo_apoya():
     assert tp.planned_without_book("FLIP", 1, 300) == 0
     assert tp.planned_without_book("NO TRADE", -1, -400) == 0
     assert tp.planned_without_book("CONFIRM", 1, 0) == 0         # sin tamano no se abre
+
+
+def test_en_solo_long_un_flip_no_abre_un_corto():
+    signs = pd.Series({"A": 1.0, "B": -1.0, "C": 0.0})      # B: FLIP de un LONG
+    verdicts = pd.Series({"A": "CONFIRM", "B": "FLIP", "C": "NO TRADE"})
+    s2, v2, flipped = tp.long_only_signs(signs, verdicts)
+    assert flipped == ["B"]
+    assert s2.to_dict() == {"A": 1.0, "B": 0.0, "C": 0.0}
+    assert v2.to_dict() == {"A": "CONFIRM", "B": "NO TRADE", "C": "NO TRADE"}
+    assert verdicts["B"] == "FLIP"                           # no muta la entrada
+
+
+# ---------------------------------------------------------------------------
+#  Backtest de la regla: una entrada (i = 1), R = 2,5 x ATR 1 = 2,5
+#  stop 97,5 · TP1 103,75 · TP2 107,5 para un largo desde 100
+# ---------------------------------------------------------------------------
+
+P1 = tp.PlanParams(horizon_d=5, history_d=1)
+
+
+def _sim(closes, side=1, spread=0.2, **kw):
+    idx = pd.bdate_range("2026-01-01", periods=len(closes))
+    c = pd.Series(closes, index=idx, dtype=float)
+    out = tp.simulate_trades(c, c + spread, c - spread, pd.Series(1.0, index=idx), side, P1, **kw)
+    assert len(out) == 1
+    return out.iloc[0]
+
+
+def test_regla_tp1_y_luego_vuelve_a_la_entrada_deja_media_ganancia():
+    t = _sim([100, 100, 101, 104, 102, 99.9, 99])
+    assert t["exit"] == "tp1_be" and t["r_mult"] == pytest.approx(0.75)
+
+
+def test_regla_tp1_y_tp2_da_2_25_r():
+    t = _sim([100, 100, 104, 108, 108, 108, 108])
+    assert t["exit"] == "tp1_tp2" and t["r_mult"] == pytest.approx(2.25)
+
+
+def test_regla_un_gap_que_salta_el_stop_se_cobra_al_peor_precio():
+    t = _sim([100, 100, 95, 95, 95, 95, 95])
+    # Todo el dia por debajo del stop (97,5): la salida es el maximo, 95,2.
+    assert t["exit"] == "stop" and t["r_mult"] == pytest.approx((95.2 - 100) / 2.5)
+
+
+def test_regla_sin_tocar_nada_sale_por_tiempo():
+    t = _sim([100, 100, 100.5, 99.5, 100.2, 100.1, 101])
+    assert t["exit"] == "time" and t["r_mult"] == pytest.approx(1 / 2.5)
+
+
+def test_regla_en_corto_es_el_espejo():
+    t = _sim([100, 100, 96, 92, 92, 92, 92], side=-1)
+    assert t["exit"] == "tp1_tp2" and t["r_mult"] == pytest.approx(2.25)
+
+
+def test_regla_descuenta_costes_y_prestamo():
+    base = _sim([100, 100, 104, 108, 108, 108, 108])["r_mult"]
+    con_costes = _sim([100, 100, 104, 108, 108, 108, 108], cost=0.001)["r_mult"]
+    assert base - con_costes == pytest.approx(2 * 0.001 * 100 / 2.5)
+    corto = _sim([100, 100, 100.2, 99.9, 100.1, 100, 100], side=-1, borrow=0.0252)["r_mult"]
+    assert corto == pytest.approx(0.0 - 0.0252 * 5 / 252 * 100 / 2.5)
+
+
+def test_estadisticas_de_la_regla():
+    trades = pd.DataFrame({"r_mult": [2.0, -1.0, -1.0, 0.5], "exit": ["tp1_tp2", "stop", "stop", "tp1_be"],
+                           "days": [10, 3, 5, 20]})
+    st = tp.trade_stats(trades)
+    assert st["win_rate"] == 0.5 and st["exp_r"] == pytest.approx(0.125)
+    assert st["profit_factor"] == pytest.approx(2.5 / 2.0) and st["avg_days"] == pytest.approx(9.5)
+    assert st["share_stop"] == 0.5
+
+
+def test_backtest_del_plan_usa_las_mismas_fechas_para_todos():
+    idx = pd.bdate_range("2026-01-01", periods=3)
+    a = pd.DataFrame({"r_mult": [1.0, -1.0, 2.0], "exit": "x", "days": 1}, index=idx)
+    b = pd.DataFrame({"r_mult": [-1.0, -1.0], "exit": "x", "days": 1}, index=idx[:2])
+    out = tp.plan_backtest({"A": a, "B": b, "C": a}, {"A": 100.0, "B": 50.0, "C": 0.0}, capital=10_000)
+    # Solo las 2 fechas comunes a los nombres con posicion (C no tiene: no cuenta).
+    assert out["n_dates"] == 2
+    assert list(out["pnl"]) == [100 - 50, -100 - 50]
+    assert out["prob_loss"] == 0.5 and out["mean_pct"] == pytest.approx(-50 / 10_000)

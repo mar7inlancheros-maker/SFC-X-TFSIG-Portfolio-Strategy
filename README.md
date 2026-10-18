@@ -327,6 +327,93 @@ contradice) y la mantiene si va en contra (el dato tampoco respalda a
 research). Una posición en el benchmark se trata como la cobertura. Las
 órdenes se guardan en `orders_<fecha>.csv`.
 
+**Qué esperar: el backtest de cada trade y del plan.** El plan ya no da solo
+niveles. Para cada nombre simula la regla exacta —entrada al cierre, stop a
+2,5 ATR, mitad en TP1 con el stop a la entrada, resto en TP2 o a las 63
+sesiones— abierta cada día de los últimos 3 años, neta de costes y, en cortos,
+de préstamo. Da aciertos, E(R) (resultado medio en múltiplos del riesgo),
+profit factor, días medios y el P&L esperado con el tamaño de hoy. Luego abre el
+plan completo en cada fecha histórica a la vez (mismas fechas para todos los
+nombres, para conservar su correlación) y da la media, el rango del 90%, la
+probabilidad de perder y el peor caso. Avisa si se opera un nombre con
+expectativa histórica negativa, y suma el backtest de la canasta como cartera y
+su Monte Carlo. Supuestos conservadores: si un día toca stop y objetivo cuenta
+como stop, y un gap que salta el stop se cobra al peor precio del día. Es una
+tasa base histórica, no un pronóstico. Cada E(R) lleva su **t de Newey-West**:
+las entradas de días seguidos comparten casi todo el camino, así que 756
+entradas son unas pocas decenas de operaciones independientes. Con |t| < 2 la
+expectativa no se distingue de cero.
+
+**¿Predice el Quant Score? Se valida en cada corrida.** Los veredictos se
+apoyan en el Quant Score, así que el motor lo pone a prueba. Recalcula el mismo
+score en cada uno de los últimos 36 fines de mes, con los datos que había ese
+día: precios hasta esa fecha y trimestres de Compustat ya publicados. Luego
+mide si ordenaba bien el retorno del mes siguiente (IC de rangos, con su t de
+Newey-West, el mismo cálculo del modelo multifactor). El universo es la canasta
+más los 50 pares de referencia; con 5 nombres un IC mensual es ruido. Da el IC
+del score y el de cada componente. Con WRDS entran todos los componentes:
+valor y calidad con los trimestres ya publicados, analistas con los resúmenes
+mensuales de IBES hasta esa fecha, e interés en corto con 14 días de retraso
+de publicación. Sin WRDS solo se validan los de precio, y el reporte dice
+cuáles faltan. Se mide también a 63 sesiones, el horizonte del plan; ahí las
+ventanas se solapan y la t es de Newey-West. Los pares son las grandes de hoy:
+el sesgo de supervivencia hace la prueba optimista. La primera corrida, en
+octubre de 2026 y sin WRDS, dio IC −0,004 (t −0,1) a un mes y +0,014 (t +0,4)
+a 63 sesiones: sin evidencia de que el score de precio prediga en ese
+universo. Ningún componente llegó a |t| = 2. Los pesos del YAML no se
+reajustan con este resultado: elegir pesos con la misma muestra que los
+evalúa es sobreajustar.
+
+**Ir contra research exige esa evidencia.** Un FLIP solo se opera si la t del
+IC llega a `trade_plan.flip_min_ic_t` (2 por defecto). Si no, queda NO TRADE:
+el dato no respalda a research, pero tampoco hay base para apostar en contra.
+El plan lo dice nombre por nombre. Con `validation.enabled: false` no hay
+validación y el FLIP vuelve a operarse.
+
+**Valores extremos.** Antes de cada z-score, la sección cruzada se recorta al
+percentil 5–95 si hay 20 nombres o más. Un solo valor extremo, como el flujo
+libre de GOLD (104,6% del precio, por el capital circulante de un comerciante
+de metales), inflaba la desviación y aplastaba a los demás nombres hacia cero.
+
+**Yahoo a veces corta.** En lotes grandes yfinance da por "sin datos" a
+empresas vivas: el 17 de octubre faltaron 16 de los 50 pares. Lo que falta se
+reintenta en lotes de 25. Si aun así falla y hay caché de días anteriores, se
+usa y se avisa con la fecha del último precio.
+
+**Nombres de fuera de EE.UU.** El motor convierte a USD todo lo que cotiza en
+otra moneda (`ATZ.TO` en CAD, `VOD.L` en peniques), con el tipo de cambio de
+cada día de Yahoo (`CADUSD=X`). Retornos, beta frente a SPY, correlaciones,
+liquidez, backtests y tamaños quedan en dólares. Entrada, stop y objetivos se
+dan en la moneda en que cotiza el nombre, que es donde se ponen las órdenes.
+Las acciones salen de dividir el nocional en USD por el precio convertido; sin
+la conversión, un nombre canadiense salía un 30% más pequeño, y uno de
+Londres, que cotiza en peniques, unas 76 veces más pequeño. La moneda se
+deduce del sufijo de bolsa (`loader.QUOTE_CURRENCY`); un sufijo que no está
+ahí se avisa y no se convierte. Para Compustat, `ATZ.TO` se busca como `ATZ.`
+y `TECK-B.TO` como `TECK.B`, que es como Compustat guarda los listados de
+Toronto. IBES se toma de una emisión hermana si la de Toronto no tiene
+identificador, y las estimaciones se leen también del fichero internacional.
+Los ratios de valor usan el precio en la moneda en que reporta la empresa.
+Antes, ningún nombre canadiense tenía fundamentales ni analistas: se puntuaba
+solo por precio.
+
+**Canastas solo LONG.** Si todos los tickers van LONG (o con
+`python main.py research --long ARES,AMC` sin `--short`), el motor trabaja en
+modo solo LONG:
+
+- la pata larga invierte el 100% del capital (no el 200% bruto del long/short);
+- el Quant Score se calcula contra un **universo de referencia** de 50 acciones
+  grandes y líquidas de los 11 sectores (`scoring.reference_peers` en el YAML).
+  Dentro de una canasta de dos nombres no hay sección cruzada, y dentro de una
+  canasta solo LONG la mitad quedaría "en contra" por construcción, porque los
+  z-scores suman cero. Lo mismo se aplica a cualquier canasta de menos de 5
+  nombres. Los pares solo puntúan: nunca se operan ni salen en las tablas;
+- un FLIP no abre un corto: queda NO TRADE;
+- no hay cobertura de beta: en una cartera solo LONG la beta de mercado es la
+  exposición buscada;
+- las secciones que necesitan una pata corta (largos frente a cortos, beta y
+  sector neutral) lo dicen y se saltan.
+
 **Cómo se entrega.** En pantalla sale solo lo que hay que leer para operar:
 cabecera, resumen de 6 líneas, sección 14 y la señal final (~120 líneas). Las
 trece secciones de análisis van a disco y al menú `[5]`. Además, cada corrida

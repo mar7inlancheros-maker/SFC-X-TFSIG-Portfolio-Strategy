@@ -255,3 +255,25 @@ def test_normal_neutral_rinde_rf_sobre_el_capital_no_bruta_por_rf():
                                          drift=daily_rf(0.04))
     out = montecarlo.summarize(paths, [0.1])
     assert out["expected_terminal_wealth"] == pytest.approx(1.04, abs=0.002)
+
+
+def test_canasta_solo_long_se_opera_y_gana_con_su_largo():
+    """Antes el motor exigia cortos en cada rebalanceo y la canasta solo LONG nunca compraba."""
+    r = _flat()
+    start = r.index[80]
+    jump_day = r.index[r.index > start + pd.Timedelta(days=40)][0]
+    r.loc[jump_day, "A"] = 0.10
+    cfg = _cfg(params=ConstructionParams(gross=1.0, net=1.0, max_position=1.0))
+    res = bt.run(r, "BENCH", bt.constant_schedule(pd.Series({"A": 1.0, "B": 1.0})), cfg,
+                 start=start, mode="A")
+    before = res.nav.loc[:jump_day].iloc[-2]
+    # 50% en A, que sube un 10%: la cartera gana un 5%.
+    assert res.nav.loc[jump_day] / before - 1 == pytest.approx(0.05, rel=1e-6)
+    assert not any("sin largos" in w for w in res.warnings)
+
+
+def test_un_long_short_sin_cortos_no_se_opera():
+    r = _flat()
+    res = bt.run(r, "BENCH", bt.constant_schedule(pd.Series({"A": 1.0, "B": 1.0})), _cfg(),
+                 start=r.index[80], mode="A")
+    assert any("sin largos y cortos a la vez" in w for w in res.warnings)

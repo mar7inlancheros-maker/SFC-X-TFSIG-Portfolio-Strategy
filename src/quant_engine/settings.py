@@ -21,6 +21,11 @@ from sfc_tfsig.paths import CONFIG_DIR, ROOT
 DEFAULT_YAML = CONFIG_DIR / "quant_engine.yaml"
 
 CONSTRUCTIONS = ("equal_weight", "inverse_vol", "risk_parity", "min_variance", "max_sharpe")
+
+# Una canasta solo LONG invierte el 100% del capital en la pata larga. No se
+# toma `gross_exposure` del YAML: ese 200% es la suma de las dos patas de un
+# libro long/short, y aplicado a una sola pata seria apalancamiento 2x.
+LONG_ONLY_GROSS = 1.0
 REBALANCES = ("monthly", "quarterly")
 LOOKBACK_YEARS = {"1y": 1, "2y": 2, "3y": 3, "5y": 5, "10y": 10}
 
@@ -50,6 +55,18 @@ class EngineSettings:
     @property
     def tickers(self) -> tuple[str, ...]:
         return self.longs + self.shorts
+
+    @property
+    def long_only(self) -> bool:
+        """Canasta sin SHORT: research solo propone compras."""
+        return not self.shorts
+
+    @property
+    def exposure(self) -> tuple[float, float]:
+        """(bruta, neta) objetivo. Solo LONG: 100% largo; long/short: la del YAML."""
+        if self.long_only:
+            return LONG_ONLY_GROSS, LONG_ONLY_GROSS
+        return float(self.get("portfolio.gross_exposure", 2.0)), float(self.get("portfolio.net_exposure", 0.0))
 
     @property
     def lookback_years(self) -> int:
@@ -128,8 +145,8 @@ def load_yaml(path: Path | None = None) -> dict[str, Any]:
 
 
 def validate(s: EngineSettings) -> None:
-    if not s.longs or not s.shorts:
-        raise SettingsError("hace falta al menos un ticker LONG y uno SHORT")
+    if not s.longs:
+        raise SettingsError("hace falta al menos un ticker LONG (sin SHORT, la canasta es solo LONG)")
     overlap = set(s.longs) & set(s.shorts)
     if overlap:
         raise SettingsError(f"tickers en LONG y SHORT a la vez: {sorted(overlap)}")
@@ -150,16 +167,23 @@ def validate(s: EngineSettings) -> None:
     if not 0 <= s.borrow_cost < 0.5:
         raise SettingsError("coste de prestamo fuera de rango: revisa las unidades (0.0025 = 0.25%)")
 
-    gross = float(s.get("portfolio.gross_exposure", 2.0))
     cap = float(s.get("portfolio.max_position", 0.2))
-    # Con signos fijados, cada lado necesita sitio para su mitad de la bruta.
-    for side, names in (("LONG", s.longs), ("SHORT", s.shorts)):
-        if len(names) * cap < gross / 2 - 1e-9:
+    # Con signos fijados, cada lado necesita sitio para su pata: la mitad de la
+    # bruta en un long/short, el 100% en una canasta solo LONG.
+    for side, names, leg in _legs(s):
+        if len(names) * cap < leg - 1e-9:
             raise SettingsError(
                 f"{side}: {len(names)} nombres x tope {cap:.0%} = {len(names) * cap:.0%} "
-                f"no alcanza para la mitad de la exposicion bruta ({gross / 2:.0%}). "
+                f"no alcanza para la pata ({leg:.0%}). "
                 "Sube portfolio.max_position en el YAML o anade nombres."
             )
+
+
+def _legs(s: EngineSettings) -> list[tuple[str, tuple[str, ...], float]]:
+    gross, net = s.exposure
+    if s.long_only:
+        return [("LONG", s.longs, gross)]
+    return [("LONG", s.longs, (gross + net) / 2), ("SHORT", s.shorts, (gross - net) / 2)]
 
 
 def default_values(yaml_path: Path | None = None) -> dict[str, Any]:
@@ -204,9 +228,11 @@ def build_settings(
     port = dict(raw.get("portfolio", {}) or {})
     gross = float(port.get("gross_exposure", 2.0))
     cap = float(port.get("max_position", 0.2))
-    fewest = min(len(longs_t), len(shorts_t)) if longs_t and shorts_t else 0
-    if fewest and fewest * cap < gross / 2 - 1e-9:
-        needed = gross / 2 / fewest
+    # Solo LONG: una pata que invierte el 100%; long/short: cada pata, la mitad.
+    fewest = min(len(longs_t), len(shorts_t)) if shorts_t else len(longs_t)
+    leg = gross / 2 if shorts_t else LONG_ONLY_GROSS
+    if fewest and fewest * cap < leg - 1e-9:
+        needed = leg / fewest
         raw = {**raw, "portfolio": {**port, "max_position": needed},
                "_notes": [*raw.get("_notes", []),
                           f"tope por nombre subido de {cap:.0%} a {needed:.0%}: solo {fewest} "

@@ -103,12 +103,13 @@ def ask_settings(previous: EngineSettings | None = None) -> EngineSettings:
         try:
             prev_all = ",".join(previous.longs + previous.shorts) if previous else None
             tickers = parse_tickers(_ask("Digite los tickers, separados por coma", prev_all))
-            if len(tickers) < 2:
-                raise SettingsError("hacen falta al menos 2 tickers: uno LONG y uno SHORT")
+            if not tickers:
+                raise SettingsError("hace falta al menos 1 ticker")
             half = (len(tickers) + 1) // 2
-            print(f"  (Enter = los primeros {half} LONG: {','.join(tickers[:half])})")
+            print(f"  (Enter = los primeros {half} LONG: {','.join(tickers[:half])}. "
+                  "Todos LONG = canasta solo LONG)")
             longs, shorts = split_long_short(tickers, _ask("Cuales van LONG? El resto queda SHORT", ""))
-            print(f"  LONG:  {' '.join(longs)}\n  SHORT: {' '.join(shorts)}")
+            print(f"  LONG:  {' '.join(longs)}\n  SHORT: {' '.join(shorts) if shorts else '(ninguno: solo LONG)'}")
             print("  (TICKER:ACCIONES, negativo = corto. Ej: AAPL:500,TSLA:-200. Enter = ninguna)")
             prev_pos = format_positions(previous.positions) if previous else ""
             positions = parse_positions(_ask("Posiciones actuales", prev_pos))
@@ -282,7 +283,7 @@ def run_once(args) -> int:
 def add_parser(sub) -> None:
     p = sub.add_parser("research", help="motor long/short sobre listas de research (sin preguntas)")
     p.add_argument("--long", required=True, help="tickers LONG separados por comas")
-    p.add_argument("--short", required=True, help="tickers SHORT separados por comas")
+    p.add_argument("--short", default="", help="tickers SHORT separados por comas; sin ellos, canasta solo LONG")
     p.add_argument("--benchmark")
     p.add_argument("--lookback", choices=list(LOOKBACK_YEARS))
     p.add_argument("--rebalance", choices=list(REBALANCES))

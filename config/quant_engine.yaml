@@ -104,6 +104,18 @@ robustness:
   constructions: [equal_weight, inverse_vol, risk_parity, min_variance]
   signal_weight_draws: 500
 
+# Validacion del Quant Score: el mismo score recalculado en cada fin de mes
+# pasado, con los datos de ese dia, contra el retorno del mes siguiente (IC de
+# rangos). Universo: canasta + scoring.reference_peers, para tener seccion
+# cruzada. Analistas e interes corto no tienen historia descargada: quedan
+# fuera del score validado y el reporte lo dice. Cuesta ~1 s por mes.
+validation:
+  enabled: true
+  months: 36                 # fines de mes evaluados (los mas recientes)
+  horizon_d: 21              # retorno futuro de un mes: fechas mensuales sin solape
+  plan_horizon_d: 63         # y al horizonte del plan (solapado, t de Newey-West); 0 lo apaga
+  min_names: 20              # nombres minimos con dato en una fecha para contarla
+
 output:
   directory: output/quant_engine
   charts: true
@@ -120,3 +132,26 @@ trade_plan:
   hedge_beta: true           # cubrir con el benchmark la beta que dejan correcciones y recortes
   hedge_threshold: 0.05      # |beta| del libro por debajo de esto: no se cubre
   hold_band: 0.005           # mismo lado y ajuste menor a 0,5% del capital: HOLD
+  # Ir CONTRA research (FLIP) exige que el score haya predicho en este universo:
+  # t del IC de la validacion >= este valor. Si no, el FLIP queda NO TRADE.
+  # 0 lo desactiva.
+  flip_min_ic_t: 2.0
+
+# Universo de referencia del Quant Score. Se usa cuando la canasta es solo LONG
+# o tiene menos de min_cross_section nombres: dentro de una canasta asi no hay
+# seccion cruzada que comparar. 50 acciones grandes y liquidas de los 11
+# sectores; solo puntuan, nunca entran en la cartera. Sesgo declarado: son
+# large caps, asi que una small cap sale con liquidez y tamano en contra.
+scoring:
+  min_cross_section: 5
+  reference_peers: [AAPL, MSFT, NVDA, AVGO, ORCL, CSCO,
+                    GOOGL, META, NFLX, DIS,
+                    AMZN, HD, MCD, LOW, TJX,
+                    PG, KO, PEP, WMT, COST,
+                    UNH, JNJ, LLY, MRK, ABT,
+                    JPM, BAC, GS, MS, BLK, V, MA,
+                    CAT, HON, UNP, GE, RTX, DE,
+                    XOM, CVX, COP,
+                    NEE, DUK, SO,
+                    LIN, SHW, APD,
+                    PLD, AMT, EQIX]

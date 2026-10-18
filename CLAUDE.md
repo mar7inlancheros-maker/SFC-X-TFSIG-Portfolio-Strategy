@@ -340,8 +340,78 @@ Trampas:
   el plan teórico. Si no, se cubre un libro que no es el que queda.
 - **Una posición en el benchmark es la cobertura.** Si la beta no necesita
   cobertura, el plan la cierra. Con `hedge_beta: false` pasa a NOT ANALYZED.
+- **Una canasta solo LONG se puntúa contra pares de referencia.** Los z-scores
+  del Quant Score son de sección cruzada: con dos nombres salen vacíos y con
+  todos LONG la mitad queda en contra por construcción. `analysis.reference_peers`
+  añade `scoring.reference_peers` del YAML cuando la canasta es solo LONG o
+  tiene menos de `scoring.min_cross_section` nombres. Los pares entran en
+  features, WRDS y scores, y se recortan antes de cualquier tabla
+  (`_restrict`, `scores.loc[tickers]`). Si un par aparece en el reporte o en el
+  plan, se rompió ese recorte.
+- **Solo LONG = 100% largo, sin cobertura de beta y sin cortos.** `settings.exposure`
+  da (1, 1) y no la bruta del YAML (200% en una pata sería apalancamiento 2x).
+  `trade_plan.long_only_signs` convierte un FLIP en NO TRADE, y `beta_hedge` no
+  se aplica: la beta de mercado es la exposición buscada.
+- **`simulate_trades` es la regla del plan, no una aproximación.** Si cambian
+  `stop_atr`, `take_profit_r`, la salida parcial o el break-even en el plan,
+  tienen que cambiar igual ahí, o las expectativas medirán otra estrategia.
+  `plan_backtest` alinea las MISMAS fechas para todos los nombres a propósito:
+  sumar distribuciones independientes borraba la correlación y subestimaba la
+  cola. En `rich`, los encabezados van con paréntesis (`E(R)`): con corchetes,
+  "[ret]" se lee como estilo y desaparece.
 - **En `trade_plan.hit_rate`, un día que toca stop y TP cuenta como stop.** Sin
   datos intradía no se sabe el orden; suponer el TP inflaría la tasa base.
+- **`clean.close/high/low` van en USD; los niveles, en moneda local.**
+  `cleaning.align` convierte con el tipo de cambio del día (`fx`), así que
+  retornos, beta, liquidez y backtests son los de un inversor en dólares. Para
+  entrada, stop, objetivos y gráficos de niveles se usa `clean.local_prices(t)`.
+  En `trade_plan`, todo lo que es dinero (acciones, nocional, riesgo, P&L,
+  banda de HOLD) multiplica por `plan["fx"]`. Dividir USD entre un precio en CAD
+  compraba un 30% de menos (en Londres, que cotiza en peniques, ~76 veces
+  menos). Un sufijo de bolsa nuevo va en
+  `loader.QUOTE_CURRENCY`; sin él, el nombre no se convierte y se avisa.
+- **Compustat no conoce los tickers de Yahoo de Toronto.** `ATZ.TO` es `ATZ.`
+  y `TECK-B.TO` es `TECK.B` (`wrds_data.compustat_ticker`). El listado de
+  Toronto suele no tener `ibtic`: `match_securities` lo toma de una emisión
+  hermana de la misma empresa. Las EPS salen de `statsum_epsus` UNION
+  `statsum_epsint`. El interés corto de Compustat es solo de EE.UU.: un nombre
+  canadiense queda sin él y el componente se renormaliza.
+- **Los ratios de valor usan el precio en la moneda en que reporta la
+  empresa** (`curcdq`, `wrds_data.price_in_currency`). Shopify cotiza en CAD en
+  Toronto y reporta en USD; Aritzia, en CAD las dos cosas. Mezclar monedas
+  movía el rendimiento por beneficio un 30-40%, sin error.
+- **La validación del Quant Score usa las MISMAS funciones que el análisis**
+  (`analysis.features_at` llama a `_per_asset`, `_features` y `ttm_panel` con
+  `slice_clean(clean, d)`). Si cambia una característica del score, cambia
+  también en la validación sin tocar nada. No escribir una versión "rápida"
+  aparte: validaría otro score. Hay un test que triplica los precios
+  posteriores a `d` y exige que las características de `d` no cambien, y otro
+  que mete un trimestre publicado después de `d` y exige que no cuente.
+  Analistas (`analyst_panel`) e interés en corto (`short_interest_at`) son las
+  mismas funciones de hoy con `as_of = d`. El interés en corto histórico lleva
+  `SHORT_INTEREST_LAG_DAYS` (14): la fecha de liquidación no es la de
+  publicación. Hoy va sin retraso, porque lo que está en WRDS ya se publicó.
+- **No reajustar `signal_weights` con el IC de la validación.** Son 36 meses
+  de un universo: elegir pesos con la muestra que los evalúa es sobreajuste, y
+  la siguiente validación saldría buena por construcción.
+- **Un FLIP pasa por `trade_plan.flip_allowed`.** Sin evidencia de que el score
+  predice (t del IC < `flip_min_ic_t`), el FLIP queda NO TRADE y `score_verdict`
+  guarda lo que dijo el score. Validación apagada (`{}`) respeta la decisión;
+  validación sin datos (`available: False`) cuenta como sin evidencia. No bajar
+  el umbral para que salgan FLIPs: en octubre de 2026 el IC fue −0,004.
+- **`month_end_dates` toma fines de mes del calendario COMPLETO.** Filtrar
+  primero por `last` convertía un 17 de septiembre en "cierre de septiembre".
+- **`composite.winsorize` no recorta si los percentiles coinciden.** Con 51
+  valores iguales y uno distinto, recortar al 5–95 borraba la única
+  diferencia.
+- **El loader del motor reintenta y cae a la caché vieja.** `download_with_retry`
+  pide lo que falte en lotes de 25. Si sigue faltando y la caché cubre el
+  inicio, se usa y `MarketData.stale` lo registra para el aviso. Sin esto, un
+  corte de Yahoo borraba 16 de 50 pares y la validación corría con 38 nombres.
+- **La t del backtest de la regla es de Newey-West** (`trade_plan.hac_t_stat`,
+  retardo = la operación más larga). Las entradas diarias se solapan: con el
+  error estándar ingenuo, 756 entradas parecerían 756 operaciones
+  independientes y cualquier E(R) saldría significativo.
 
 ## WRDS (`src/sfc_tfsig/data/wrds.py`)
 

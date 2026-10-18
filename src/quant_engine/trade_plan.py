@@ -8,6 +8,12 @@ x +1 si research dice LONG, x -1 si dice SHORT) y los umbrales del YAML:
     flip < alineado <= conflict      NO TRADE     el dato contradice; revisar la tesis
     alineado <= flip                 FLIP         el modelo sugiere el lado contrario
 
+**Un FLIP exige evidencia.** Ir contra research es la decision mas fuerte del
+plan. Solo se toma si la validacion del Quant Score (`signals.score_validation`)
+dice que el score ordeno bien los retornos en este universo: t del IC >=
+`flip_min_ic_t`. Si no, el FLIP queda NO TRADE: el dato no respalda a research,
+pero tampoco hay base para apostar en contra.
+
 **Niveles, por volatilidad y no por porcentajes fijos.** Un stop del 5% es
 ruido en una accion de 60% de volatilidad y es enorme en una de 15%:
 
@@ -19,6 +25,12 @@ ruido en una accion de 60% de volatilidad y es enorme en una de 15%:
 **Tamano.** El peso de la cartera reconstruida con las direcciones corregidas,
 recortado para que la perdida si salta el stop no supere `max_risk_per_trade`
 del capital. Lo que manda es el menor de los dos.
+
+**Monedas.** Capital, nocional, riesgo y P&L van en USD; entrada, stop y
+objetivos, en la moneda en que cotiza el nombre (es donde se ponen las
+ordenes). Las acciones salen de dividir el nocional en USD por el precio
+convertido: dividir USD por un precio en CAD compraba un 30% de menos, y en
+Londres (peniques) unas 76 veces menos.
 
 **Cobertura de beta.** Los recortes por riesgo y los NO TRADE cambian el libro:
 quitar un corto de beta alta lo deja largo de mercado sin que nadie lo decida.
@@ -48,6 +60,7 @@ import pandas as pd
 
 from .portfolio import construction
 from .portfolio.constraints import ConstructionParams
+from .signals import score_validation
 
 VERDICTS = ("CONFIRM", "REDUCE", "NO TRADE", "FLIP")
 
@@ -66,6 +79,7 @@ class PlanParams:
     hedge_beta: bool = True
     hedge_threshold: float = 0.05
     hold_band: float = 0.005
+    flip_min_ic_t: float = 2.0
 
 
 def verdict(aligned: float, p: PlanParams) -> str:
@@ -140,15 +154,18 @@ def hit_rate(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.S
 
 
 def size_position(weight: float, verdict_: str, entry: float, stop_pct: float,
-                  capital: float, p: PlanParams) -> dict[str, float | bool]:
-    """Nocional y acciones: el menor entre el peso de cartera y el tope de riesgo."""
-    if verdict_ == "NO TRADE" or weight == 0 or entry <= 0:
+                  capital: float, p: PlanParams, fx: float = 1.0) -> dict[str, float | bool]:
+    """Nocional (USD) y acciones: el menor entre el peso de cartera y el tope de riesgo.
+
+    `entry` en moneda local; `fx` = USD por unidad de esa moneda.
+    """
+    if verdict_ == "NO TRADE" or weight == 0 or entry <= 0 or not fx > 0:
         return {"notional": 0.0, "shares": 0, "size_capped_by_risk": False}
     w = abs(weight) * (p.reduce_size if verdict_ == "REDUCE" else 1.0)
     notional = w * capital
     cap = p.max_risk_per_trade * capital / stop_pct if stop_pct > 0 else notional
     final = min(notional, cap)
-    return {"notional": final, "shares": math.floor(final / entry), "size_capped_by_risk": cap < notional}
+    return {"notional": final, "shares": math.floor(final / (entry * fx)), "size_capped_by_risk": cap < notional}
 
 
 def beta_hedge(weights: pd.Series, betas: pd.Series, price: float, capital: float,
@@ -189,6 +206,36 @@ def drivers(components: pd.Series, weights: dict[str, float], research_sign: int
     pro = [f"{k} {v:+.2f}" for k, v in contrib[contrib > 0].iloc[::-1].head(n).items()]
     con = [f"{k} {v:+.2f}" for k, v in contrib[contrib < 0].head(n).items()]
     return pro, con
+
+
+def block_flips(signs: pd.Series, verdicts: pd.Series) -> tuple[pd.Series, pd.Series, list[str]]:
+    """Cada FLIP pasa a NO TRADE: no se abre el lado contrario a research.
+
+    Devuelve tambien los nombres afectados, para decirlo en el plan.
+    """
+    flipped = list(verdicts.index[verdicts == "FLIP"])
+    signs, verdicts = signs.copy(), verdicts.copy()
+    signs.loc[flipped] = 0.0
+    verdicts.loc[flipped] = "NO TRADE"
+    return signs, verdicts, flipped
+
+
+def long_only_signs(signs: pd.Series, verdicts: pd.Series) -> tuple[pd.Series, pd.Series, list[str]]:
+    """En una canasta solo LONG un FLIP no abre un corto: queda NO TRADE.
+
+    Con un mandato solo LONG, "el dato contradice tanto la compra que el modelo
+    venderia en corto" significa en la practica "no se compra". Abrir un corto
+    convertiria la canasta en un long/short que nadie pidio.
+    """
+    return block_flips(signs, verdicts)
+
+
+def flip_allowed(validation: dict | None, min_t: float) -> bool:
+    """Si el plan puede ir contra research. Sin validacion configurada (`{}`),
+    se respeta la decision de quien la apago; validada sin evidencia, no."""
+    if min_t <= 0 or not validation:
+        return True
+    return score_validation.evidence(validation, min_t) == "predictive"
 
 
 def target_shares(verdict_: str, research_sign: int, planned: int, current: int) -> int:
@@ -252,64 +299,254 @@ def missing_wrds_weight(weights: dict[str, float]) -> float:
     return sum(float(weights.get(k, 0.0)) for k in WRDS_COMPONENTS) / total
 
 
+EXITS = ("stop", "tp1_be", "tp1_tp2", "tp1_time", "time")
+
+
+def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.Series,
+                    side: int, p: PlanParams, cost: float = 0.0, borrow: float = 0.0) -> pd.DataFrame:
+    """La regla exacta del plan, abierta cada dia de los ultimos `history_d`.
+
+    Entrada al cierre; stop a `stop_atr` ATR; en TP1 sale la mitad y el stop
+    de la otra mitad pasa a la entrada; esa mitad sale en TP2, en la entrada o
+    al cierre de la sesion `horizon_d`. El resultado va en multiplos de R.
+
+    Supuestos conservadores, porque solo hay maximo, minimo y cierre diarios:
+    si un dia toca stop y objetivo, gana el stop; el dia de TP1, si tambien
+    toca la entrada, la otra mitad sale en la entrada; un gap que salta el stop
+    se cobra al peor precio del dia en vez de al stop. Costes: `cost` por lado
+    sobre el nocional (ida y vuelta) y, en cortos, `borrow` anual por dia.
+    """
+    c, h, l, a = (x.to_numpy(float) for x in (close, high, low, atr_series))
+    n, horizon = len(c), p.horizon_d
+    m1, m2 = p.tp_r
+    rows, dates = [], []
+    for i in range(max(0, n - p.history_d - horizon), n - horizon):
+        entry, r = c[i], p.stop_atr * a[i]
+        if not (np.isfinite(entry) and np.isfinite(r)) or r <= 0:
+            continue
+        stop, tp1, tp2 = entry - side * r, entry + side * m1 * r, entry + side * m2 * r
+        half, realized, outcome = False, 0.0, None
+        for j in range(1, horizon + 1):
+            hi, lo = h[i + j], l[i + j]
+            if side > 0:
+                hit_stop, hit_tp1, hit_be, hit_tp2 = lo <= stop, hi >= tp1, lo <= entry, hi >= tp2
+                worst_stop, worst_be = min(stop, hi), min(entry, hi)
+            else:
+                hit_stop, hit_tp1, hit_be, hit_tp2 = hi >= stop, lo <= tp1, hi >= entry, lo <= tp2
+                worst_stop, worst_be = max(stop, lo), max(entry, lo)
+            if not half:
+                if hit_stop:
+                    outcome = (side * (worst_stop - entry) / r, "stop", j)
+                    break
+                if hit_tp1:
+                    half, realized = True, 0.5 * m1
+                    if hit_be:
+                        outcome = (realized, "tp1_be", j)
+                        break
+                continue
+            if hit_be:
+                outcome = (realized + 0.5 * side * (worst_be - entry) / r, "tp1_be", j)
+                break
+            if hit_tp2:
+                outcome = (realized + 0.5 * m2, "tp1_tp2", j)
+                break
+        if outcome is None:
+            last = side * (c[i + horizon] - entry) / r
+            outcome = (realized + 0.5 * last, "tp1_time", horizon) if half else (last, "time", horizon)
+        r_mult, exit_type, days = outcome
+        r_mult -= 2 * cost * entry / r
+        if side < 0:
+            r_mult -= borrow * days / 252 * entry / r
+        rows.append((r_mult, exit_type, days))
+        dates.append(close.index[i])
+    return pd.DataFrame(rows, index=pd.DatetimeIndex(dates), columns=["r_mult", "exit", "days"])
+
+
+def hac_t_stat(x: np.ndarray, lag: int) -> float:
+    """t de la media con error estandar de Newey-West (nucleo de Bartlett).
+
+    Las operaciones de la regla se abren cada dia y duran hasta `horizon_d`
+    sesiones: dos entradas seguidas comparten casi todo el camino. Con el error
+    estandar ingenuo, 756 entradas parecerian 756 observaciones independientes
+    y cualquier R medio saldria "significativo"; en realidad hay unas pocas
+    decenas de operaciones que no se solapan. El error estandar es el mismo del
+    modelo multifactor (`sfc_tfsig.validation.newey_west_se`).
+    """
+    from sfc_tfsig.validation import newey_west_se  # noqa: PLC0415
+
+    values = pd.Series(np.asarray(x, dtype=float)).replace([np.inf, -np.inf], np.nan).dropna()
+    se = newey_west_se(values, lag)
+    return float(values.mean() / se) if se and np.isfinite(se) and se > 0 else float("nan")
+
+
+def trade_stats(trades: pd.DataFrame) -> dict[str, float]:
+    """Expectativa de la regla: aciertos, R medio y su t, profit factor, dias."""
+    if trades.empty:
+        return {"n": 0}
+    r = trades["r_mult"]
+    wins, losses = r[r > 0], r[r <= 0]
+    loss_sum = -losses.sum()
+    return {
+        "n": len(r),
+        "win_rate": float((r > 0).mean()),
+        "exp_r": float(r.mean()),
+        # Retardo = la operacion mas larga: mas alla no hay solape.
+        "t_stat": hac_t_stat(r.to_numpy(), int(trades["days"].max())),
+        "avg_win_r": float(wins.mean()) if len(wins) else float("nan"),
+        "avg_loss_r": float(losses.mean()) if len(losses) else float("nan"),
+        "profit_factor": float(wins.sum() / loss_sum) if loss_sum > 0 else float("inf"),
+        "avg_days": float(trades["days"].mean()),
+        "p05_r": float(r.quantile(0.05)),
+        "p95_r": float(r.quantile(0.95)),
+        **{f"share_{e}": float((trades["exit"] == e).mean()) for e in EXITS},
+    }
+
+
+def plan_backtest(trades: dict[str, pd.DataFrame], dollars_per_r: dict[str, float],
+                  capital: float) -> dict[str, float] | None:
+    """El plan completo, abierto a la vez en cada fecha historica comun.
+
+    Usar las MISMAS fechas para todos los nombres conserva la correlacion entre
+    ellos: si el plan se hubiera puesto el dia de una caida, todos los largos lo
+    sufren juntos. Sumar distribuciones independientes subestimaria la cola.
+    """
+    live = {t: df["r_mult"] for t, df in trades.items() if dollars_per_r.get(t) and not df.empty}
+    if not live:
+        return None
+    joint = pd.DataFrame(live).dropna()
+    if joint.empty:
+        return None
+    pnl = sum(joint[t] * dollars_per_r[t] for t in joint.columns)
+    return {
+        "n_dates": len(pnl), "first": joint.index.min(), "last": joint.index.max(),
+        "mean": float(pnl.mean()), "median": float(pnl.median()),
+        "p05": float(pnl.quantile(0.05)), "p95": float(pnl.quantile(0.95)),
+        "worst": float(pnl.min()), "best": float(pnl.max()),
+        "prob_loss": float((pnl < 0).mean()),
+        "mean_pct": float(pnl.mean() / capital), "p05_pct": float(pnl.quantile(0.05) / capital),
+        "p95_pct": float(pnl.quantile(0.95) / capital),
+        "pnl": pnl,
+    }
+
+
+def portfolio_expectations(result) -> dict[str, float]:
+    """La canasta como cartera (direcciones de research) y su Monte Carlo."""
+    out: dict[str, float] = {}
+    primary = result.primary or {}
+    sm = primary.get("summary") or {}
+    bt = primary.get("backtest")
+    out.update({k: sm.get(k) for k in ("cagr", "sharpe", "max_drawdown", "volatility", "years")})
+    out["method"] = primary.get("method")
+    if bt is not None and len(bt.nav) > 1:
+        bench = result.clean.returns[result.clean.benchmark].reindex(bt.nav.index).fillna(0.0)
+        growth = float((1.0 + bench.iloc[1:]).prod())
+        years = len(bench) / 252
+        out["bench_cagr"] = growth ** (1 / years) - 1 if years > 0 else float("nan")
+    mc = (result.montecarlo or {}).get("bootstrap_neutral") or {}
+    out.update({f"mc_{k}": v for k, v in mc.items()})
+    return out
+
+
 def build_plan(result, p: PlanParams) -> dict[str, object]:
     """Plan completo a partir del resultado del analisis."""
     s = result.settings
     research = {**{t: 1 for t in result.longs}, **{t: -1 for t in result.shorts}}
     aligned = result.agreement["aligned_score"]
     signs, verdicts = final_signs(research, aligned, p)
+    score_verdicts = verdicts.copy()
+    long_only = not result.shorts
+    flipped: list[str] = []
+    if long_only:
+        signs, verdicts, flipped = long_only_signs(signs, verdicts)
+    validation = getattr(result, "score_validation", None) or {}
+    unproven: list[str] = []
+    if not flip_allowed(validation, p.flip_min_ic_t):
+        signs, verdicts, unproven = block_flips(signs, verdicts)
 
     traded = signs[signs != 0]
     method = result.primary["method"]
     weights = pd.Series(0.0, index=signs.index)
     note = ""
     cov = result.primary["cov"]
-    has_book = bool((traded > 0).any() and (traded < 0).any())
+    # Solo LONG: la cartera es la pata larga. Long/short: hacen falta las dos.
+    has_book = bool((traded > 0).any() and (long_only or (traded < 0).any()))
+    gross, net = s.exposure
     if has_book:
         vol = pd.Series(np.sqrt(np.diag(cov.loc[traded.index, traded.index]) * 252), index=traded.index)
+        leg, fewest = ((gross, (traded > 0).sum()) if long_only
+                       else (gross / 2, min((traded > 0).sum(), (traded < 0).sum())))
         params = ConstructionParams(
-            gross=float(s.get("portfolio.gross_exposure", 2.0)), net=float(s.get("portfolio.net_exposure", 0.0)),
-            max_position=max(float(s.get("portfolio.max_position", 0.35)),
-                             float(s.get("portfolio.gross_exposure", 2.0)) / 2
-                             / max(1, min((traded > 0).sum(), (traded < 0).sum()))))
+            gross=gross, net=net,
+            max_position=max(float(s.get("portfolio.max_position", 0.35)), leg / max(1, fewest)))
         built = construction.build(method, traded, cov=cov, vol=vol, params=params,
                                    mu=pd.Series(0.0, index=traded.index), betas=result.primary.get("betas"))
         if built.status == "ok":
             weights.loc[built.weights.index] = built.weights
         else:
-            note = f"{method} fallo con las direcciones corregidas ({built.note}); se usa equal_weight"
+            note = f"{method} failed with the corrected directions ({built.note}); equal_weight is used instead"
             weights.loc[traded.index] = construction.equal_weight(traded, params)
+    elif long_only:
+        note = "after the corrections no LONG is left to trade: levels are given per name, with no size."
     else:
-        note = ("tras la correccion no quedan largos Y cortos: no hay cartera long/short. "
-                "Los niveles se dan por nombre, sin tamano de cartera.")
+        note = ("after the corrections there are not both longs and shorts left: no long/short book. "
+                "Levels are given per name, with no size.")
+    if flipped:
+        flip_note = f"long-only: {', '.join(flipped)} scored as FLIP and stays NO TRADE, no short is opened"
+        note = "; ".join(n for n in (note, flip_note) if n)
+    if unproven:
+        got = (f"IC t {validation['ic_t']:+.1f}" if validation.get("available")
+               else f"no validation: {validation.get('reason')}")
+        gate_note = (f"{', '.join(unproven)} scored as FLIP and stays NO TRADE: going against research needs "
+                     f"evidence that the Quant Score predicts on this universe ({got}; needs t >= "
+                     f"{p.flip_min_ic_t:.1f})")
+        note = "; ".join(n for n in (note, gate_note) if n)
 
     capital = s.initial_capital
     rows = []
+    sims: dict[str, pd.DataFrame] = {}
     for t in signs.index:
-        close = result.clean.close[t].dropna()
-        high = result.clean.high[t].reindex(close.index).fillna(close)
-        low = result.clean.low[t].reindex(close.index).fillna(close)
+        # Niveles en la moneda en que cotiza: es donde se ponen las ordenes.
+        close_l, high_l, low_l = result.clean.local_prices(t)
+        close = close_l.dropna()
+        high = high_l.reindex(close.index).fillna(close)
+        low = low_l.reindex(close.index).fillna(close)
         a = atr(high, low, close)
         side = int(signs[t]) if signs[t] != 0 else research[t]
         lv = levels(float(close.iloc[-1]), float(a.iloc[-1]), side, p)
+        fx = result.clean.fx_rate(t).reindex(close.index).ffill()
+        fx_now = float(fx.iloc[-1]) if len(fx) and pd.notna(fx.iloc[-1]) else 1.0
 
-        size = size_position(float(weights.get(t, 0.0)), verdicts[t], lv["entry"], lv["stop_pct"], capital, p)
+        size = size_position(float(weights.get(t, 0.0)), verdicts[t], lv["entry"], lv["stop_pct"], capital, p,
+                             fx=fx_now)
 
         rows.append({
             "ticker": t,
             "research": "LONG" if research[t] > 0 else "SHORT",
             "verdict": verdicts[t],
+            "score_verdict": score_verdicts[t],
             "action": ("BUY" if signs[t] > 0 else "SELL SHORT") if signs[t] != 0 else "NO TRADE",
             "aligned_score": float(aligned.get(t, np.nan)),
             **lv,
             "atr": float(a.iloc[-1]),
+            "currency": result.clean.currency.get(t, "USD"),
+            "fx": fx_now,
             "weight": math.copysign(size["notional"] / capital, side) if signs[t] != 0 else 0.0,
             "notional": size["notional"],
             "shares": size["shares"],
-            "risk_capital_pct": size["shares"] * lv["risk_per_share"] / capital,
+            "risk_capital_pct": size["shares"] * lv["risk_per_share"] * fx_now / capital,
             "size_capped_by_risk": size["size_capped_by_risk"],
             "p_tp1_before_stop": hit_rate(close, high, low, a, side, p, p.tp_r[0]),
             "p_tp2_before_stop": hit_rate(close, high, low, a, side, p, p.tp_r[1]),
+        })
+        sims[t] = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost,
+                                  borrow=s.borrow_cost)
+        st = trade_stats(sims[t])
+        rows[-1].update({
+            "bt_trades": st.get("n", 0), "bt_win_rate": st.get("win_rate"), "bt_exp_r": st.get("exp_r"),
+            "bt_t_stat": st.get("t_stat"),
+            "bt_avg_win_r": st.get("avg_win_r"), "bt_avg_loss_r": st.get("avg_loss_r"),
+            "bt_profit_factor": st.get("profit_factor"), "bt_avg_days": st.get("avg_days"),
+            "exp_return_pct": (st.get("exp_r") or 0.0) * lv["stop_pct"] if st.get("n") else float("nan"),
         })
     plan = pd.DataFrame(rows).set_index("ticker")
     try:
@@ -334,28 +571,38 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         else:
             planned = planned_without_book(row["verdict"], research[t], current)
         target = target_shares(row["verdict"], research[t], planned, current)
-        action, qty = order_for(current, target, row["entry"], capital, p)
+        action, qty = order_for(current, target, row["entry"] * row["fx"], capital, p)
         final[t] = _final(current, target, action)
         # Niveles del lado de la posicion que QUEDA: una posicion mantenida contra
         # research es larga aunque research dijera SHORT. Sin posicion, sin niveles.
         side = int(np.sign(final[t]))
         lv = levels(row["entry"], row["atr"], side, p) if side else {}
         orders.append({"ticker": t, "signal": action, "qty": qty, "current": current, "target": final[t],
-                       "price": row["entry"], "stop": lv.get("stop"), "tp1": lv.get("tp1"),
-                       "tp2": lv.get("tp2"), "verdict": row["verdict"],
-                       "risk_capital_pct": abs(final[t]) * abs(row["entry"] - lv["stop"]) / capital if side else 0.0,
+                       "price": row["entry"], "currency": row["currency"], "stop": lv.get("stop"),
+                       "tp1": lv.get("tp1"), "tp2": lv.get("tp2"), "verdict": row["verdict"],
+                       "risk_capital_pct": (abs(final[t]) * abs(row["entry"] - lv["stop"]) * row["fx"] / capital
+                                            if side else 0.0),
                        "hold_reason": ("no long/short book: kept as is" if not has_book and action == "HOLD"
                                        else "kept against research" if target != planned
                                        else "within hold band" if action == "HOLD" else "")})
 
     betas = result.primary.get("betas", pd.Series(1.0, index=plan.index))
     betas = betas.reindex(plan.index).fillna(1.0)
-    final_w = pd.Series(final, dtype=float) * plan["entry"] / capital
+    final_w = pd.Series(final, dtype=float) * plan["entry"] * plan["fx"] / capital
+    # Dolares por R de cada posicion FINAL: lo que se gana o pierde por cada
+    # multiplo del riesgo por accion de hoy.
+    dollars_per_r = {t: abs(final[t]) * float(plan.loc[t, "risk_per_share"] * plan.loc[t, "fx"])
+                     for t in plan.index}
+    plan["exp_pnl"] = [dollars_per_r[t] * (plan.loc[t, "bt_exp_r"] if pd.notna(plan.loc[t, "bt_exp_r"]) else 0.0)
+                       for t in plan.index]
+    plan_bt = plan_backtest(sims, dollars_per_r, capital)
     book_beta = float((final_w * betas).sum())
 
     bench = result.clean.benchmark
     hedge = None
-    if p.hedge_beta:
+    # Solo LONG: la beta de mercado ES la exposicion buscada. Cubrirla
+    # convertiria la canasta en un libro neutral al mercado que nadie pidio.
+    if p.hedge_beta and not long_only:
         bench_price = float(result.clean.close[bench].dropna().iloc[-1])
         hedge = beta_hedge(final_w, betas, bench_price, capital, p.hedge_threshold)
         if hedge:
@@ -366,9 +613,9 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         if action != "NO TRADE":
             orders.append({"ticker": bench, "signal": action, "qty": qty, "current": current,
                            "target": _final(current, target, action), "price": bench_price,
-                           "verdict": "HEDGE"})
+                           "currency": result.clean.currency.get(bench, "USD"), "verdict": "HEDGE"})
 
-    handled = set(plan.index) | ({bench} if p.hedge_beta else set())
+    handled = set(plan.index) | ({bench} if p.hedge_beta and not long_only else set())
     for t, current in positions.items():
         if t not in handled:
             orders.append({"ticker": t, "signal": "NOT ANALYZED", "qty": 0, "current": int(current),
@@ -376,9 +623,12 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
 
     return {"plan": plan, "corrections": corrections, "note": note, "params": p, "hedge": hedge,
             "orders": pd.DataFrame(orders).set_index("ticker"), "has_positions": bool(positions),
+            "long_only": long_only, "has_book": has_book, "unproven_flips": unproven,
             "beta": book_beta, "gross": float(final_w.abs().sum()), "net": float(final_w.sum()),
             "risk_at_stops": float(pd.DataFrame(orders)["risk_capital_pct"].fillna(0.0).sum()),
             "levels_date": result.clean.close.index[-1],
+            "plan_backtest": plan_bt, "portfolio": portfolio_expectations(result),
+            "expected_pnl": float(plan["exp_pnl"].sum()),
             "wrds_missing": (None if (result.wrds is not None and result.wrds.available)
                              else {"weight": missing_wrds_weight(s.get("signal_weights", {}) or {}),
                                    "reason": result.wrds.reason if result.wrds is not None else "not requested"})}
@@ -399,4 +649,5 @@ def params_from_settings(settings) -> PlanParams:
         hedge_beta=bool(tp.get("hedge_beta", True)),
         hedge_threshold=float(tp.get("hedge_threshold", 0.05)),
         hold_band=float(tp.get("hold_band", 0.005)),
+        flip_min_ic_t=float(tp.get("flip_min_ic_t", 2.0)),
     )

@@ -219,3 +219,62 @@ def test_parse_positions():
     for bad in ("AAPL 500", "AAPL:1.5", "AAPL:10,AAPL:20"):
         with pytest.raises(SettingsError):
             parse_positions(bad)
+
+
+def test_canasta_solo_long_invierte_el_100_por_ciento():
+    from quant_engine.settings import build_settings
+
+    s = build_settings("ARES,AMC", "")
+    assert s.long_only
+    assert s.exposure == (1.0, 1.0)
+    # Dos nombres con tope de 35% no llegan al 100%: el tope sube a 50% y se anota.
+    assert s.get("portfolio.max_position") == pytest.approx(0.5)
+    assert any("2 nombre" in n for n in s.get("_notes"))
+
+
+def test_long_short_conserva_la_exposicion_del_yaml():
+    from quant_engine.settings import build_settings
+
+    s = build_settings("AAPL,MSFT,NVDA", "TSLA,INTC,BA")
+    assert not s.long_only
+    assert s.exposure == (2.0, 0.0)
+
+
+def test_sin_long_se_rechaza():
+    from quant_engine.settings import SettingsError, build_settings
+
+    with pytest.raises(SettingsError, match="al menos un ticker LONG"):
+        build_settings("", "TSLA")
+
+
+def test_marcar_todos_long_da_canasta_solo_long():
+    from quant_engine.app import split_long_short
+
+    longs, shorts = split_long_short(("ARES", "AMC"), "ares,amc")
+    assert longs == ("ARES", "AMC") and shorts == ()
+
+
+def test_pares_de_referencia_solo_para_canastas_solo_long_o_pequenas():
+    from quant_engine.analysis import reference_peers
+    from quant_engine.settings import build_settings
+
+    solo_long = reference_peers(build_settings("ARES,AMC", ""))
+    assert len(solo_long) >= 30 and "ARES" not in solo_long and "SPY" not in solo_long
+    assert reference_peers(build_settings("AAPL,MSFT,NVDA,AMZN,META", "TSLA,INTC,BA,PYPL,NKE")) == []
+    assert len(reference_peers(build_settings("AAPL,MSFT", "TSLA,INTC"))) >= 30  # 4 < min_cross_section
+
+
+def test_zscore_acotado_en_3_y_sin_efecto_en_canastas_de_10():
+    extremo = pd.Series([0.0] * 51 + [100.0])
+    assert composite.zscore(extremo).max() == pytest.approx(composite.Z_CAP)
+    diez = pd.Series([0.0] * 9 + [100.0])
+    assert composite.zscore(diez).max() < composite.Z_CAP     # (n-1)/sqrt(n) = 2,85
+
+
+def test_pares_se_deciden_con_los_nombres_que_quedan_tras_la_calidad():
+    from quant_engine.analysis import reference_peers
+    from quant_engine.settings import build_settings
+
+    s = build_settings("ARES,AMC", "SKHY,ATZ.TO,GOLD")       # 5 pedidos
+    assert reference_peers(s) == []                          # con los 5, no hacen falta
+    assert len(reference_peers(s, n_names=4)) >= 30          # sin SKHY quedan 4: si

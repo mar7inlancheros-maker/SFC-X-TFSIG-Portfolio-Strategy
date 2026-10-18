@@ -134,6 +134,11 @@ def _estimate(returns: pd.DataFrame, names: list[str], benchmark: str,
     return cov, vol, mu, betas, usable
 
 
+
+def _tradable(signs: pd.Series, long_only: bool) -> bool:
+    """Hay libro que construir: largos, y cortos salvo en una canasta solo LONG."""
+    return bool((signs > 0).sum() and (long_only or (signs < 0).sum()))
+
 def run(
     returns: pd.DataFrame,
     benchmark: str,
@@ -179,8 +184,12 @@ def run(
                                      **(pnl / period_start_nav).to_dict()})
 
             signs = schedule(d)
-            if signs is None or (signs > 0).sum() == 0 or (signs < 0).sum() == 0:
-                warnings.append(f"{d.date()}: sin largos y cortos a la vez; se mantiene la cartera")
+            # Una configuracion solo LONG (pata corta de 0) se opera con largos
+            # solamente; un long/short sin una de sus patas no es el libro pedido.
+            long_only = cfg.params.short_leg <= 1e-12
+            if signs is None or not _tradable(signs, long_only):
+                warnings.append(f"{d.date()}: sin largos" + ("" if long_only else " y cortos a la vez")
+                                + "; se mantiene la cartera")
             else:
                 hist = returns.loc[:d]
                 names = [n for n in signs.index if n in returns.columns]
@@ -189,7 +198,7 @@ def run(
                 if dropped:
                     warnings.append(f"{d.date()}: sin historia suficiente para estimar {dropped}")
                 s = signs.reindex(usable).dropna()
-                if (s > 0).sum() and (s < 0).sum():
+                if _tradable(s, long_only):
                     try:
                         built = build(cfg.method, s, cov=cov, vol=vol, params=cfg.params, mu=mu, betas=betas)
                     except ValueError as exc:
