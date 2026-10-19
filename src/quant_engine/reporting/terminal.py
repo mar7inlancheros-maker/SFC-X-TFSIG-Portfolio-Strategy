@@ -521,6 +521,10 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
                 msg = (f"research says {row['research']}, data points the other way (aligned score "
                        f"{signed(row['aligned_score'])}), but the score has not shown it predicts: NO TRADE, "
                        "not FLIP")
+            elif row["verdict"] == "FLIP" and row.get("unproven_flip"):
+                msg = (f"research says {row['research']}, data points the other way (aligned score "
+                       f"{signed(row['aligned_score'])}): model suggests {row['action']} at {p.reduce_size:.0%} "
+                       "size, LOW conviction: the score has not shown it predicts here")
             elif row["verdict"] == "FLIP":
                 msg = (f"research says {row['research']}, data points the other way (aligned score "
                        f"{signed(row['aligned_score'])}): model suggests {row['action']}")
@@ -705,8 +709,8 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
     notes = []
     if not tp.get("has_book", True):
         notes.append("No book to size: after the corrections " + ("no LONG is left to trade" if tp.get("long_only")
-                     else "one leg has nothing left to trade") + ", so CONFIRM and REDUCE names get levels but "
-                     "no size.")
+                     else "one leg has nothing left to trade") + ", so no orders from a book. Each traded name "
+                     "gets a standalone, directional size in its card below.")
     for verdict, text in _NOTES.items():
         names = list(orders.index[(orders["verdict"] == verdict)
                                   & ((orders["target"] != 0) | (verdict not in ("CONFIRM", "REDUCE")))])
@@ -732,8 +736,71 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
                       f"90% range {_usd(pb['p05'])} to {_usd(pb['p95'])}, P(loss) {pct(pb['prob_loss'], 0)}.")
     console.print(f"Orders at market next session. Levels from the {r.clean.close.index[-1]:%Y-%m-%d} close; stop and TP apply to "
                   "the whole resulting position.")
+    integrity(console, r)
+    signal_cards(console, r)
     console.print("Mechanical output of the rules in config/quant_engine.yaml (thresholds, ATR, risk cap). "
                   "Not investment advice: review before executing.")
+
+
+def integrity(console: Console, r: AnalysisResult) -> None:
+    """Las identidades del plan: acciones, nocional, riesgo, ordenes, cobertura."""
+    errors = (r.trade_plan or {}).get("integrity_errors")
+    if errors is None:
+        return
+    if errors:
+        console.print("[bold red]PLAN INTEGRITY CHECK FAILED: do not send these orders until fixed.[/]")
+        for e in errors:
+            console.print(f"[red]  - {escape(e)}[/]")
+    else:
+        console.print("Plan integrity: prices, sides, shares = notional / price, risk caps, orders and hedge "
+                      "all reconcile.")
+
+
+def signal_cards(console: Console, r: AnalysisResult) -> None:
+    """Una ficha por nombre: senal, por que, fundamentales y como ejecutarla."""
+    from ..playbook import (  # noqa: PLC0415
+        build_cards,
+        card_size_note,
+        standalone_total,
+    )
+
+    cards = build_cards(r)
+    if not cards:
+        return
+    p = r.trade_plan["params"]
+    bench = r.settings.benchmark
+    bench_close = r.clean.close[bench].dropna()
+    total = standalone_total(cards, bench, float(bench_close.iloc[-1]) if len(bench_close) else float("nan"))
+    console.print()
+    console.print(LINE)
+    console.print("SIGNALS: WHAT TO DO, WHY, AND HOW")
+    console.print(LINE)
+    for t, c in cards.items():
+        tag = c["signal"] + (f" | conviction {c['conviction']}" if c.get("conviction") else "")
+        console.print(f"[bold]{escape(t)}[/]  {escape(tag)}")
+        console.print(f"  {escape(c['headline'])}")
+        if c["why_for"]:
+            console.print(f"  Backs research {c['research']}: " + escape("; ".join(c["why_for"])))
+        if c["why_against"]:
+            console.print(f"  Against research {c['research']}: " + escape("; ".join(c["why_against"])))
+        if c["fundamentals"]:
+            console.print("  Fundamentals: " + escape(" | ".join(c["fundamentals"])))
+        if c["data_flags"]:
+            console.print("[yellow]  Data to verify: " + escape("; ".join(c["data_flags"])) + "[/]")
+        if c.get("steps"):
+            console.print(f"  Size: {c['shares']:,} shares, ~{c['notional']:,.0f} USD, stop costs "
+                          f"{c['risk_pct']:.2%} of capital ({escape(card_size_note(c, p.max_risk_per_trade))}).")
+            console.print("  How to execute:")
+            for i, step in enumerate(c["steps"], 1):
+                console.print(f"    {i}. {escape(step)}")
+        console.print()
+    if total:
+        console.print(f"[bold]All standalone positions together[/] ({', '.join(total['names'])}): long "
+                      f"{total['long']:,.0f} USD, short {total['short']:,.0f} USD, net {total['net']:+,.0f} USD, "
+                      f"beta-weighted {total['beta_usd']:+,.0f} USD of {bench}, {total['risk_pct']:.2%} of capital "
+                      f"if every stop hits. One hedge for all of them instead of one per name: "
+                      f"{total['hedge_action']} {total['hedge_shares']:,} {bench} at ~{total['bench_price']:,.2f}.")
+        console.print()
 
 
 def brief(r: AnalysisResult, console: Console) -> None:

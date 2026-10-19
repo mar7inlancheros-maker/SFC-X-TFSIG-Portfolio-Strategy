@@ -395,10 +395,27 @@ Trampas:
   de un universo: elegir pesos con la muestra que los evalúa es sobreajuste, y
   la siguiente validación saldría buena por construcción.
 - **Un FLIP pasa por `trade_plan.flip_allowed`.** Sin evidencia de que el score
-  predice (t del IC < `flip_min_ic_t`), el FLIP queda NO TRADE y `score_verdict`
-  guarda lo que dijo el score. Validación apagada (`{}`) respeta la decisión;
-  validación sin datos (`available: False`) cuenta como sin evidencia. No bajar
-  el umbral para que salgan FLIPs: en octubre de 2026 el IC fue −0,004.
+  predice (t del IC < `flip_min_ic_t`), `unproven_flip` decide: `reduce` (por
+  defecto) lo opera a `reduce_size` con convicción LOW; `no_trade` lo deja en
+  NO TRADE, y `score_verdict` guarda lo que dijo el score. Validación apagada
+  (`{}`) respeta la decisión; validación sin datos (`available: False`) cuenta
+  como sin evidencia. No bajar el umbral para que salgan FLIPs a tamaño
+  completo: en octubre de 2026 el IC fue −0,004.
+- **Las fichas (`playbook.py`) solo presentan.** Dirección, niveles y tamaño
+  salen de `build_plan`; la ficha no recalcula nada salvo el tamaño propio
+  (`trade_plan.solo_size`, cuando no hay libro) y la cobertura suelta. Si
+  cambia una regla del plan (stop, objetivos, break-even), los pasos de
+  ejecución la repiten tal cual: cambiar las dos cosas a la vez.
+- **`check_plan` comprueba identidades, no recalcula el plan.** Si un cambio
+  hace fallar una identidad (acciones × precio × FX ≠ nocional, riesgo por
+  encima del tope), el error está en el cambio: no relajar la tolerancia.
+- **Avisos de datos en la ficha desde `clean.stats`, no desde el texto de la
+  calidad.** `playbook.execution_flags` se queda con lo que cambia la orden de
+  hoy (precio viejo, último salto, splits, movimientos de más del 50%). Los
+  días rellenados por festivos de otra bolsa no están a propósito.
+- **Las fechas de resultados son de Yahoo y pueden faltar.**
+  `loader.load_earnings_dates` espera como mucho 20 s y cachea un día. Sin
+  fecha, la ficha dice "check it": nunca se inventa.
 - **`month_end_dates` toma fines de mes del calendario COMPLETO.** Filtrar
   primero por `last` convertía un 17 de septiembre en "cierre de septiembre".
 - **`composite.winsorize` no recorta si los percentiles coinciden.** Con 51

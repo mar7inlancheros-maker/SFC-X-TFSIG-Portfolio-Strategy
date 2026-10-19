@@ -89,6 +89,7 @@ class AnalysisResult:
     trade_plan: dict[str, object] = field(default_factory=dict)
     reference_peers: list[str] = field(default_factory=list)
     score_validation: dict[str, object] = field(default_factory=dict)
+    earnings: dict[str, pd.Timestamp] = field(default_factory=dict)
 
 
 def _params(settings: EngineSettings, beta_neutral: bool = False) -> ConstructionParams:
@@ -654,6 +655,9 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         elif score_validation.evidence(sv, 2.0) == "inverse":
             warnings.append(f"el Quant Score ordeno AL REVES en {sv['months']} meses (IC {sv['ic_mean']:+.3f}, "
                             f"t {sv['ic_t']:+.1f}): sus veredictos no son fiables en este universo")
+
+    progress("fechas de resultados (Yahoo)")
+    result.earnings = loader.load_earnings_dates(tickers, as_of)
 
     progress("plan de operacion")
     from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415

@@ -8,11 +8,22 @@ x +1 si research dice LONG, x -1 si dice SHORT) y los umbrales del YAML:
     flip < alineado <= conflict      NO TRADE     el dato contradice; revisar la tesis
     alineado <= flip                 FLIP         el modelo sugiere el lado contrario
 
-**Un FLIP exige evidencia.** Ir contra research es la decision mas fuerte del
-plan. Solo se toma si la validacion del Quant Score (`signals.score_validation`)
-dice que el score ordeno bien los retornos en este universo: t del IC >=
-`flip_min_ic_t`. Si no, el FLIP queda NO TRADE: el dato no respalda a research,
-pero tampoco hay base para apostar en contra.
+**Un FLIP sin evidencia va a medio tamano.** Ir contra research es la decision
+mas fuerte del plan. Con evidencia de que el Quant Score predice en este
+universo (t del IC de `signals.score_validation` >= `flip_min_ic_t`) va a
+tamano completo. Sin ella, `unproven_flip` decide: "reduce" (por defecto) lo
+opera a `reduce_size` con conviccion LOW; "no_trade" lo deja en NO TRADE.
+
+**Senal clara por nombre.** Cada fila lleva `signal` (LONG, SHORT, NO TRADE),
+si va con research o contra, y una conviccion HIGH / MEDIUM / LOW que combina
+la fuerza del score, la evidencia de la validacion y la t del backtest de la
+regla. Sin cartera long/short (una sola pata), cada nombre lleva ademas un
+tamano propio por riesgo (`solo_*`): direccional, no un libro.
+
+**Los numeros se comprueban antes de salir** (`check_plan`): precios
+positivos, stop y objetivos del lado correcto, acciones = nocional / precio
+convertido, riesgo por operacion bajo el tope, ordenes que cuadran con la
+posicion y cobertura que cuadra con la beta. Un fallo sale en rojo.
 
 **Niveles, por volatilidad y no por porcentajes fijos.** Un stop del 5% es
 ruido en una accion de 60% de volatilidad y es enorme en una de 15%:
@@ -80,6 +91,8 @@ class PlanParams:
     hedge_threshold: float = 0.05
     hold_band: float = 0.005
     flip_min_ic_t: float = 2.0
+    unproven_flip: str = "reduce"
+    max_position: float = 0.35
 
 
 def verdict(aligned: float, p: PlanParams) -> str:
@@ -154,14 +167,15 @@ def hit_rate(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.S
 
 
 def size_position(weight: float, verdict_: str, entry: float, stop_pct: float,
-                  capital: float, p: PlanParams, fx: float = 1.0) -> dict[str, float | bool]:
+                  capital: float, p: PlanParams, fx: float = 1.0, mult: float = 1.0) -> dict[str, float | bool]:
     """Nocional (USD) y acciones: el menor entre el peso de cartera y el tope de riesgo.
 
-    `entry` en moneda local; `fx` = USD por unidad de esa moneda.
+    `entry` en moneda local; `fx` = USD por unidad de esa moneda. `mult` recorta
+    aparte (un FLIP sin evidencia va a `reduce_size`).
     """
     if verdict_ == "NO TRADE" or weight == 0 or entry <= 0 or not fx > 0:
         return {"notional": 0.0, "shares": 0, "size_capped_by_risk": False}
-    w = abs(weight) * (p.reduce_size if verdict_ == "REDUCE" else 1.0)
+    w = abs(weight) * (p.reduce_size if verdict_ == "REDUCE" else 1.0) * mult
     notional = w * capital
     cap = p.max_risk_per_trade * capital / stop_pct if stop_pct > 0 else notional
     final = min(notional, cap)
@@ -228,6 +242,94 @@ def long_only_signs(signs: pd.Series, verdicts: pd.Series) -> tuple[pd.Series, p
     convertiria la canasta en un long/short que nadie pidio.
     """
     return block_flips(signs, verdicts)
+
+
+CONVICTION = ("LOW", "MEDIUM", "HIGH")
+
+
+def conviction(verdict_: str, aligned: float, evidence: str, bt_t: float, unproven: bool) -> str:
+    """Cuanto respaldo tiene la senal de un nombre que se opera.
+
+    Fuerza del score alineado (|score| >= 0,5 fuerte, >= 0,15 moderada), con
+    techo MEDIUM si la validacion no muestra que el score predice, LOW si
+    ordena al reves o si es un FLIP sin evidencia, y un escalon menos si la
+    regla perdio dinero de forma clara en este valor (t <= -2).
+    """
+    if verdict_ == "NO TRADE":
+        return ""
+    strength = abs(aligned) if pd.notna(aligned) else 0.0
+    level = 2 if strength >= 0.5 else 1 if strength >= 0.15 else 0
+    if verdict_ == "REDUCE":
+        level = 0
+    if evidence != "predictive":
+        level = min(level, 1)
+    if evidence == "inverse" or unproven:
+        level = 0
+    if bt_t is not None and np.isfinite(bt_t) and bt_t <= -2:
+        level = max(level - 1, 0)
+    return CONVICTION[level]
+
+
+def solo_size(entry: float, risk_per_share: float, fx: float, capital: float, p: PlanParams,
+              mult: float = 1.0) -> dict[str, float]:
+    """Tamano de un nombre por si solo: que el stop cueste `max_risk_per_trade`.
+
+    Sirve cuando no hay cartera long/short que reparta pesos. Nunca mas de
+    `max_position` del capital en nocional: con un stop muy cerca, el tope de
+    riesgo solo daria una posicion enorme.
+    """
+    unit_risk, unit = risk_per_share * fx, entry * fx
+    if not (unit_risk > 0 and unit > 0):
+        return {"shares": 0, "notional": 0.0, "risk_pct": 0.0}
+    shares = math.floor(min(p.max_risk_per_trade * capital * mult / unit_risk,
+                            p.max_position * capital * mult / unit))
+    return {"shares": shares, "notional": shares * unit, "risk_pct": shares * unit_risk / capital}
+
+
+def check_plan(plan: pd.DataFrame, orders: pd.DataFrame, p: PlanParams, capital: float,
+               risk_at_stops: float, hedge: dict | None) -> list[str]:
+    """Que los numeros del plan cuadren entre si. Devuelve los fallos (vacio = todo bien).
+
+    No recalcula el plan con otra formula: comprueba identidades que tienen que
+    cumplirse con cualquier dato. Un fallo aqui es un error de codigo o de
+    datos, y el plan lo dice en rojo en vez de mandar ordenes con el.
+    """
+    errors: list[str] = []
+    for t, r in plan.iterrows():
+        prices = [r.get(k) for k in ("entry", "stop", "tp1", "tp2", "fx")]
+        if not all(v is not None and np.isfinite(v) and v > 0 for v in prices):
+            errors.append(f"{t}: entrada, stop, objetivos o tipo de cambio no validos {prices}")
+            continue
+        side = 1 if r["stop"] < r["entry"] else -1
+        expected = {"BUY": 1, "SELL SHORT": -1}.get(r["action"])
+        if expected is not None and expected != side:
+            errors.append(f"{t}: {r['action']} con el stop del lado de un {'corto' if side < 0 else 'largo'}")
+        if not side * r["entry"] < side * r["tp1"] < side * r["tp2"]:
+            errors.append(f"{t}: objetivos fuera de orden ({r['tp1']:.2f}, {r['tp2']:.2f})")
+        unit = r["entry"] * r["fx"]
+        if r["shares"] < 0 or r["shares"] * unit > r["notional"] + 1e-6 or \
+                (r["notional"] > 0 and r["notional"] - r["shares"] * unit >= unit + 1e-6):
+            errors.append(f"{t}: {r['shares']} acciones no cuadran con nocional {r['notional']:,.0f} "
+                          f"a {unit:,.4f} USD por accion")
+        risk = r["shares"] * abs(r["entry"] - r["stop"]) * r["fx"] / capital
+        if abs(risk - r["risk_capital_pct"]) > 1e-9 or risk > p.max_risk_per_trade + 1e-9:
+            errors.append(f"{t}: riesgo al stop {risk:.4%} (tope {p.max_risk_per_trade:.2%})")
+    for t, o in orders.iterrows():
+        if o.get("verdict") == "NOT ANALYZED":
+            continue
+        moved = int(o["target"]) - int(o["current"])
+        if o["signal"] == "HOLD":
+            continue
+        if o["signal"] != "NO TRADE" and int(o["qty"]) != abs(moved):
+            errors.append(f"{t}: orden de {int(o['qty'])} para pasar de {int(o['current'])} a {int(o['target'])}")
+    total = float(orders.get("risk_capital_pct", pd.Series(dtype=float)).fillna(0.0).sum())
+    if abs(total - risk_at_stops) > 1e-9:
+        errors.append(f"riesgo total {risk_at_stops:.4%} no es la suma de las ordenes {total:.4%}")
+    if hedge:
+        moved = math.copysign(hedge["shares"] * hedge["price"] / capital, hedge["beta_before"])
+        if abs(hedge["beta_before"] - moved - hedge["beta_after"]) > 1e-9:
+            errors.append("la beta tras la cobertura no cuadra con las acciones del benchmark")
+    return errors
 
 
 def flip_allowed(validation: dict | None, min_t: float) -> bool:
@@ -459,9 +561,13 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     if long_only:
         signs, verdicts, flipped = long_only_signs(signs, verdicts)
     validation = getattr(result, "score_validation", None) or {}
+    evidence = score_validation.evidence(validation, p.flip_min_ic_t or 2.0) if validation else "unknown"
     unproven: list[str] = []
     if not flip_allowed(validation, p.flip_min_ic_t):
-        signs, verdicts, unproven = block_flips(signs, verdicts)
+        if p.unproven_flip == "no_trade":
+            signs, verdicts, unproven = block_flips(signs, verdicts)
+        else:
+            unproven = list(verdicts.index[verdicts == "FLIP"])
 
     traded = signs[signs != 0]
     method = result.primary["method"]
@@ -496,9 +602,10 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     if unproven:
         got = (f"IC t {validation['ic_t']:+.1f}" if validation.get("available")
                else f"no validation: {validation.get('reason')}")
-        gate_note = (f"{', '.join(unproven)} scored as FLIP and stays NO TRADE: going against research needs "
-                     f"evidence that the Quant Score predicts on this universe ({got}; needs t >= "
-                     f"{p.flip_min_ic_t:.1f})")
+        outcome = ("stays NO TRADE" if p.unproven_flip == "no_trade"
+                   else f"is traded at {p.reduce_size:.0%} size with LOW conviction")
+        gate_note = (f"{', '.join(unproven)} scored as FLIP and {outcome}: the Quant Score has not shown it "
+                     f"predicts on this universe ({got}; full size needs t >= {p.flip_min_ic_t:.1f})")
         note = "; ".join(n for n in (note, gate_note) if n)
 
     capital = s.initial_capital
@@ -516,8 +623,13 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         fx = result.clean.fx_rate(t).reindex(close.index).ffill()
         fx_now = float(fx.iloc[-1]) if len(fx) and pd.notna(fx.iloc[-1]) else 1.0
 
+        is_unproven = t in unproven and verdicts[t] == "FLIP"
+        mult = p.reduce_size if is_unproven else 1.0
         size = size_position(float(weights.get(t, 0.0)), verdicts[t], lv["entry"], lv["stop_pct"], capital, p,
-                             fx=fx_now)
+                             fx=fx_now, mult=mult)
+        solo = (solo_size(lv["entry"], lv["risk_per_share"], fx_now, capital, p,
+                          mult * (p.reduce_size if verdicts[t] == "REDUCE" else 1.0))
+                if signs[t] != 0 else {"shares": 0, "notional": 0.0, "risk_pct": 0.0})
 
         rows.append({
             "ticker": t,
@@ -535,6 +647,10 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             "shares": size["shares"],
             "risk_capital_pct": size["shares"] * lv["risk_per_share"] * fx_now / capital,
             "size_capped_by_risk": size["size_capped_by_risk"],
+            "signal": ("LONG" if signs[t] > 0 else "SHORT") if signs[t] != 0 else "NO TRADE",
+            "against_research": bool(signs[t] != 0 and np.sign(signs[t]) != research[t]),
+            "unproven_flip": is_unproven,
+            "solo_shares": solo["shares"], "solo_notional": solo["notional"], "solo_risk_pct": solo["risk_pct"],
             "p_tp1_before_stop": hit_rate(close, high, low, a, side, p, p.tp_r[0]),
             "p_tp2_before_stop": hit_rate(close, high, low, a, side, p, p.tp_r[1]),
         })
@@ -549,6 +665,9 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             "exp_return_pct": (st.get("exp_r") or 0.0) * lv["stop_pct"] if st.get("n") else float("nan"),
         })
     plan = pd.DataFrame(rows).set_index("ticker")
+    plan["conviction"] = [conviction(plan.loc[t, "verdict"], plan.loc[t, "aligned_score"], evidence,
+                                     plan.loc[t, "bt_t_stat"], bool(plan.loc[t, "unproven_flip"]))
+                          for t in plan.index]
     try:
         from .signals.composite import normalized_weights  # noqa: PLC0415
 
@@ -621,11 +740,14 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             orders.append({"ticker": t, "signal": "NOT ANALYZED", "qty": 0, "current": int(current),
                            "target": int(current), "verdict": "NOT ANALYZED"})
 
+    orders_df = pd.DataFrame(orders).set_index("ticker")
+    risk_at_stops = float(pd.DataFrame(orders)["risk_capital_pct"].fillna(0.0).sum())
     return {"plan": plan, "corrections": corrections, "note": note, "params": p, "hedge": hedge,
-            "orders": pd.DataFrame(orders).set_index("ticker"), "has_positions": bool(positions),
-            "long_only": long_only, "has_book": has_book, "unproven_flips": unproven,
+            "orders": orders_df, "has_positions": bool(positions),
+            "long_only": long_only, "has_book": has_book, "unproven_flips": unproven, "evidence": evidence,
             "beta": book_beta, "gross": float(final_w.abs().sum()), "net": float(final_w.sum()),
-            "risk_at_stops": float(pd.DataFrame(orders)["risk_capital_pct"].fillna(0.0).sum()),
+            "risk_at_stops": risk_at_stops,
+            "integrity_errors": check_plan(plan, orders_df, p, capital, risk_at_stops, hedge),
             "levels_date": result.clean.close.index[-1],
             "plan_backtest": plan_bt, "portfolio": portfolio_expectations(result),
             "expected_pnl": float(plan["exp_pnl"].sum()),
@@ -650,4 +772,6 @@ def params_from_settings(settings) -> PlanParams:
         hedge_threshold=float(tp.get("hedge_threshold", 0.05)),
         hold_band=float(tp.get("hold_band", 0.005)),
         flip_min_ic_t=float(tp.get("flip_min_ic_t", 2.0)),
+        unproven_flip=str(tp.get("unproven_flip", "reduce")),
+        max_position=float(settings.get("portfolio.max_position", 0.35)),
     )

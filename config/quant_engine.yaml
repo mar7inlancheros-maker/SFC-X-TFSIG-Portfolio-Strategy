@@ -136,6 +136,9 @@ trade_plan:
   # t del IC de la validacion >= este valor. Si no, el FLIP queda NO TRADE.
   # 0 lo desactiva.
   flip_min_ic_t: 2.0
+  # FLIP sin esa evidencia: "reduce" lo opera a reduce_size con conviccion LOW
+  # (el plan dice como ejecutar el lado contrario); "no_trade" no lo opera.
+  unproven_flip: reduce
 
 # Universo de referencia del Quant Score. Se usa cuando la canasta es solo LONG
 # o tiene menos de min_cross_section nombres: dentro de una canasta asi no hay

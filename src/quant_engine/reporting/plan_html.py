@@ -76,6 +76,12 @@ td.wrapcell { white-space:normal; text-align:left; min-width:220px; }
 .charts img { width:100%; height:auto; display:block; }
 ul { padding-left:20px; } li { margin:3px 0; }
 .sub3 { font-size:15px; margin:22px 0 8px; }
+.card { border:1px solid var(--line); border-radius:8px; padding:12px 16px; margin:12px 0; }
+.card h3 { margin:0 0 6px; font-size:16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.card .hl { margin:4px 0 8px; }
+.card .why { margin:4px 0; font-size:13px; }
+.card ol { margin:6px 0 0; padding-left:22px; } .card ol li { margin:4px 0; font-size:13px; }
+.conv { font-size:12px; color:var(--muted); }
 footer { margin-top:36px; color:var(--muted); font-size:12px; }
 @media print {
   main { padding:0; } h2, h3 { break-after:avoid; } figure, tr, .kpi, .note { break-inside:avoid; }
@@ -179,6 +185,66 @@ def _equity_chart(r: AnalysisResult) -> str | None:
     fig.savefig(buf, format="png", dpi=120)
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+_SIGNAL_BADGE = {"LONG": "BUY", "SHORT": "SELL SHORT", "NO TRADE": "NO TRADE", "NOT ANALYZED": "NOT ANALYZED"}
+
+
+def _signal_cards(r: AnalysisResult, h2) -> list[str]:
+    """Una ficha por nombre: senal, por que, fundamentales y pasos de ejecucion."""
+    from ..playbook import (  # noqa: PLC0415
+        build_cards,
+        card_size_note,
+        standalone_total,
+    )
+
+    cards = build_cards(r)
+    if not cards:
+        return []
+    tp = r.trade_plan
+    p = tp["params"]
+    bench = r.settings.benchmark
+    bench_close = r.clean.close[bench].dropna()
+    total = standalone_total(cards, bench, float(bench_close.iloc[-1]) if len(bench_close) else float("nan"))
+    out = [h2("Signals: what to do, why, and how")]
+    errors = tp.get("integrity_errors")
+    if errors:
+        out.append("<p class='note alert'><b>Plan integrity check failed: do not send these orders until "
+                   "fixed.</b><br>" + "<br>".join(escape(e) for e in errors) + "</p>")
+    elif errors is not None:
+        out.append("<p class='muted'>Integrity check passed: prices, sides, shares = notional / price, risk caps, "
+                   "orders and hedge all reconcile.</p>")
+    for t, c in cards.items():
+        conv = f"<span class='conv'>conviction {escape(c['conviction'])}</span>" if c.get("conviction") else ""
+        side = (f"<span class='conv'>{'against' if c.get('against_research') else 'with'} research "
+                f"{escape(c['research'])}</span>" if c["signal"] in ("LONG", "SHORT") else "")
+        badge = _badge(_SIGNAL_BADGE.get(c["signal"], "NO TRADE"))
+        block = [f"<div class='card'><h3>{escape(t)} {badge}{side}{conv}</h3><p class='hl'>{escape(c['headline'])}</p>"]
+        if c["why_for"]:
+            block.append(f"<p class='why'><span class='up'>Backs research {escape(c['research'])}:</span> "
+                         + escape("; ".join(c["why_for"])) + "</p>")
+        if c["why_against"]:
+            block.append(f"<p class='why'><span class='down'>Against research {escape(c['research'])}:</span> "
+                         + escape("; ".join(c["why_against"])) + "</p>")
+        if c["fundamentals"]:
+            block.append("<p class='why'><b>Fundamentals:</b> " + escape(" | ".join(c["fundamentals"])) + "</p>")
+        if c["data_flags"]:
+            block.append("<p class='why down'><b>Data to verify:</b> " + escape("; ".join(c["data_flags"])) + "</p>")
+        if c.get("steps"):
+            block.append(f"<p class='why'><b>Size:</b> {c['shares']:,} shares, ~{c['notional']:,.0f} USD, stop costs "
+                         f"{c['risk_pct']:.2%} of capital ({escape(card_size_note(c, p.max_risk_per_trade))}).</p>")
+            block.append("<p class='why'><b>How to execute:</b></p><ol>"
+                         + "".join(f"<li>{escape(s)}</li>" for s in c["steps"]) + "</ol>")
+        block.append("</div>")
+        out.append("".join(block))
+    if total:
+        out.append(f"<p class='note warn'><b>All standalone positions together</b> "
+                   f"({escape(', '.join(total['names']))}): long {total['long']:,.0f} USD, short "
+                   f"{total['short']:,.0f} USD, net {total['net']:+,.0f} USD, beta-weighted {total['beta_usd']:+,.0f} "
+                   f"USD of {escape(bench)}, {total['risk_pct']:.2%} of capital if every stop hits. One hedge for all "
+                   f"of them instead of one per name: {escape(total['hedge_action'])} {total['hedge_shares']:,} "
+                   f"{escape(bench)} at ~{total['bench_price']:,.2f}.</p>")
+    return out
 
 
 def _tstat(v) -> str:
@@ -332,6 +398,9 @@ def build(r: AnalysisResult) -> str:
     out.append("<div class='kpis'>" + "".join(
         f"<div class='kpi'><div class='v'>{v}</div><div class='l'>{l}</div></div>" for v, l in kpis) + "</div>")
 
+    # Senales: que hacer, por que y como.
+    out.extend(_signal_cards(r, h2))
+
     # 1. Ordenes
     out.append(h2("Orders"))
     if not tp.get("has_positions"):
@@ -376,8 +445,11 @@ def build(r: AnalysisResult) -> str:
         out.append(f"<p class='note{' warn' if ev != 'predictive' else ''}'><b>Does the Quant Score predict?</b> "
                    f"Recomputed at {sv['months']} past month-ends with the data of each day, against the next "
                    f"month: IC {sv['ic_mean']:+.3f} (t {sv['ic_t']:+.1f}), {escape(text)}."
-                   + (f" {escape(', '.join(tp['unproven_flips']))}: the score says FLIP, but going against "
-                      "research needs that evidence, so it stays NO TRADE." if tp.get("unproven_flips") else "")
+                   + ((f" {escape(', '.join(tp['unproven_flips']))}: the score says FLIP, but going against "
+                       "research needs that evidence, so it stays NO TRADE." if p.unproven_flip == "no_trade" else
+                       f" {escape(', '.join(tp['unproven_flips']))}: the score says FLIP; without that evidence "
+                       f"the other side is taken at {p.reduce_size:.0%} size with LOW conviction.")
+                      if tp.get("unproven_flips") else "")
                    + "</p>")
     out.append(f"<p class='muted'>Aligned score = Quant Score &times; (+1 if research says LONG, &minus;1 if SHORT). "
                f"&ge; {p.weak:+.2f} confirm; between {p.conflict:+.2f} and {p.weak:+.2f} reduce to "

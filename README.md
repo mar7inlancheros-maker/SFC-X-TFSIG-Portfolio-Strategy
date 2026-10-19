@@ -364,11 +364,50 @@ universo. Ningún componente llegó a |t| = 2. Los pesos del YAML no se
 reajustan con este resultado: elegir pesos con la misma muestra que los
 evalúa es sobreajustar.
 
-**Ir contra research exige esa evidencia.** Un FLIP solo se opera si la t del
-IC llega a `trade_plan.flip_min_ic_t` (2 por defecto). Si no, queda NO TRADE:
-el dato no respalda a research, pero tampoco hay base para apostar en contra.
-El plan lo dice nombre por nombre. Con `validation.enabled: false` no hay
-validación y el FLIP vuelve a operarse.
+**Ir contra research a tamaño completo exige esa evidencia.** Un FLIP va a
+tamaño completo solo si la t del IC llega a `trade_plan.flip_min_ic_t` (2 por
+defecto). Sin esa evidencia, `trade_plan.unproven_flip` decide: `reduce` (por
+defecto) toma el lado contrario a `reduce_size` (50%) con convicción LOW;
+`no_trade` lo deja en NO TRADE. El plan lo dice nombre por nombre.
+
+**Una señal clara por nombre, y cómo ejecutarla.** Al final del plan, en la
+terminal y al principio del HTML, cada nombre tiene una ficha:
+
+- **Señal**: LONG, SHORT o NO TRADE; si va con research o contra; y una
+  convicción HIGH / MEDIUM / LOW. La convicción combina la fuerza del score,
+  la evidencia de la validación y la t del backtest de la regla.
+- **Por qué**: los componentes que respaldan a research y los que van en
+  contra, con los números que hay detrás (momentum 12-1 −14%, ROE 25%,
+  revisión de estimaciones +5,8%, 11,7% de las acciones en corto…).
+- **Fundamentales**, con aviso si un valor no es creíble (flujo de caja libre
+  >50% del precio, ROE >200%).
+- **Datos a verificar**: último precio viejo o con salto de más del 25% (es
+  la entrada del plan), saltos con forma de split, barras reparadas.
+- **Cómo ejecutarla, paso a paso**. Para un corto, el primer paso es
+  localizar el préstamo, con el riesgo de squeeze y el coste asumido (más de
+  5% al año invalida la expectativa). Luego vienen SELL SHORT, BUY STOP por
+  encima de la entrada, BUY TO COVER en TP1 y TP2, salida por tiempo con
+  fecha, margen Reg T y dividendos. Para un largo, lo mismo con SELL STOP. Si
+  ya se tiene el lado contrario, primero se cierra. Se avisa de los
+  resultados antes de la salida (fecha de Yahoo) y de la moneda.
+- **Tamaño**: el del libro long/short. Si no hay libro (queda una sola pata),
+  un tamaño propio por riesgo: el stop cuesta el 1% del capital (por la
+  convicción), con tope de nocional. El total de todas esas posiciones se
+  muestra junto, con una sola cobertura en SPY.
+
+**Los números se comprueban antes de salir.** `trade_plan.check_plan` verifica:
+- precios positivos y stop y objetivos del lado correcto;
+- acciones = nocional / precio convertido a USD;
+- riesgo por operación bajo el tope;
+- órdenes que cuadran con la posición actual;
+- riesgo total = suma de las órdenes;
+- beta tras la cobertura que cuadra.
+
+Un fallo sale en rojo con "do not send these orders". Además, la limpieza de
+precios repara barras con máximo o mínimo incoherente y excluye saltos de x20
+en un día (moneda o unidad equivocada). También avisa de un último precio de
+hace 3 o más sesiones, de un último cierre que salta más del 25% y de saltos
+con forma de split.
 
 **Valores extremos.** Antes de cada z-score, la sección cruzada se recorta al
 percentil 5–95 si hay 20 nombres o más. Un solo valor extremo, como el flujo

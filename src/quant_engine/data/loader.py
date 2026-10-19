@@ -188,7 +188,7 @@ def load_ohlcv(
                     result.ohlcv[ticker] = frame.loc[frame.index >= start]
                     result.stale[ticker] = frame.index.max()
                     continue
-                result.failures[ticker] = "Yahoo no devolvio datos (ticker invalido, deslistado o sin historia)"
+                result.failures[ticker] = "Yahoo returned no data (invalid ticker, delisted or no history)"
                 continue
             cache.write_frame(_cache_name(ticker), frame.reset_index())
             requested[ticker] = start.strftime("%Y-%m-%d")
@@ -228,3 +228,55 @@ def load_sectors(tickers: list[str] | tuple[str, ...]) -> tuple[dict[str, str], 
         except Exception as exc:  # noqa: BLE001
             sectors[ticker], source[ticker] = "Unknown", f"perfil SEC fallo: {type(exc).__name__}"
     return sectors, source
+
+
+_EARNINGS = "qe_earnings_dates"
+
+
+def _next_earnings(ticker: str) -> pd.Timestamp | None:
+    import yfinance as yf  # perezoso: los tests no tocan la red
+
+    cal = yf.Ticker(ticker).calendar
+    dates = cal.get("Earnings Date") if isinstance(cal, dict) else None
+    if not dates:
+        return None
+    stamps = sorted(pd.Timestamp(d) for d in (dates if isinstance(dates, (list, tuple)) else [dates]))
+    return stamps[0]
+
+
+def load_earnings_dates(tickers, today: pd.Timestamp, timeout: float = 20.0,
+                        fetch=None) -> dict[str, pd.Timestamp]:
+    """Proxima fecha de resultados de cada ticker, la que da Yahoo.
+
+    Solo para la ejecucion: un resultado antes de la salida por tiempo puede
+    saltar el stop con un gap. Se cachea un dia. Lo que no llega en `timeout`
+    segundos queda sin fecha y la ficha dice que hay que comprobarla: nunca se
+    inventa una fecha ni se bloquea la corrida por ella.
+    """
+    import concurrent.futures as cf  # noqa: PLC0415
+
+    fetch = fetch or _next_earnings
+    day = today.strftime("%Y-%m-%d")
+    cached = cache.read_json(_EARNINGS) or {}
+    known = cached.get(day, {})
+    out = {t: pd.Timestamp(v) for t, v in known.items() if v}
+    todo = [t for t in tickers if t not in known]
+    if todo:
+        pool = cf.ThreadPoolExecutor(max_workers=min(8, len(todo)))
+        futures = {pool.submit(fetch, t): t for t in todo}
+        done, _ = cf.wait(futures, timeout=timeout)
+        for f in done:
+            t = futures[f]
+            try:
+                d = f.result()
+            except Exception as exc:  # noqa: BLE001 -- sin fecha, la ficha lo dice
+                log.info("sin fecha de resultados para %s: %s", t, exc)
+                d = None
+            known[t] = d.strftime("%Y-%m-%d") if d is not None and pd.notna(d) else None
+            if d is not None and pd.notna(d):
+                out[t] = pd.Timestamp(d)
+        pool.shutdown(wait=False, cancel_futures=True)
+        cache.write_json(_EARNINGS, {day: known})
+    # Una fecha ya pasada (Yahoo tarda en actualizar) no es la proxima.
+    return {t: d for t, d in out.items() if d >= today.normalize()}
+

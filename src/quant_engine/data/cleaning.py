@@ -31,6 +31,40 @@ from .loader import MarketData
 
 EXTREME_RETURN = 0.50  # |r| diario por encima de esto se marca (no se borra)
 STALE_RUN = 5          # sesiones seguidas con cierre identico
+UNIT_JUMP = 20.0       # x20 en un dia: moneda o unidad equivocada (peniques/libras), no mercado
+# Saltos con forma de split sin ajustar: el precio se multiplica o divide por
+# un entero comun en un dia. Una caida real del 50% existe; por eso es aviso.
+SPLIT_RATIOS = (2.0, 3.0, 4.0, 5.0, 10.0)
+SPLIT_TOLERANCE = 0.02
+
+
+def repair_ohlc(frame: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Maximo y minimo coherentes con apertura y cierre, y cuantas barras se tocaron.
+
+    Yahoo da a veces un maximo por debajo del cierre o un minimo por encima.
+    El ATR, el stop y la tasa base de TP salen de maximos y minimos: una barra
+    incoherente mueve los niveles. Se toma el maximo y el minimo de los cuatro.
+    """
+    cols = [c for c in ("Open", "High", "Low", "Close") if c in frame.columns]
+    if not {"High", "Low", "Close"} <= set(cols):
+        return frame, 0
+    prices = frame[cols].where(frame[cols] > 0)
+    hi, lo = prices.max(axis=1), prices.min(axis=1)
+    changed = ((frame["High"] - hi).abs() > 1e-9 * hi) | ((frame["Low"] - lo).abs() > 1e-9 * lo)
+    changed &= frame["Close"].notna() & frame["High"].notna() & frame["Low"].notna()
+    out = frame.copy()
+    out["High"], out["Low"] = hi.where(frame["High"].notna()), lo.where(frame["Low"].notna())
+    return out, int(changed.sum())
+
+
+def split_like_jumps(close: pd.Series) -> int:
+    """Dias en que el precio se multiplico o dividio por 2, 3, 4, 5 o 10 (+-2%)."""
+    ratio = (close / close.shift()).dropna()
+    hits = pd.Series(False, index=ratio.index)
+    for k in SPLIT_RATIOS:
+        hits |= (ratio / k - 1).abs() < SPLIT_TOLERANCE
+        hits |= (ratio * k - 1).abs() < SPLIT_TOLERANCE
+    return int(hits.sum())
 
 
 @dataclass
@@ -107,6 +141,7 @@ def align(market: MarketData, benchmark: str, *, max_ffill: int = 2,
         n_raw = len(raw)
         frame = raw[~raw.index.duplicated(keep="last")].sort_index()
         duplicates = n_raw - len(frame)
+        frame, ohlc_repaired = repair_ohlc(frame)
 
         close = frame["Close"].where(frame["Close"] > 0)
         non_positive = int(frame["Close"].le(0).sum())
@@ -132,7 +167,15 @@ def align(market: MarketData, benchmark: str, *, max_ffill: int = 2,
                     fields[f][ticker] = col if rate is None else col * rate
 
         rets = filled.pct_change(fill_method=None)
+        valid = filled.dropna()
         stats[ticker] = {
+            "ohlc_repaired": float(ohlc_repaired),
+            "unit_jumps": float(((1 + rets) >= UNIT_JUMP).sum() + ((1 + rets) <= 1 / UNIT_JUMP).sum()),
+            "split_like": float(split_like_jumps(valid)),
+            # Sesiones del benchmark despues del ultimo precio: un precio viejo da
+            # una entrada, un stop y un tamano que ya no son los de hoy.
+            "last_gap": float((calendar > last).sum()) if last is not None else float("nan"),
+            "last_jump": float(valid.iloc[-1] / valid.iloc[-2] - 1) if len(valid) >= 2 else float("nan"),
             "raw_obs": float(n_raw),
             "active_sessions": float(len(active)),
             "duplicates": float(duplicates),
