@@ -382,15 +382,22 @@ pero no mueve nada. Los veredictos no cambian.
 
 **Nombres fuera del universo del multifactor.** La ficha dice qué regla del
 modelo los deja fuera: precio por debajo de 5 USD, liquidez, tamaño, historia,
-falta de valor o de calidad, o que no estaban en su lista (un cambio de
-ticker). Además los puntúa como referencia: sus métricas salen con las mismas
+el tope de los 1.200 nombres más líquidos (`universe.max_names`), o falta de
+valor o de calidad. Además los puntúa como referencia: sus métricas salen con las mismas
 funciones del modelo (fundamentales point-in-time de la SEC, o el TTM de
 Compustat si no presentan allí; momentum 12-1 y volatilidad). Se añaden a la
 sección cruzada de la última fecha y se puntúan con `build_scores`. Ese score
 no mueve la convicción, porque la validación cubre solo el universo. En
 octubre de 2026, AMC estaba fuera por precio y en el percentil 10, contra el
-LONG de research. GOLD estaba fuera por cambio de ticker y en el percentil
-100, contra el SHORT de research.
+LONG de research. GOLD estaba fuera por el tope de liquidez: 18,6 M USD al
+día, frente a 49,6 M del último nombre que entró. Quedaba en el percentil 100,
+contra el SHORT de research.
+
+**¿Puede el multifactor decidir los veredictos?** Medido en los pares del motor
+(unas 41 grandes empresas por fecha, 2012–2026), su IC es 0,018, tan fuerte
+como en el universo completo (0,019). Pero con t 1,06: con 41 nombres el ruido
+de un IC mensual es grande. Por eso entra como evidencia solo en los quintiles
+extremos y no sustituye al Quant Score en los veredictos.
 
 **Valor relativo frente al DCF.** El DCF es valor absoluto. El factor de valor
 del multifactor (z sectorial de los rendimientos por beneficio, flujo de caja,

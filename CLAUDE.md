@@ -468,6 +468,10 @@ Trampas:
   añadidas. Una fila más mueve un poco media y desviación: un nombre idéntico a
   uno de dentro cae casi en el mismo sitio (hay un test), no exactamente. Ese
   score nunca entra en `mf_rows` ni mueve la convicción.
+- **`universe.max_names` (1.200) es una regla de exclusión más.** El panel se
+  queda cada fecha con los 1.200 más líquidos. `exclusion_reasons` la mide con
+  el volumen del último que entró; sin ella, Gold.com salía como "cambio de
+  ticker", que era falso.
 - **La ficha limitada (`playbook.limited_card`) nunca da tamaño ni pasos de
   ejecución.** Un nombre sin score ni backtest no tiene base para dimensionar.
   Si se le añade tamaño, deja de ser "limitada" y pasa a ser una señal sin

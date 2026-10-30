@@ -142,3 +142,14 @@ def test_valor_relativo_frente_al_dcf():
     assert "agrees with the DCF" in pb.relative_check("UNDERVALUED", cheap)
     assert "disagrees with the DCF" in pb.relative_check("UNDERVALUED", dear)
     assert "outside its universe" in pb.relative_check("FAIR VALUE", dear)
+
+
+def test_el_tope_de_nombres_liquidos_es_una_razon_de_exclusion():
+    from sfc_tfsig.config import load_config
+
+    cfg = load_config(None)
+    gold = pd.Series({"price": 38.0, "dollar_volume": 18.6e6, "market_cap": 1.2e9, "history_months": 150})
+    reasons = mf.exclusion_reasons(gold, cfg, liquidity_cutoff=25e6)
+    assert len(reasons) == 1 and "most liquid names" in reasons[0] and "max_names" in reasons[0]
+    assert mf.exclusion_reasons(gold, cfg, liquidity_cutoff=10e6) == []
+

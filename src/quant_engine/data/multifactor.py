@@ -95,8 +95,14 @@ _MONEY = ("revenue", "cogs", "net_income", "operating_income", "interest_expense
           "assets", "liabilities", "debt_long", "debt_short", "cash", "current_assets", "current_liabilities")
 
 
-def exclusion_reasons(row: pd.Series, cfg) -> list[str]:
-    """Reglas del universo del multifactor que el nombre no cumple en esa fecha."""
+def exclusion_reasons(row: pd.Series, cfg, liquidity_cutoff: float | None = None) -> list[str]:
+    """Reglas del universo del multifactor que el nombre no cumple en esa fecha.
+
+    `liquidity_cutoff`: volumen en dolares del ultimo nombre que entro esa fecha.
+    El universo se queda con los `universe.max_names` mas liquidos; sin esta
+    regla, Gold.com (18,6 M USD al dia, por debajo del corte) salia como "cambio
+    de ticker", que era falso.
+    """
     g = lambda k: float(row[k]) if k in row and pd.notna(row[k]) else np.nan  # noqa: E731
     rules = [("price", "universe.min_price", "price {v:,.2f} USD below the {m:,.2f} minimum"),
              ("dollar_volume", "universe.min_dollar_volume", "trades {v:,.0f} USD a day, below {m:,.0f}"),
@@ -108,6 +114,10 @@ def exclusion_reasons(row: pd.Series, cfg) -> list[str]:
         v = g(col)
         if m is not None and np.isfinite(v) and v < float(m):
             out.append(text.format(v=v, m=float(m)))
+    dv = g("dollar_volume")
+    if liquidity_cutoff is not None and np.isfinite(dv) and dv < liquidity_cutoff and not out:
+        out.append(f"trades {dv:,.0f} USD a day, below the {liquidity_cutoff:,.0f} of the last of the "
+                   f"{int(cfg.get('universe.max_names'))} most liquid names the model keeps (universe.max_names)")
     return out
 
 
@@ -196,6 +206,9 @@ def outside_universe(tickers: list[str], panel: pd.DataFrame, cfg, clean, sector
                      wrds=None) -> dict[str, dict]:
     """Por que cada nombre no esta en el universo, y donde quedaria si estuviera."""
     date = pd.Timestamp(panel["date"].max())
+    last = panel[panel["date"] == date]
+    cutoff = (float(last["dollar_volume"].min())
+              if "dollar_volume" in last and len(last) >= int(cfg.get("universe.max_names")) else None)
     rows, notes = [], {}
     for t in tickers:
         fund, source = fundamentals_row(t, date, wrds)
@@ -207,7 +220,7 @@ def outside_universe(tickers: list[str], panel: pd.DataFrame, cfg, clean, sector
         row["ticker"], row["sector"] = t, sectors.get(t, "Unknown")
         row["market_cap"] = row["price"] * row["shares"] if pd.notna(row.get("shares")) else np.nan
         rows.append(row)
-        notes[t] = {"reasons": exclusion_reasons(row, cfg), "source": source, "scored": True}
+        notes[t] = {"reasons": exclusion_reasons(row, cfg, cutoff), "source": source, "scored": True}
     if rows:
         scored = score_outside(panel, pd.DataFrame(rows), cfg)
         for t in scored.index:
