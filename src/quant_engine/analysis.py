@@ -92,6 +92,7 @@ class AnalysisResult:
     earnings: dict[str, pd.Timestamp] = field(default_factory=dict)
     ex_dividend: dict[str, pd.Timestamp] = field(default_factory=dict)
     valuation: dict[str, dict] = field(default_factory=dict)
+    multifactor: dict[str, object] = field(default_factory=dict)
 
 
 def _params(settings: EngineSettings, beta_neutral: bool = False) -> ConstructionParams:
@@ -677,6 +678,14 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     for t, v in result.valuation.items():
         if not v.get("available"):
             warnings.append(f"DCF de {t} no disponible: {v.get('reason')}")
+
+    # El score validado del modelo multifactor (de disco, sin red).
+    from .data import multifactor as mf_mod  # noqa: PLC0415
+
+    result.multifactor = mf_mod.load(tickers, as_of)
+    if result.multifactor.get("available") and result.multifactor.get("stale"):
+        warnings.append(f"panel del multifactor del {result.multifactor['date']:%Y-%m-%d}: tiene mas de "
+                        f"{mf_mod.STALE_DAYS} dias, no cuenta como evidencia; correr python main.py panel")
 
     progress("plan de operacion")
     from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415

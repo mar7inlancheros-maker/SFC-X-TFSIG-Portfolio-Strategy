@@ -344,6 +344,8 @@ def headline(t: str, row: pd.Series, p) -> str:
         size = f"; data is neutral, so {p.reduce_size:.0%} size"
     elif row.get("unproven_flip"):
         size = f"; the score has not shown it predicts here, so {p.reduce_size:.0%} size"
+    elif row.get("flip_backed_by_multifactor"):
+        size = "; full size because the validated multifactor model backs the other side"
     return f"{lead}. Conviction {row['conviction']} (aligned score {score:+.2f}){size}."
 
 
@@ -401,6 +403,9 @@ def build_cards(result) -> dict[str, dict]:
                                                  float(row["tp1"])) if side else []
         val = (getattr(result, "valuation", None) or {}).get(t)
         card["valuation"], card["valuation_vs_signal"] = valuation_lines(row["signal"], summary(val) if val else None)
+        mf_line = multifactor_line(t, row, getattr(result, "multifactor", None))
+        if mf_line:
+            card["valuation"] = [mf_line, *card["valuation"]]
         if side and shares > 0:
             short_facts = {"si_pct": row_facts.get("si_pct_float"), "days_to_cover": row_facts.get("days_to_cover")}
             short_facts["squeeze"] = squeeze_risk(short_facts["si_pct"], short_facts["days_to_cover"])
@@ -525,6 +530,28 @@ def valuation_lines(signal: str, val: dict | None) -> tuple[list[str], str]:
     elif signal in ("LONG", "SHORT"):
         agree = "valuation is neutral for this trade: the DCF is within the fair-value band"
     return lines, agree
+
+
+def multifactor_line(t: str, row: pd.Series, mf: dict | None) -> str:
+    """Donde esta el nombre en el modelo multifactor validado, y si respalda la senal."""
+    if not mf or not mf.get("available"):
+        return ""
+    info = mf.get("rows", {}).get(t)
+    if not info:
+        reason = mf.get("missing", {}).get(t)
+        return f"Multifactor model: {reason}." if reason else ""
+    ev = mf.get("evidence") or {}
+    proof = (f"validated: monthly IC {ev['ic']:.3f}, t {ev['ic_t']:.1f}, over {ev['months']:.0f} months"
+             if ev.get("ic") is not None else "no backtest report to validate it")
+    parts = ", ".join(f"{k} {info[k]:+.2f}" for k in ("value", "quality", "momentum", "lowvol") if k in info)
+    q = 5 - min(int(info["percentile"] * 5), 4)
+    side = {"LONG": 1, "SHORT": -1}.get(row.get("signal"), 0)
+    from .data.multifactor import agreement  # noqa: PLC0415
+
+    verdict = {1: "backs the trade", -1: "contradicts the trade", 0: "neutral for the trade"}[agreement(side, info["percentile"])]
+    stale = " (panel more than 45 days old: not used as evidence)" if mf.get("stale") else ""
+    return (f"Multifactor model ({proof}): {info['percentile']:.0%} percentile of {mf['universe']:,} names on "
+            f"{pd.Timestamp(mf['date']):%Y-%m-%d}, quintile Q{q} ({parts}); {verdict if side else 'no trade'}.{stale}")
 
 
 def card_size_note(card: dict, max_risk: float) -> str:

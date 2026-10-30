@@ -456,6 +456,12 @@ Trampas:
   revisión de la primera mitad de las entradas y E(R) medida en la segunda. La
   mejora dentro de muestra (`bt_exp_r_time_stop`) no sirve para decidir:
   siempre sale a favor.
+- **El multifactor solo cuenta si `multifactor.usable`**: panel de 45 días o
+  menos y t del IC ≥ 2 en el último reporte OFICIAL (`backtest_AAAAMMDD_HHMM.md`).
+  Un contrafactual o un experimento va a otra carpeta
+  (`output/reports/counterfactual/`): con el mismo patrón de nombre se colaría
+  como evidencia. Solo mueve la convicción (±1 escalón) y los FLIP sin
+  evidencia; los veredictos no.
 - **La ficha limitada (`playbook.limited_card`) nunca da tamaño ni pasos de
   ejecución.** Un nombre sin score ni backtest no tiene base para dimensionar.
   Si se le añade tamaño, deja de ser "limitada" y pasa a ser una señal sin

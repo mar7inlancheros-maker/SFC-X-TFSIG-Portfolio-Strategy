@@ -69,6 +69,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .data import multifactor
 from .portfolio import construction
 from .portfolio.constraints import ConstructionParams
 from .signals import score_validation
@@ -247,7 +248,8 @@ def long_only_signs(signs: pd.Series, verdicts: pd.Series) -> tuple[pd.Series, p
 CONVICTION = ("LOW", "MEDIUM", "HIGH")
 
 
-def conviction(verdict_: str, aligned: float, evidence: str, bt_t: float, unproven: bool) -> str:
+def conviction(verdict_: str, aligned: float, evidence: str, bt_t: float, unproven: bool,
+               mf_agree: int = 0) -> str:
     """Cuanto respaldo tiene la senal de un nombre que se opera.
 
     Fuerza del score alineado (|score| >= 0,5 fuerte, >= 0,15 moderada), con
@@ -267,6 +269,11 @@ def conviction(verdict_: str, aligned: float, evidence: str, bt_t: float, unprov
         level = 0
     if bt_t is not None and np.isfinite(bt_t) and bt_t <= -2:
         level = max(level - 1, 0)
+    # El multifactor validado (IC con t >= 2 en su backtest) en su quintil
+    # extremo: un escalon arriba si respalda la direccion, uno abajo si la
+    # contradice. Va despues del techo por falta de evidencia del Quant Score:
+    # es evidencia de otro modelo, y si la hay.
+    level = min(max(level + int(mf_agree), 0), 2)
     return CONVICTION[level]
 
 
@@ -631,11 +638,22 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     validation = getattr(result, "score_validation", None) or {}
     evidence = score_validation.evidence(validation, p.flip_min_ic_t or 2.0) if validation else "unknown"
     unproven: list[str] = []
+    mf = getattr(result, "multifactor", None) or {}
+    mf_ok = multifactor.usable(mf)
+    mf_rows = mf.get("rows", {}) if mf_ok else {}
+    mf_backed: list[str] = []
     if not flip_allowed(validation, p.flip_min_ic_t):
-        if p.unproven_flip == "no_trade":
-            signs, verdicts, unproven = block_flips(signs, verdicts)
+        flips = list(verdicts.index[verdicts == "FLIP"])
+        # Un FLIP que el multifactor validado respalda en su quintil extremo no
+        # es "sin evidencia": va a tamano completo.
+        mf_backed = [t for t in flips if multifactor.agreement(int(np.sign(signs[t])),
+                                                                mf_rows.get(t, {}).get("percentile")) > 0]
+        weak = [t for t in flips if t not in mf_backed]
+        if p.unproven_flip == "no_trade" and weak:
+            blocked_signs, blocked_verdicts, unproven = block_flips(signs[weak], verdicts[weak])
+            signs.loc[weak], verdicts.loc[weak] = blocked_signs, blocked_verdicts
         else:
-            unproven = list(verdicts.index[verdicts == "FLIP"])
+            unproven = weak
 
     traded = signs[signs != 0]
     method = result.primary["method"]
@@ -756,8 +774,13 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             "exp_return_pct": (st.get("exp_r") or 0.0) * lv["stop_pct"] if st.get("n") else float("nan"),
         })
     plan = pd.DataFrame(rows).set_index("ticker")
+    plan["mf_percentile"] = [mf_rows.get(t, {}).get("percentile", np.nan) for t in plan.index]
+    plan["mf_agreement"] = [multifactor.agreement({"LONG": 1, "SHORT": -1}.get(plan.loc[t, "signal"], 0),
+                                                  plan.loc[t, "mf_percentile"]) for t in plan.index]
+    plan["flip_backed_by_multifactor"] = [t in mf_backed for t in plan.index]
     plan["conviction"] = [conviction(plan.loc[t, "verdict"], plan.loc[t, "aligned_score"], evidence,
-                                     plan.loc[t, "bt_t_stat"], bool(plan.loc[t, "unproven_flip"]))
+                                     plan.loc[t, "bt_t_stat"], bool(plan.loc[t, "unproven_flip"]),
+                                     int(plan.loc[t, "mf_agreement"]))
                           for t in plan.index]
     try:
         from .signals.composite import normalized_weights  # noqa: PLC0415
@@ -836,6 +859,7 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     return {"plan": plan, "corrections": corrections, "note": note, "params": p, "hedge": hedge,
             "orders": orders_df, "has_positions": bool(positions),
             "long_only": long_only, "has_book": has_book, "unproven_flips": unproven, "evidence": evidence,
+            "multifactor": mf, "multifactor_backed_flips": mf_backed,
             "beta": book_beta, "gross": float(final_w.abs().sum()), "net": float(final_w.sum()),
             "risk_at_stops": risk_at_stops,
             "integrity_errors": check_plan(plan, orders_df, p, capital, risk_at_stops, hedge),

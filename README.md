@@ -364,6 +364,22 @@ universo. Ningún componente llegó a |t| = 2. Los pesos del YAML no se
 reajustan con este resultado: elegir pesos con la misma muestra que los
 evalúa es sobreajustar.
 
+**El score validado del modelo multifactor entra como evidencia.** El Quant
+Score del motor long/short no ha demostrado que prediga. El compuesto del
+modelo multifactor sí: en su backtest, IC 0,024 con t de Newey-West 3,0 en 177
+meses y quintiles casi perfectamente ordenados. Cada ficha dice en qué
+percentil del último panel del multifactor está el nombre (`data/multifactor.py`,
+de disco, sin red). Si el nombre está en su quintil extremo:
+
+- respalda la dirección (LONG en Q1, SHORT en Q5): la convicción sube un
+  escalón, y un FLIP sin evidencia del Quant Score va a tamaño completo;
+- la contradice: la convicción baja un escalón.
+
+La evidencia se lee del último reporte oficial de backtest
+(`output/reports/backtest_AAAAMMDD_HHMM.md`). Sin reporte, con un IC sin
+significancia o con el panel de hace más de 45 días, el percentil se muestra
+pero no mueve nada. Los veredictos no cambian.
+
 **Ir contra research a tamaño completo exige esa evidencia.** Un FLIP va a
 tamaño completo solo si la t del IC llega a `trade_plan.flip_min_ic_t` (2 por
 defecto). Sin esa evidencia, `trade_plan.unproven_flip` decide: `reduce` (por
