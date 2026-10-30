@@ -27,6 +27,35 @@ import pandas as pd
 from .momentum import _wilder, macd, rsi
 
 
+def earnings_moves(returns: pd.Series, report_dates=None, years: int = 3) -> dict[str, float] | None:
+    """Tamano tipico del movimiento del dia de resultados.
+
+    Con fechas de publicacion reales (`rdq` de Compustat): el mayor |retorno|
+    entre ese dia y el siguiente (muchas empresas publican despues del cierre).
+    Sin ellas, aproximacion: los cuatro dias de mayor |retorno| de cada ano, que
+    en una accion suelen ser los de resultados. Se dice cual de las dos es.
+    """
+    r = returns.dropna()
+    if len(r) < 252:
+        return None
+    r = r[r.index >= r.index[-1] - pd.DateOffset(years=years)]
+    moves, source = [], "proxy: the 4 largest daily moves of each year"
+    if report_dates is not None and len(report_dates):
+        for d in pd.to_datetime(pd.Series(report_dates)).dropna().unique():
+            pos = r.index.searchsorted(pd.Timestamp(d))
+            window = r.iloc[pos:pos + 2]
+            if len(window) and window.index[0] - pd.Timestamp(d) <= pd.Timedelta(days=4):
+                moves.append(float(window.abs().max()))
+        source = "actual report dates (Compustat)"
+    if len(moves) < 4:
+        moves = [float(x) for _, g in r.abs().groupby(r.index.year) for x in g.nlargest(4)]
+        source = "proxy: the 4 largest daily moves of each year"
+    if not moves:
+        return None
+    m = pd.Series(moves)
+    return {"median": float(m.median()), "p75": float(m.quantile(0.75)), "n": len(m), "source": source}
+
+
 def directional(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.DataFrame:
     """+DI, -DI y ADX de Wilder."""
     up, down = high.diff(), -low.diff()

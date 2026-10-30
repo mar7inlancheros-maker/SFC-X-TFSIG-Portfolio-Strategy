@@ -324,3 +324,41 @@ def test_rango_de_tiempo_avisa_del_prestamo_caro():
     row = pd.Series({"entry": 100.0, "hold_p25": 10.0, "hold_median": 21.0, "hold_p75": 40.0})
     lines = pb.time_window("X", row, -1, 1000, 1.0, pd.Timestamp("2026-10-30"), 63, 0.0025, si_pct=0.25)
     assert any("likely hard to borrow" in x and "about 667 USD" in x for x in lines)   # 100.000 x 8% x 21/252
+
+
+def test_stop_por_tiempo_fuera_de_muestra_elige_el_dia_en_la_primera_mitad():
+    idx = pd.bdate_range("2023-01-02", periods=400)
+    rng = np.random.default_rng(9)
+    tp1 = np.where(rng.random(400) < 0.6, rng.integers(3, 15, 400), np.nan)
+    trades = pd.DataFrame({"r_mult": rng.normal(0, 1, 400), "exit": np.where(np.isnan(tp1), "time", "tp1_tp2"),
+                           "days": 63, "tp1_day": tp1}, index=idx)
+    timed = trades.assign(r_mult=trades["r_mult"] + 0.1)        # el stop por tiempo suma 0,1R
+    out = tp.time_stop_out_of_sample(trades, timed, tp.PlanParams())
+    first_half = trades.iloc[:200]
+    assert out["review_day"] == tp.holding_window(first_half, tp.PlanParams())["review_day"]
+    assert out["split"] == idx[200] and out["n"] == 200
+    assert out["improvement"] == pytest.approx(0.1)
+    assert tp.time_stop_out_of_sample(trades.iloc[:150], timed.iloc[:150], tp.PlanParams()) is None
+
+
+def test_salida_a_bolsa_reciente_tiene_ficha_limitada_sin_tamano():
+    from types import SimpleNamespace
+
+    from quant_engine.settings import build_settings
+
+    cal = pd.bdate_range("2025-01-01", periods=300)
+    rng = np.random.default_rng(1)
+    ipo = pd.Series(50 * np.exp(np.cumsum(rng.normal(0, 0.02, 70))), index=cal[-70:])
+    market = MarketData(ohlcv={
+        "SPY": pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0, "Volume": 1e6}, index=cal),
+        "NEW": pd.DataFrame({"Open": ipo, "High": ipo * 1.02, "Low": ipo * 0.98, "Close": ipo, "Volume": 1e6}),
+    })
+    clean = cleaning.align(market, "SPY")
+    quality = validation.quality_report(clean, market, ["NEW"], cal[0])
+    result = SimpleNamespace(settings=build_settings(("AAPL",), ("NEW",)), quality=quality, clean=clean, valuation={})
+    card = pb.limited_card(result, "NEW", tp.PlanParams())
+    assert card["signal"] == "NOT ANALYZED" and card["headline"].startswith("LIMITED VIEW NEW: only 70 sessions")
+    assert "levels for research's SHORT" in card["fundamentals"][0] and card["shares"] == 0 and not card["steps"]
+    assert card["technical"] and card["technical"][0].startswith("Trend")
+    short = SimpleNamespace(**{**result.__dict__, "quality": quality.assign(sessions=20)})
+    assert pb.limited_card(short, "NEW", tp.PlanParams())["headline"].startswith("NOT ANALYZED")

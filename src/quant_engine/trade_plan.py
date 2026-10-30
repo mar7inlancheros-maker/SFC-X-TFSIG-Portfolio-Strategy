@@ -471,6 +471,31 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
     return pd.DataFrame(rows, index=pd.DatetimeIndex(dates), columns=["r_mult", "exit", "days", "tp1_day"])
 
 
+def time_stop_out_of_sample(trades: pd.DataFrame, timed: pd.DataFrame, p: PlanParams,
+                            min_trades: int = 200) -> dict[str, float] | None:
+    """El stop por tiempo probado fuera de muestra.
+
+    El dia de revision se elige con la PRIMERA mitad de las entradas
+    historicas y se mide en la SEGUNDA: E(R) sin el stop frente a E(R) con el.
+    `timed` es `simulate_trades(..., time_stop=dia elegido en la primera mitad)`
+    sobre las mismas fechas. Dentro de muestra el stop siempre parece ayudar
+    (el dia sale de esas operaciones); esta es la prueba que cuenta.
+    """
+    if trades is None or len(trades) < min_trades:
+        return None
+    split = trades.index[len(trades) // 2]
+    first = trades[trades.index < split]
+    hw = holding_window(first, p)
+    if not hw.get("review_day"):
+        return None
+    second = trades[trades.index >= split]
+    later = timed[timed.index >= split]
+    return {"review_day": hw["review_day"], "split": split, "first": first.index.min(),
+            "last": trades.index.max(), "n": len(second), "cut_in_sample": bool(hw.get("cut_at_review")),
+            "exp_r_plain": float(second["r_mult"].mean()), "exp_r_time_stop": float(later["r_mult"].mean()),
+            "improvement": float(later["r_mult"].mean() - second["r_mult"].mean())}
+
+
 def holding_window(trades: pd.DataFrame, p: PlanParams) -> dict[str, float]:
     """Cuanto dura la operacion con esta regla en este valor, y cuando revisarla.
 
@@ -707,6 +732,14 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             ts = trade_stats(simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost,
                                              borrow=s.borrow_cost, time_stop=int(hw["review_day"])))
             hw["exp_r_time_stop"] = ts.get("exp_r")
+        # Prueba fuera de muestra: dia de revision de la primera mitad, medido en la segunda.
+        half = sims[t].iloc[: len(sims[t]) // 2]
+        hw_first = holding_window(half, p)
+        oos = None
+        if hw_first.get("review_day"):
+            timed = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost, borrow=s.borrow_cost,
+                                    time_stop=int(hw_first["review_day"]))
+            oos = time_stop_out_of_sample(sims[t], timed, p)
         rows[-1].update({
             "bt_trades": st.get("n", 0), "bt_win_rate": st.get("win_rate"), "bt_exp_r": st.get("exp_r"),
             "bt_t_stat": st.get("t_stat"),
@@ -716,6 +749,10 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             "tp1_median_days": hw.get("tp1_median"), "review_day": hw.get("review_day"),
             "late_tp1_rate": hw.get("late_tp1_rate"), "cut_at_review": hw.get("cut_at_review", False),
             "bt_exp_r_time_stop": hw.get("exp_r_time_stop"),
+            "oos_ts_review_day": (oos or {}).get("review_day"), "oos_ts_split": (oos or {}).get("split"),
+            "oos_ts_exp_r_plain": (oos or {}).get("exp_r_plain"),
+            "oos_ts_exp_r_time_stop": (oos or {}).get("exp_r_time_stop"),
+            "oos_ts_improvement": (oos or {}).get("improvement"),
             "exp_return_pct": (st.get("exp_r") or 0.0) * lv["stop_pct"] if st.get("n") else float("nan"),
         })
     plan = pd.DataFrame(rows).set_index("ticker")

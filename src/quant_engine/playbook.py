@@ -178,7 +178,7 @@ def exit_date(levels_date: pd.Timestamp, horizon_d: int) -> pd.Timestamp:
 def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.Series, fx: float,
                     capital: float, horizon_d: int, levels_date: pd.Timestamp, borrow_cost: float,
                     short_facts: dict | None = None, hedge: dict | None = None,
-                    earnings: pd.Timestamp | None = None) -> list[str]:
+                    earnings: pd.Timestamp | None = None, earnings_move: dict | None = None) -> list[str]:
     """Pasos para abrir y gestionar la posicion, en el orden en que se hacen."""
     entry, stop, tp1, tp2, atr_v = (float(row[k]) for k in ("entry", "stop", "tp1", "tp2", "atr"))
     ccy = row.get("currency", "USD") or "USD"
@@ -226,8 +226,15 @@ def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.S
                      f"view on {ticker}: {hedge['action']} {hedge['shares']:,} {hedge['ticker']} at ~{hedge['price']:,.2f}.")
     if earnings is not None and pd.notna(earnings):
         if pd.Timestamp(earnings) <= exit_date(levels_date, horizon_d):
+            size = ""
+            if earnings_move:
+                stop_pct = abs(entry - stop) / entry
+                verdict = ("larger than" if earnings_move["median"] > stop_pct else "within")
+                size = (f" Its typical earnings-day move is {earnings_move['median']:.1%} (1 in 4 above "
+                        f"{earnings_move['p75']:.1%}; {earnings_move['source']}), {verdict} the "
+                        f"{stop_pct:.1%} to the stop.")
             steps.append(f"Earnings on {pd.Timestamp(earnings):%Y-%m-%d}, before the time exit: a gap can jump the "
-                         "stop. Consider half size, or wait for the report.")
+                         f"stop.{size} Consider half size, or wait for the report.")
     else:
         steps.append("Next earnings date unknown: check it before opening; an earnings gap jumps the stop.")
     return steps
@@ -272,15 +279,22 @@ def time_window(ticker: str, row: pd.Series, side: int, shares: int, fx: float, 
         cover = "cover" if side < 0 else "sell"
         head = (f"TP1 usually comes in about {tp1:.0f} sessions. Review on {day(review):%Y-%m-%d} "
                 f"({review:.0f} sessions): if TP1 has not been reached, ")
+        oos_line = ""
+        imp = row.get("oos_ts_improvement")
+        if imp is not None and pd.notna(imp):
+            oos_line = (f" Out of sample (review day picked on trades before {pd.Timestamp(row['oos_ts_split']):%Y-%m},"
+                        f" tested after): E(R) {row['oos_ts_exp_r_plain']:+.2f}R without the time stop, "
+                        f"{row['oos_ts_exp_r_time_stop']:+.2f}R with it.")
         if row.get("cut_at_review") and pd.notna(late):
             ts, plain = row.get("bt_exp_r_time_stop"), row.get("bt_exp_r")
             gain = (f" With that time stop the rule's E(R) on {ticker} was {ts:+.2f}R against {plain:+.2f}R "
                     "without it (in-sample: the review day comes from the same trades)."
                     if ts is not None and pd.notna(ts) and plain is not None and pd.notna(plain) else "")
             lines.append(head + f"{cover} the position: only {late:.0%} of past trades still open then reached it, "
-                         "below the break-even for TP1." + gain)
+                         "below the break-even for TP1." + gain + oos_line)
         elif pd.notna(late):
-            lines.append(head + f"keep the stop and hold: {late:.0%} of past trades still open then reached it later.")
+            lines.append(head + f"keep the stop and hold: {late:.0%} of past trades still open then reached it later."
+                         + oos_line)
     hard = day(horizon_d)
     lines.append(f"Hard exit: {'cover' if side < 0 else 'close'} whatever is left by {hard:%Y-%m-%d} "
                  f"({horizon_d} sessions), whatever the price.")
@@ -331,6 +345,18 @@ def headline(t: str, row: pd.Series, p) -> str:
     elif row.get("unproven_flip"):
         size = f"; the score has not shown it predicts here, so {p.reduce_size:.0%} size"
     return f"{lead}. Conviction {row['conviction']} (aligned score {score:+.2f}){size}."
+
+
+def _earnings_move(result, ticker: str) -> dict | None:
+    """Movimiento tipico de resultados, con las fechas de Compustat si WRDS las trajo."""
+    from .factors.technical import earnings_moves  # noqa: PLC0415
+
+    dates = None
+    w = getattr(result, "wrds", None)
+    if w is not None and w.available and not w.fundq.empty and ticker in w.ids.index:
+        dates = w.fundq.loc[w.fundq["gvkey"] == w.ids.loc[ticker, "gvkey"], "rdq"]
+    local = result.clean.local_prices(ticker)[0].dropna()
+    return earnings_moves(local.pct_change(fill_method=None), dates)
 
 
 def build_cards(result) -> dict[str, dict]:
@@ -384,10 +410,10 @@ def build_cards(result) -> dict[str, dict]:
                      if sized_by == "standalone" else None)
             card["steps"] = execution_steps(t, side, shares, current, row, float(row["fx"]), capital, p.horizon_d,
                                             tp.get("levels_date", result.as_of), s.borrow_cost, short_facts,
-                                            hedge, earnings.get(t))
-            # El rango de tiempo se pidio para los cortos: ahi el tiempo cuesta
-            # prestamo y dividendos.
-            if side < 0:
+                                            hedge, earnings.get(t), _earnings_move(result, t))
+            # Rango de tiempo para todo lo que se opera; en los cortos lleva
+            # ademas prestamo y dividendos, porque ahi el tiempo cuesta dinero.
+            if side:
                 card["time_window"] = time_window(t, row, side, shares, float(row["fx"]),
                                                   tp.get("levels_date", result.as_of), p.horizon_d, s.borrow_cost,
                                                   (getattr(result, "ex_dividend", None) or {}).get(t),
@@ -397,15 +423,53 @@ def build_cards(result) -> dict[str, dict]:
             card["risk_pct"] = shares * abs(float(row["entry"]) - float(row["stop"])) * float(row["fx"]) / capital
         cards[t] = card
     for t in result.excluded:
-        why = "insufficient data"
-        if t in result.quality.index:
-            n = result.quality.loc[t, "sessions"]
-            why = (f"only {int(n)} sessions of price history; the analysis needs {MIN_SESSIONS}" if n else
-                   str(result.quality.loc[t, "notes"]) or "no price data")
-        cards[t] = {"ticker": t, "research": "LONG" if t in s.longs else "SHORT", "signal": "NOT ANALYZED",
-                    "headline": f"NOT ANALYZED {t}: {why}.", "why_for": [], "why_against": [], "fundamentals": [],
-                    "data_flags": [], "steps": [], "shares": 0, "conviction": "", "against_research": False}
+        cards[t] = limited_card(result, t, p)
     return cards
+
+
+LIMITED_MIN_SESSIONS = 30
+
+
+def limited_card(result, t: str, p) -> dict:
+    """Ficha de un nombre excluido del analisis: sin score, sin backtest y sin tamano.
+
+    Con 30 sesiones o mas (una salida a bolsa reciente) se dan los niveles por
+    ATR del lado de research, la lectura tecnica y el DCF si hay estados
+    financieros: lo que se puede medir sin inventar lo que no.
+    """
+    from .factors import technical  # noqa: PLC0415
+    from .trade_plan import atr, levels  # noqa: PLC0415
+    from .valuation.engine import summary  # noqa: PLC0415
+
+    s = result.settings
+    research = "LONG" if t in s.longs else "SHORT"
+    sessions = int(result.quality.loc[t, "sessions"]) if t in result.quality.index else 0
+    why = (f"only {sessions} sessions of price history; the full analysis needs {MIN_SESSIONS}" if sessions else
+           (str(result.quality.loc[t, "notes"]) if t in result.quality.index else "") or "no price data")
+    card = {"ticker": t, "research": research, "signal": "NOT ANALYZED", "headline": f"NOT ANALYZED {t}: {why}.",
+            "why_for": [], "why_against": [], "fundamentals": [], "data_flags": [], "steps": [], "shares": 0,
+            "conviction": "", "against_research": False}
+    if sessions < LIMITED_MIN_SESSIONS or t not in result.clean.close:
+        return card
+    close_l, high_l, low_l = result.clean.local_prices(t)
+    close = close_l.dropna()
+    high = high_l.reindex(close.index).fillna(close)
+    low = low_l.reindex(close.index).fillna(close)
+    a = atr(high, low, close).dropna()
+    side = 1 if research == "LONG" else -1
+    ccy = result.clean.currency.get(t, "USD")
+    if len(a):
+        lv = levels(float(close.iloc[-1]), float(a.iloc[-1]), side, p)
+        card["fundamentals"] = [f"levels for research's {research} if taken by judgment ({ccy}): entry "
+                                f"{lv['entry']:,.2f}, stop {lv['stop']:,.2f} ({lv['stop_pct']:.1%}), TP1 "
+                                f"{lv['tp1']:,.2f}, TP2 {lv['tp2']:,.2f}"]
+    tech = technical.technical_view(close_l, high_l, low_l, result.clean.volume.get(t))
+    card["technical"] = technical.describe(tech) if tech.get("available") else []
+    val = (getattr(result, "valuation", None) or {}).get(t)
+    card["valuation"], _ = valuation_lines(research, summary(val) if val else None)
+    card["headline"] = (f"LIMITED VIEW {t}: {why}. No Quant Score, rule backtest or size: the levels, technicals "
+                        "and DCF below inform a judgment call, they are not a model signal.")
+    return card
 
 
 def standalone_total(cards: dict[str, dict], bench: str, bench_price: float) -> dict | None:

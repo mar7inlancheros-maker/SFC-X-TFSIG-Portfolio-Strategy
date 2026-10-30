@@ -93,3 +93,16 @@ def test_factores_con_peso_cero_no_mueven_el_score():
                                           "residual_momentum": 0.0})
     pd.testing.assert_series_equal(base["quant_score"], with_zero["quant_score"])
     assert with_zero["high_52w"].notna().all() and with_zero["residual_momentum"].notna().all()
+
+
+def test_movimiento_de_resultados_con_fechas_reales_y_con_aproximacion():
+    idx = pd.bdate_range("2023-01-02", periods=780)
+    r = pd.Series(0.001, index=idx)
+    reports = [idx[60], idx[120], idx[185], idx[250], idx[310], idx[375]]
+    for i, d in enumerate(reports):
+        r.loc[d + pd.offsets.BDay(1)] = 0.08 if i % 2 else -0.06   # publican tras el cierre
+    real = technical.earnings_moves(r, reports)
+    assert real["source"].startswith("actual") and real["median"] == pytest.approx(0.07)
+    proxy = technical.earnings_moves(r)
+    assert proxy["source"].startswith("proxy") and proxy["n"] >= 8
+    assert technical.earnings_moves(r.iloc[:100]) is None

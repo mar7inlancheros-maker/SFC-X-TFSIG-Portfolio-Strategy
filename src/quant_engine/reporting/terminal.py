@@ -737,9 +737,25 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
     console.print(f"Orders at market next session. Levels from the {r.clean.close.index[-1]:%Y-%m-%d} close; stop and TP apply to "
                   "the whole resulting position.")
     integrity(console, r)
+    time_stop_evidence(console, r)
     signal_cards(console, r)
     console.print("Mechanical output of the rules in config/quant_engine.yaml (thresholds, ATR, risk cap). "
                   "Not investment advice: review before executing.")
+
+
+def time_stop_evidence(console: Console, r: AnalysisResult) -> None:
+    """El stop por tiempo fuera de muestra, sumado sobre los nombres del plan."""
+    plan = (r.trade_plan or {}).get("plan")
+    if plan is None or "oos_ts_improvement" not in plan:
+        return
+    imp = pd.to_numeric(plan["oos_ts_improvement"], errors="coerce").dropna()
+    if imp.empty:
+        return
+    console.print(f"Time stop out of sample: review day picked on the first half of each name's history, tested on "
+                  f"the second. It improved E(R) in {(imp > 0).sum()} of {len(imp)} names (mean "
+                  f"{imp.mean():+.2f}R). " + ("Consistent enough to consider making it the rule after more baskets."
+                                              if len(imp) >= 3 and (imp > 0).mean() >= 0.75 else
+                                              "Not consistent: it stays advice, not a rule."))
 
 
 def integrity(console: Console, r: AnalysisResult) -> None:
@@ -802,7 +818,7 @@ def signal_cards(console: Console, r: AnalysisResult) -> None:
             for i, step in enumerate(c["steps"], 1):
                 console.print(f"    {i}. {escape(step)}")
         if c.get("time_window"):
-            console.print("  [bold]Time window (short):[/]")
+            console.print(f"  [bold]Time window ({'short' if c['signal'] == 'SHORT' else 'long'}):[/]")
             for line in c["time_window"]:
                 console.print(f"    - {escape(line)}")
         console.print()

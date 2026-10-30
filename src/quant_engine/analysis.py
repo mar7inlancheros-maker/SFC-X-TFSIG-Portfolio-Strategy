@@ -670,7 +670,10 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     progress("valoracion DCF (SEC / Compustat)")
     from .valuation.engine import run_valuations  # noqa: PLC0415
 
-    result.valuation = run_valuations(result, wrds, fx_rates, as_of, tickers)
+    # Tambien los excluidos con algo de historia (salidas a bolsa recientes): su
+    # ficha limitada lleva el DCF aunque no tengan score.
+    recent = [t for t in excluded if t in clean.close and clean.close[t].notna().sum() >= 30]
+    result.valuation = run_valuations(result, wrds, fx_rates, as_of, tickers + recent)
     for t, v in result.valuation.items():
         if not v.get("available"):
             warnings.append(f"DCF de {t} no disponible: {v.get('reason')}")

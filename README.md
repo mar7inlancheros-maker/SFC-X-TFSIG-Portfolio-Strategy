@@ -500,7 +500,26 @@ valor (`trade_plan.holding_window`):
 - fecha ex-dividendo dentro de la ventana: en corto el dividendo lo pagas tú.
 
 En octubre de 2026 el stop por tiempo mejoraba la E(R) de los tres cortos de
-la canasta (ARES −0,39R → −0,25R).
+la canasta (ARES −0,39R → −0,25R). Eso es dentro de muestra. La prueba que
+cuenta va en cada ficha y en el resumen: el día de revisión se elige con la
+primera mitad de la historia del nombre y se mide en la segunda. El plan dice
+en cuántos nombres mejora fuera de muestra. Solo con una mejora consistente
+(3/4 de los nombres o más, en varias canastas) tendría sentido convertirlo en
+regla.
+
+Los largos llevan la misma ventana, sin préstamo ni dividendo.
+
+**Gap de resultados medido.** Si hay resultados antes de la salida, la ficha
+da el movimiento típico de ese día en el nombre y lo compara con la distancia
+al stop. Con WRDS sale de las fechas reales de publicación (`rdq` de
+Compustat): el mayor |retorno| entre ese día y el siguiente. Sin WRDS, de una
+aproximación: los cuatro días de mayor movimiento de cada año. La ficha dice
+cuál de las dos usó.
+
+**Salidas a bolsa recientes.** Un nombre excluido por historia corta (menos de
+126 sesiones) pero con 30 o más tiene una ficha limitada, con niveles por ATR
+del lado de research, lectura técnica y DCF. No tiene Quant Score, backtest ni
+tamaño: informa una decisión del analista y lo dice.
 
 **Lectura técnica para la entrada.** La ficha de cada nombre añade:
 - tendencia (SMA50/200 y su pendiente) y fuerza (ADX con +DI/−DI);

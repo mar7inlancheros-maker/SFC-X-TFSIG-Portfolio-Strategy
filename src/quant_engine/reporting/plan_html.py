@@ -244,7 +244,7 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
             block.append("<p class='why'><b>How to execute:</b></p><ol>"
                          + "".join(f"<li>{escape(s)}</li>" for s in c["steps"]) + "</ol>")
         if c.get("time_window"):
-            block.append("<p class='why'><b>Time window (short):</b></p><ul>"
+            block.append(f"<p class='why'><b>Time window ({'short' if c['signal'] == 'SHORT' else 'long'}):</b></p><ul>"
                          + "".join(f"<li>{escape(s)}</li>" for s in c["time_window"]) + "</ul>")
         block.append("</div>")
         out.append("".join(block))
