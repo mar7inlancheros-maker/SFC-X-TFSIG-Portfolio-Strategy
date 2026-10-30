@@ -80,3 +80,65 @@ def test_solo_los_reportes_oficiales_con_fecha_cuentan(tmp_path):
     (tmp_path / "backtest_20261030_1029_trades.md").write_text("x", encoding="utf-8")
     ev = mf.latest_evidence(tmp_path)
     assert ev["report"] == "backtest_20261004_1705.md" and ev["ic"] == 0.0241
+
+
+def _synthetic_panel(n=80, seed=3):
+    """Ultima fecha de un panel con las columnas que usa el multifactor, ya con ratios."""
+    from sfc_tfsig import financials
+
+    rng = np.random.default_rng(seed)
+    rev = rng.uniform(500, 5000, n) * 1e6
+    df = pd.DataFrame({
+        "date": pd.Timestamp("2026-09-30"), "ticker": [f"N{i}" for i in range(n)],
+        "sector": np.where(np.arange(n) % 2, "Technology", "Industrials"),
+        "revenue": rev, "cogs": rev * rng.uniform(0.3, 0.7, n), "operating_income": rev * rng.uniform(0.05, 0.3, n),
+        "net_income": rev * rng.uniform(0.02, 0.2, n), "ocf": rev * rng.uniform(0.05, 0.25, n),
+        "capex": rev * 0.04, "interest_expense": rev * 0.01, "equity": rev * rng.uniform(0.3, 1.5, n),
+        "assets": rev * 2.0, "liabilities": rev * 1.0, "debt_long": rev * 0.3, "debt_short": rev * 0.05,
+        "cash": rev * 0.1, "current_assets": rev * 0.6, "current_liabilities": rev * 0.4,
+        "shares": rng.uniform(50, 500, n) * 1e6, "price": rng.uniform(10, 300, n),
+        "momentum": rng.normal(0.1, 0.3, n), "volatility": rng.uniform(0.15, 0.6, n), "shares_growth": 0.0,
+    })
+    df["market_cap"] = df["price"] * df["shares"]
+    return financials.compute_all(df)
+
+
+def test_un_nombre_de_fuera_cae_donde_cae_uno_identico_de_dentro():
+    from sfc_tfsig.config import load_config
+    from sfc_tfsig.factors.composite import build_scores
+
+    cfg = load_config(None)
+    panel = build_scores(_synthetic_panel(), cfg)
+    raw_cols = [c for c in panel.columns if not c.startswith("score_")]
+    twin = panel.iloc[[7]][raw_cols].assign(ticker="TWIN")
+    out = mf.score_outside(panel, twin, cfg)
+    inside = panel.dropna(subset=["score_composite"])
+    me = inside.loc[7, "score_composite"]
+    expected = (inside["score_composite"] < me).mean() + 0.5 * (inside["score_composite"] == me).mean()
+    # Una fila mas mueve un poco la media y la desviacion de la seccion
+    # cruzada: casi igual, no identico.
+    assert out.loc["TWIN", "score_composite"] == pytest.approx(me, abs=0.02)
+    assert out.loc["TWIN", "percentile"] == pytest.approx(expected, abs=2 / len(inside))
+
+
+def test_razones_de_exclusion_del_universo():
+    from sfc_tfsig.config import load_config
+
+    cfg = load_config(None)
+    row = pd.Series({"price": 3.0, "dollar_volume": 1e9, "market_cap": 2e9, "history_months": 120})
+    assert mf.exclusion_reasons(row, cfg) == ["price 3.00 USD below the 5.00 minimum"]
+    small = pd.Series({"price": 20.0, "dollar_volume": 1e6, "market_cap": 1e8, "history_months": 6})
+    assert len(mf.exclusion_reasons(small, cfg)) == 3
+
+
+def test_valor_relativo_frente_al_dcf():
+    from quant_engine import playbook as pb
+
+    m = {"available": True, "rows": {"A": {"value": 1.2}}, "outside": {"B": {"value": -0.9}}}
+    cheap, dear = mf.relative_value(m, "A"), mf.relative_value(m, "B")
+    assert cheap["label"] == "CHEAP" and cheap["in_universe"]
+    assert dear["label"] == "EXPENSIVE" and not dear["in_universe"]
+    assert mf.relative_value(m, "C") is None
+    assert "agrees with the DCF" in pb.relative_check("UNDERVALUED", cheap)
+    assert "disagrees with the DCF" in pb.relative_check("UNDERVALUED", dear)
+    assert "outside its universe" in pb.relative_check("FAIR VALUE", dear)

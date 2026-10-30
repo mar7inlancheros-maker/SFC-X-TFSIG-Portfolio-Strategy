@@ -682,7 +682,7 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     # El score validado del modelo multifactor (de disco, sin red).
     from .data import multifactor as mf_mod  # noqa: PLC0415
 
-    result.multifactor = mf_mod.load(tickers, as_of)
+    result.multifactor = mf_mod.load(tickers, as_of, clean, sectors, wrds)
     if result.multifactor.get("available") and result.multifactor.get("stale"):
         warnings.append(f"panel del multifactor del {result.multifactor['date']:%Y-%m-%d}: tiene mas de "
                         f"{mf_mod.STALE_DAYS} dias, no cuenta como evidencia; correr python main.py panel")

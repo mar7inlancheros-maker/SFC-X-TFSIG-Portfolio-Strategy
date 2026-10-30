@@ -462,6 +462,12 @@ Trampas:
   (`output/reports/counterfactual/`): con el mismo patrón de nombre se colaría
   como evidencia. Solo mueve la convicción (±1 escalón) y los FLIP sin
   evidencia; los veredictos no.
+- **El score fuera del universo (`multifactor.outside_universe`) usa las
+  funciones del modelo, no una copia**: `financials.compute_all` y
+  `composite.build_scores` sobre la última sección cruzada con las filas
+  añadidas. Una fila más mueve un poco media y desviación: un nombre idéntico a
+  uno de dentro cae casi en el mismo sitio (hay un test), no exactamente. Ese
+  score nunca entra en `mf_rows` ni mueve la convicción.
 - **La ficha limitada (`playbook.limited_card`) nunca da tamaño ni pasos de
   ejecución.** Un nombre sin score ni backtest no tiene base para dimensionar.
   Si se le añade tamaño, deja de ser "limitada" y pasa a ser una señal sin

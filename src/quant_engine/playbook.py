@@ -402,7 +402,10 @@ def build_cards(result) -> dict[str, dict]:
         card["timing"] = technical.timing_advice(tech, side, float(row["entry"]), float(row["stop"]),
                                                  float(row["tp1"])) if side else []
         val = (getattr(result, "valuation", None) or {}).get(t)
-        card["valuation"], card["valuation_vs_signal"] = valuation_lines(row["signal"], summary(val) if val else None)
+        from .data.multifactor import relative_value  # noqa: PLC0415
+
+        card["valuation"], card["valuation_vs_signal"] = valuation_lines(
+            row["signal"], summary(val) if val else None, relative_value(getattr(result, "multifactor", None), t))
         mf_line = multifactor_line(t, row, getattr(result, "multifactor", None))
         if mf_line:
             card["valuation"] = [mf_line, *card["valuation"]]
@@ -471,7 +474,10 @@ def limited_card(result, t: str, p) -> dict:
     tech = technical.technical_view(close_l, high_l, low_l, result.clean.volume.get(t))
     card["technical"] = technical.describe(tech) if tech.get("available") else []
     val = (getattr(result, "valuation", None) or {}).get(t)
-    card["valuation"], _ = valuation_lines(research, summary(val) if val else None)
+    from .data.multifactor import relative_value  # noqa: PLC0415
+
+    card["valuation"], _ = valuation_lines(research, summary(val) if val else None,
+                                           relative_value(getattr(result, "multifactor", None), t))
     card["headline"] = (f"LIMITED VIEW {t}: {why}. No Quant Score, rule backtest or size: the levels, technicals "
                         "and DCF below inform a judgment call, they are not a model signal.")
     return card
@@ -496,10 +502,28 @@ def standalone_total(cards: dict[str, dict], bench: str, bench_price: float) -> 
             "hedge_action": "SELL SHORT" if beta_usd > 0 else "BUY", "bench": bench, "bench_price": bench_price}
 
 
-def valuation_lines(signal: str, val: dict | None) -> tuple[list[str], str]:
+def relative_check(stance: str, rel: dict | None) -> str:
+    """El DCF (absoluto) frente al factor de valor del multifactor (relativo al sector)."""
+    if not rel:
+        return ""
+    head = (f"Relative value (multifactor value factor, sector z {rel['z']:+.2f}"
+            + ("" if rel["in_universe"] else ", name outside its universe") + f"): {rel['label'].lower()} against "
+            "its sector on earnings, cash-flow, book and sales yields")
+    dcf_cheap = {"UNDERVALUED": 1, "OVERVALUED": -1}.get(stance, 0)
+    rel_cheap = {"CHEAP": 1, "EXPENSIVE": -1}.get(rel["label"], 0)
+    if dcf_cheap and rel_cheap:
+        verdict = ("agrees with the DCF" if dcf_cheap == rel_cheap else
+                   "disagrees with the DCF: absolute and relative valuation point opposite ways, so treat both "
+                   "with caution")
+        return f"{head}; {verdict}."
+    return head + "."
+
+
+def valuation_lines(signal: str, val: dict | None, rel: dict | None = None) -> tuple[list[str], str]:
     """El DCF del nombre en frases, y si respalda o contradice la senal."""
     if not val:
-        return [], ""
+        line = relative_check("", rel)
+        return ([line] if line else []), ""
     if not val.get("available"):
         return [f"DCF not available: {val.get('reason')}"], ""
     ccy = val.get("trading_currency", "USD")
@@ -520,6 +544,9 @@ def valuation_lines(signal: str, val: dict | None) -> tuple[list[str], str]:
         lines.append(f"Monte Carlo: value above the price in {val['mc_prob_above_price']:.0%} of draws.")
     lines.extend(f"DCF check: {f}" for f in val.get("flags", []))
     stance = val["stance"]
+    rel_line = relative_check(stance, rel)
+    if rel_line:
+        lines.append(rel_line)
     if val.get("critical"):
         return lines, "valuation is not decision-grade for this name: see the DCF checks"
     agree = ""
@@ -538,6 +565,14 @@ def multifactor_line(t: str, row: pd.Series, mf: dict | None) -> str:
         return ""
     info = mf.get("rows", {}).get(t)
     if not info:
+        out = (mf.get("outside") or {}).get(t)
+        if out and out.get("scored") and pd.notna(out.get("percentile")):
+            parts = ", ".join(f"{k} {out[k]:+.2f}" for k in ("value", "quality", "momentum", "lowvol") if k in out)
+            return (f"Multifactor model: outside its universe ({'; '.join(out['reasons'])}). Scored against it for "
+                    f"reference only: {out['percentile']:.0%} percentile ({parts}); not used as evidence, the "
+                    "validation covers the universe only.")
+        if out:
+            return f"Multifactor model: outside its universe ({'; '.join(out['reasons'])}); no score."
         reason = mf.get("missing", {}).get(t)
         return f"Multifactor model: {reason}." if reason else ""
     ev = mf.get("evidence") or {}

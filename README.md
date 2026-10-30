@@ -380,6 +380,23 @@ La evidencia se lee del último reporte oficial de backtest
 significancia o con el panel de hace más de 45 días, el percentil se muestra
 pero no mueve nada. Los veredictos no cambian.
 
+**Nombres fuera del universo del multifactor.** La ficha dice qué regla del
+modelo los deja fuera: precio por debajo de 5 USD, liquidez, tamaño, historia,
+falta de valor o de calidad, o que no estaban en su lista (un cambio de
+ticker). Además los puntúa como referencia: sus métricas salen con las mismas
+funciones del modelo (fundamentales point-in-time de la SEC, o el TTM de
+Compustat si no presentan allí; momentum 12-1 y volatilidad). Se añaden a la
+sección cruzada de la última fecha y se puntúan con `build_scores`. Ese score
+no mueve la convicción, porque la validación cubre solo el universo. En
+octubre de 2026, AMC estaba fuera por precio y en el percentil 10, contra el
+LONG de research. GOLD estaba fuera por cambio de ticker y en el percentil
+100, contra el SHORT de research.
+
+**Valor relativo frente al DCF.** El DCF es valor absoluto. El factor de valor
+del multifactor (z sectorial de los rendimientos por beneficio, flujo de caja,
+libros y ventas) es valor relativo. La ficha y `python main.py dcf` muestran
+los dos y avisan si apuntan en direcciones opuestas.
+
 **Ir contra research a tamaño completo exige esa evidencia.** Un FLIP va a
 tamaño completo solo si la t del IC llega a `trade_plan.flip_min_ic_t` (2 por
 defecto). Sin esa evidencia, `trade_plan.unproven_flip` decide: `reduce` (por

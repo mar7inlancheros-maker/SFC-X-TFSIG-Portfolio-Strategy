@@ -19,7 +19,7 @@ from rich.markup import escape
 from sfc_tfsig.console import enable_utf8_stdout
 
 
-def _print(console: Console, t: str, v: dict) -> None:
+def _print(console: Console, t: str, v: dict, rel: dict | None = None) -> None:
     from .engine import summary  # noqa: PLC0415
 
     console.print(f"[bold]{escape(t)}[/]")
@@ -44,6 +44,11 @@ def _print(console: Console, t: str, v: dict) -> None:
         r = sm["mc_range"]
         console.print(f"  Monte Carlo: 5%-95% {r['p05']:,.2f} - {r['p95']:,.2f}; value above price in "
                       f"{sm['mc_prob_above_price']:.0%} of draws.")
+    from ..playbook import relative_check  # noqa: PLC0415
+
+    check = relative_check(sm["stance"], rel)
+    if check:
+        console.print(f"  {escape(check)}")
     for n in sm["notes"]:
         console.print(f"  - {escape(n)}")
     for f in sm["flags"]:
@@ -83,6 +88,14 @@ def _run(args) -> int:
     if wrds is not None and not wrds.available:
         warnings.append(f"WRDS unavailable, SEC filings used instead: {wrds.reason}")
     rf, rf_note = risk_free_rate(as_of, float((cfg.get("risk_free", {}) or {}).get("USD", 0.0425)))
+    from ..data import multifactor as mf_mod  # noqa: PLC0415
+
+    # Sector de cada nombre (SIC de la SEC; GICS si WRDS lo trae): el valor
+    # relativo del multifactor se mide dentro del sector.
+    sectors, _ = loader.load_sectors(tickers)
+    if wrds is not None and wrds.available:
+        sectors.update({t: g for t, g in wrds.sectors.items() if t in sectors})
+    mf = mf_mod.load(tickers, as_of, clean, sectors, wrds)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     from ..settings import build_settings, output_dir  # noqa: PLC0415
 
@@ -96,7 +109,7 @@ def _run(args) -> int:
         r = clean.returns[[t, bench]].dropna().iloc[-756:]
         beta = float(args.beta) if args.beta else float(beta_mod.regression(r[t], r[bench], rf).get("beta", 1.0))
         v = value_ticker(t, clean, beta, wrds, fx_rates, cfg, rf, rf_note, as_of)
-        _print(console, t, v)
+        _print(console, t, v, mf_mod.relative_value(mf, t))
         if v.get("available") and not args.no_excel:
             path = excel.write(v, directory / f"DCF_{t.replace('.', '_')}_{stamp}.xlsx")
             console.print(f"  Excel model: {path}")
