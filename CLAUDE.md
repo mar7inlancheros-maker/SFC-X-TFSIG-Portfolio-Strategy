@@ -107,12 +107,33 @@ equivocado.
   `trailing_twelve_months` o `point_in_time_balances` exige subir la versión.
   Si no se sube, el panel sigue leyendo observaciones calculadas con la lógica
   vieja y nada falla. Las filas crudas (`facts_raw/`) no dependen de la versión:
-  subirla recalcula desde ellas, sin tocar EDGAR.
+  subirla recalcula desde ellas, sin tocar EDGAR. La clave de caché del panel
+  (`cli._panel_cache_name`) lleva también esta versión: antes no la llevaba y
+  subirla recalculaba observaciones que el panel en caché nunca leía.
 
 - **La prioridad de etiquetas XBRL se resuelve por periodo, no por empresa.**
   Elegir una sola etiqueta por empresa borraba toda la historia de ingresos
   anterior a ASC 606 (2018): la cobertura de ingresos caía al 52%. No volver a
   "la primera etiqueta con datos gana".
+- **En ventas gana el MAYOR valor entre etiquetas del periodo, no la primera**
+  (`MAX_VALUE_CONCEPTS`, desde `OBSERVATIONS_VERSION` v3). Una etiqueta ASC 606
+  más específica puede ser un desglose: Gold.com publica 25.513 M de
+  `Revenues` y 618 M de `RevenueFromContractWithCustomer...`. Con prioridad
+  cambiaban el 6,8% de los ejercicios anuales en 719 de 3.222 empresas, y en
+  227 las ventas eran menos de la mitad de las reales (OSCR 28,6 M en vez de
+  11.700 M; Mercury General 29,6 M en vez de 5.990 M). La bruta de impuestos
+  especiales (`...IncludingAssessedTax`) no compite con su neta del mismo
+  periodo, pero sí cuenta si la neta no existe (Cooper-Standard: `Revenues` =
+  0). De cada etiqueta se toma su primera publicación: el point-in-time no
+  cambia. Efecto medido con la misma fecha de fin (30-oct-2026): CAGR 19,87% →
+  18,81%, IR 0,45 → 0,38, IC 0,0243 → 0,0241, t del factor valor 1,78 → 1,76.
+  La señal no cambia; cambia qué nombres entran al top 30. La diferencia de IR
+  está muy por debajo de su error estándar (~0,27). No volver a la prioridad
+  porque "rendía más": era un bug que excluía al azar.
+- **El recálculo de observaciones va en paralelo**
+  (`sec.derive_missing_observations`, 8 procesos). Los hijos reciben el
+  directorio de caché del padre (`_init_worker`); sin eso, en Windows (spawn)
+  un test con la caché redirigida escribiría en la caché real.
 
 - **SIC 6221 está excluido y debe seguir así.** Ahí viven todos los ETF y
   fideicomisos de materias primas y divisas (GBTC, GLD, SLV, USO, FXC...). Sin
@@ -431,6 +452,14 @@ Trampas:
   operaciones (percentil 75 del día del TP1): la mejora que se muestra es
   dentro de muestra y la ficha lo dice. No convertirla en la regla sin
   validarla fuera de muestra.
+- **La prueba del stop por tiempo es `time_stop_out_of_sample`**: día de
+  revisión de la primera mitad de las entradas y E(R) medida en la segunda. La
+  mejora dentro de muestra (`bt_exp_r_time_stop`) no sirve para decidir:
+  siempre sale a favor.
+- **La ficha limitada (`playbook.limited_card`) nunca da tamaño ni pasos de
+  ejecución.** Un nombre sin score ni backtest no tiene base para dimensionar.
+  Si se le añade tamaño, deja de ser "limitada" y pasa a ser una señal sin
+  validar.
 - **`tp1_day` en la salida de `simulate_trades` solo se anota.** Si cambia la
   lógica del TP1, el día tiene que seguir siendo el de la sesión en que se
   tocó, o `holding_window` medirá otra cosa.
@@ -451,9 +480,7 @@ data (SEC XBRL | Compustat) ──> assumptions ──> dcf (puro, vectorizado) 
   comprobar que el Excel recalculado da lo mismo. Hoy coincide hasta 1e-13.
 - **Ventas = máximo entre etiquetas por ejercicio** (`data.annual_from_sec`),
   no la primera por prioridad: un desglose ASC 606 ganaba al total (Gold.com).
-  **El modelo multifactor (`sfc_tfsig.data.sec`) usa todavía prioridad para
-  `revenue`**: probablemente tiene el mismo fallo en empresas así. Cambiarlo
-  exige subir `OBSERVATIONS_VERSION` y reconstruir el panel.
+  El modelo multifactor usa la misma regla desde `OBSERVATIONS_VERSION` v3.
 - **La deuda no incluye arrendamientos operativos de US GAAP**: su coste ya está
   en el EBIT. Sí los financieros, y todos los de IFRS 16.
 - **Las acciones de portada (dei) solo se usan si cuadran ±15% con las

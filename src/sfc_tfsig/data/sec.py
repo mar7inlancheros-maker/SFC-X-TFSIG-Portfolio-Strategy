@@ -397,8 +397,28 @@ def extract_raw_facts(facts_json: Mapping[str, Any]) -> pd.DataFrame:
     return df.dropna(subset=["end", "filed"])
 
 
+# Conceptos en los que, para un mismo periodo, gana el MAYOR valor entre las
+# etiquetas candidatas y no la de mas prioridad. En ventas, una etiqueta mas
+# especifica puede ser un DESGLOSE: Gold.com publica `Revenues` = 25.513 M (el
+# total) y `RevenueFromContractWithCustomerExcludingAssessedTax` = 618 M (una
+# parte). Con prioridad, sus ventas caian de 9.699 a 177 de un ano a otro y el
+# modelo la veia barata por ventas/precio. Un desglose nunca supera al total.
+MAX_VALUE_CONCEPTS = frozenset({"revenue"})
+# Ventas BRUTAS de impuestos especiales (tabaco, alcohol, combustible): no
+# compiten con su version NETA del mismo periodo, que es la buena. Sin la neta
+# si cuentan: en Cooper-Standard la bruta (2.816 M) es la unica real y
+# `Revenues` vale 0.
+GROSS_TO_NET_TAGS = {"us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax":
+                     "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
+
+
 def select_by_priority(raw: pd.DataFrame) -> pd.DataFrame:
     """Una etiqueta por periodo: la de mayor prioridad que tenga dato.
+
+    Excepcion: en `MAX_VALUE_CONCEPTS` (ventas) gana el mayor valor entre las
+    etiquetas del periodo; una etiqueta bruta de impuestos de `GROSS_TO_NET_TAGS`
+    no compite si su neta existe en ese periodo. En los dos casos, de cada
+    etiqueta se toma su PRIMERA publicacion: el point-in-time no cambia.
 
     **Por periodo, no por empresa.** La version anterior elegia una sola
     etiqueta para toda la historia de la empresa: la primera de la lista que
@@ -416,11 +436,27 @@ def select_by_priority(raw: pd.DataFrame) -> pd.DataFrame:
     """
     if raw.empty:
         return raw
-    return (
-        raw.sort_values(["priority", "filed"])
-        .groupby(["concept", "start", "end"], as_index=False, dropna=False)
-        .first()
-    )
+    keys = ["concept", "start", "end"]
+    # Primera publicacion de cada etiqueta en cada periodo.
+    first = (raw.sort_values(["priority", "filed"])
+             .groupby(["concept", "tag", "start", "end"], as_index=False, dropna=False).first())
+    chosen = first.sort_values(["priority", "filed"]).groupby(keys, as_index=False, dropna=False).first()
+    candidates = first[first["concept"].isin(MAX_VALUE_CONCEPTS)]
+    present = set(zip(candidates["tag"], candidates["start"], candidates["end"], strict=True))
+    gross_rows = candidates["tag"].isin(GROSS_TO_NET_TAGS)
+    if gross_rows.any():
+        has_net = [(GROSS_TO_NET_TAGS[t], st, en) in present
+                   for t, st, en in zip(candidates.loc[gross_rows, "tag"], candidates.loc[gross_rows, "start"],
+                                        candidates.loc[gross_rows, "end"], strict=True)]
+        drop = candidates.index[gross_rows][has_net]
+        candidates = candidates.drop(index=drop)
+    if candidates.empty:
+        return chosen
+    largest = (candidates.sort_values(["value", "priority"], ascending=[False, True])
+               .groupby(keys, as_index=False, dropna=False).first())
+    rest = chosen.merge(largest[keys], on=keys, how="left", indicator=True)
+    rest = rest[rest["_merge"] == "left_only"].drop(columns="_merge")
+    return pd.concat([rest, largest], ignore_index=True)[chosen.columns]
 
 
 def _empty_raw() -> pd.DataFrame:
@@ -662,7 +698,7 @@ def listed_companies(max_age_days: float = 7) -> pd.DataFrame:
 # `trailing_twelve_months` o `point_in_time_balances` sube esta version. Si no
 # se sube, el panel mezcla observaciones de la logica vieja con codigo nuevo y
 # nada falla ni avisa.
-OBSERVATIONS_VERSION = "v2"
+OBSERVATIONS_VERSION = "v3"  # v3: ventas = mayor etiqueta del periodo (Gold.com)
 
 
 def _raw_name(cik: int) -> str:
@@ -724,18 +760,67 @@ def company_observations(cik: int, *, session: requests.Session | None = None,
     return _derive_and_cache(cik, raw)
 
 
+def _init_worker(cache_dir: str) -> None:
+    """Cada proceso hijo escribe en el MISMO directorio de cache que el padre.
+
+    En Windows los hijos arrancan de cero (spawn) e importarian el directorio
+    por defecto: un test que redirige la cache a un temporal acabaria
+    escribiendo en la cache real.
+    """
+    cache.CACHE_DIR = Path(cache_dir)
+
+
+def _derive_cached(cik: int) -> bool:
+    """Observaciones de un CIK desde sus filas crudas en disco. Sin red."""
+    raw = cache.read_frame(_raw_name(cik))
+    if raw is None:
+        return False
+    _derive_and_cache(cik, raw)
+    return True
+
+
+def derive_missing_observations(ciks: Sequence[int], *, workers: int | None = None,
+                                progress: bool = True) -> int:
+    """Recalcula en paralelo las observaciones que faltan y cuyas crudas estan en disco.
+
+    Tras subir `OBSERVATIONS_VERSION` hay que rehacer el TTM de ~3.900
+    empresas: en serie, mas de una hora. Es CPU pura y cada CIK escribe su
+    propio fichero, asi que se reparte entre procesos. La red (EDGAR) sigue en
+    serie en `download_fundamentals`: el limite de ritmo de la SEC es por IP.
+    """
+    from concurrent.futures import ProcessPoolExecutor  # noqa: PLC0415
+
+    pending = [c for c in ciks if not cache.exists(_observations_name(c)) and cache.exists(_raw_name(c))]
+    n = workers if workers is not None else max(1, min(8, (os.cpu_count() or 2) - 2))
+    if len(pending) < 50 or n <= 1:
+        return 0
+    if progress:
+        print(f"  observaciones: recalculando {len(pending)} empresas en {n} procesos (sin red)...", flush=True)
+    done = 0
+    with ProcessPoolExecutor(max_workers=n, initializer=_init_worker, initargs=(str(cache.CACHE_DIR),)) as pool:
+        for i, ok in enumerate(pool.map(_derive_cached, pending, chunksize=8), start=1):
+            done += bool(ok)
+            if progress and (i % 250 == 0 or i == len(pending)):
+                print(f"  observaciones: {i}/{len(pending)}", flush=True)
+    return done
+
+
 def download_fundamentals(
     ciks: Iterable[int],
     *,
     refresh: bool = False,
     progress: bool = True,
+    workers: int | None = None,
 ) -> pd.DataFrame:
     """Descarga (o lee de cache) los fundamentales de varias empresas.
 
     Reanudable: cada CIK se cachea por separado, asi que una descarga cortada a
-    mitad no obliga a empezar de cero.
+    mitad no obliga a empezar de cero. Lo que se puede recalcular desde disco
+    se recalcula antes, en paralelo (`derive_missing_observations`).
     """
     ciks = list(dict.fromkeys(int(c) for c in ciks))
+    if not refresh:
+        derive_missing_observations(ciks, workers=workers, progress=progress)
     frames: list[pd.DataFrame] = []
     session = _session()
     failures = 0

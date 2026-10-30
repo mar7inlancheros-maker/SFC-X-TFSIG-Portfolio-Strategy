@@ -48,9 +48,13 @@ def _load(config_path: str | None) -> Config:
 
 
 def _panel_cache_name(cfg: Config) -> str:
-    # Fingerprint de la configuracion Y version de la logica del panel: el
-    # primero cambia con el TOML, la segunda con el codigo. Hacen falta los dos.
-    return f"{PANEL_CACHE}_{panel_mod.PANEL_VERSION}_{cfg.fingerprint}"
+    # Fingerprint de la configuracion, version de la logica del panel Y version
+    # de las observaciones de la SEC: el primero cambia con el TOML, las otras
+    # con el codigo. Sin la tercera, subir OBSERVATIONS_VERSION recalculaba las
+    # observaciones pero el panel en cache seguia sirviendo las viejas.
+    from .data import sec  # noqa: PLC0415
+
+    return f"{PANEL_CACHE}_{panel_mod.PANEL_VERSION}_{sec.OBSERVATIONS_VERSION}_{cfg.fingerprint}"
 
 
 def _require_panel(cfg: Config, *, rebuild: bool, progress: bool = True) -> pd.DataFrame:

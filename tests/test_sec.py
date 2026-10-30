@@ -47,17 +47,74 @@ def test_extrae_conceptos_y_descarta_formularios_no_periodicos():
 def test_en_un_mismo_periodo_gana_la_etiqueta_de_mayor_prioridad():
     """Dos etiquetas para el MISMO trimestre: se queda la de arriba de la lista."""
     payload = _facts(
+        CashAndCashEquivalentsAtCarryingValue=("USD", [_entry(None, "2023-03-31", 500.0, "2023-04-20")]),
+        CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents=("USD", [
+            _entry(None, "2023-03-31", 9999.0, "2023-04-20"),
+        ]),
+    )
+    elegido = sec.select_by_priority(sec.extract_raw_facts(payload))
+    cash = elegido[elegido["concept"] == "cash"]
+    assert len(cash) == 1
+    assert cash["value"].iloc[0] == 500.0
+
+
+def test_en_ventas_gana_el_total_y_no_un_desglose():
+    """Gold.com: el desglose ASC 606 (618) tiene mas prioridad que el total (25.513)."""
+    payload = _facts(
         RevenueFromContractWithCustomerExcludingAssessedTax=("USD", [
-            _entry("2023-01-01", "2023-03-31", 500.0, "2023-04-20"),
+            _entry("2025-07-01", "2026-06-30", 618.0, "2026-08-20", form="10-K"),
         ]),
         Revenues=("USD", [
-            _entry("2023-01-01", "2023-03-31", 9999.0, "2023-04-20"),
+            _entry("2025-07-01", "2026-06-30", 25513.0, "2026-08-20", form="10-K"),
         ]),
     )
     elegido = sec.select_by_priority(sec.extract_raw_facts(payload))
     revenue = elegido[elegido["concept"] == "revenue"]
-    assert len(revenue) == 1
-    assert revenue["value"].iloc[0] == 500.0
+    assert len(revenue) == 1 and revenue["value"].iloc[0] == 25513.0
+    assert revenue["tag"].iloc[0] == "us-gaap:Revenues"
+
+
+def test_ventas_brutas_de_impuestos_solo_si_no_hay_otra():
+    payload = _facts(
+        RevenueFromContractWithCustomerExcludingAssessedTax=("USD", [
+            _entry("2023-01-01", "2023-03-31", 800.0, "2023-04-20"),
+        ]),
+        RevenueFromContractWithCustomerIncludingAssessedTax=("USD", [
+            _entry("2023-01-01", "2023-03-31", 1000.0, "2023-04-20"),
+            _entry("2023-04-01", "2023-06-30", 1100.0, "2023-07-20"),
+        ]),
+    )
+    revenue = sec.select_by_priority(sec.extract_raw_facts(payload))
+    revenue = revenue[revenue["concept"] == "revenue"].sort_values("end")
+    assert list(revenue["value"]) == [800.0, 1100.0]     # neta si existe; bruta solo como respaldo
+
+
+def test_ventas_brutas_cuentan_si_el_total_vale_cero():
+    """Cooper-Standard: `Revenues` = 0 y la bruta (sin neta) es la real."""
+    payload = _facts(
+        RevenueFromContractWithCustomerIncludingAssessedTax=("USD", [
+            _entry("2023-01-01", "2023-12-31", 2815.9, "2024-02-20", form="10-K"),
+        ]),
+        Revenues=("USD", [_entry("2023-01-01", "2023-12-31", 0.0, "2024-02-20", form="10-K")]),
+    )
+    revenue = sec.select_by_priority(sec.extract_raw_facts(payload))
+    assert revenue[revenue["concept"] == "revenue"]["value"].iloc[0] == 2815.9
+
+
+def test_en_ventas_el_maximo_respeta_la_primera_publicacion():
+    """El total re-expresado un ano despues no estaba disponible en su dia."""
+    payload = _facts(
+        RevenueFromContractWithCustomerExcludingAssessedTax=("USD", [
+            _entry("2023-01-01", "2023-03-31", 500.0, "2023-04-20"),
+        ]),
+        Revenues=("USD", [
+            _entry("2023-01-01", "2023-03-31", 900.0, "2023-04-20"),
+            _entry("2023-01-01", "2023-03-31", 950.0, "2024-04-22", form="10-K"),
+        ]),
+    )
+    elegido = sec.select_by_priority(sec.extract_raw_facts(payload))
+    row = elegido[elegido["concept"] == "revenue"].iloc[0]
+    assert row["value"] == 900.0 and row["filed"] == pd.Timestamp("2023-04-20")
 
 
 def test_la_etiqueta_antigua_cubre_los_periodos_que_la_moderna_no_alcanza():
@@ -264,3 +321,21 @@ def test_subir_la_version_invalida_las_observaciones_viejas(tmp_path, monkeypatc
 
     sec.company_observations(7)
     assert cache.exists(sec._observations_name(7))
+
+
+def test_recalculo_en_paralelo_da_lo_mismo_que_en_serie_y_usa_la_cache_del_padre(tmp_path, monkeypatch):
+    """Los procesos hijos escriben en la cache redirigida, no en la real."""
+    from sfc_tfsig.data import cache
+
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    ciks = list(range(100, 160))
+    for c in ciks:
+        cache.write_frame(sec._raw_name(c), _raw_de_prueba())
+    assert sec.derive_missing_observations(ciks, workers=2, progress=False) == len(ciks)
+    assert all(cache.exists(sec._observations_name(c)) for c in ciks)
+    serie = sec.observations_from_raw(_raw_de_prueba())
+    paralelo = cache.read_frame(sec._observations_name(ciks[0])).drop(columns="cik")
+    pd.testing.assert_frame_equal(paralelo.reset_index(drop=True), serie.reset_index(drop=True))
+    # Lo ya calculado no se repite.
+    assert sec.derive_missing_observations(ciks, workers=2, progress=False) == 0
+
