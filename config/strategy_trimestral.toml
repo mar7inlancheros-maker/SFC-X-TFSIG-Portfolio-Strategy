@@ -59,7 +59,14 @@ min_price            = 5.0          # USD. Debajo de esto el spread se come la s
 min_dollar_volume    = 3_000_000    # USD/dia, mediana de 63 sesiones
 min_market_cap       = 750_000_000  # USD. Micro caps: datos peores, costes peores
 min_history_months   = 24           # necesario para momentum 12-1 y vol de 12m
-max_names            = 1200         # techo del panel, por coste de descarga
+max_names            = 5000         # techo de seguridad, por encima de lo que pasa los filtros
+# No es un control de riesgo: liquidez y tamano ya los ponen los minimos de
+# arriba. Con 1.200 se aplicaba DESPUES de bajar los fundamentales de todos (no
+# ahorraba descargas) y recortaba por volumen hasta el 45% de los elegibles
+# (974 de 2.174 en sep-2026; actuaba en 104 de 177 meses). Sin el recorte, con
+# la misma fecha de fin: IC 0,0241 -> 0,0270 (t 3,00 -> 3,47), rotacion y
+# coste iguales (270% -> 272%; 1,08% -> 1,09% de NAV al ano). El maximo
+# historico de elegibles es 2.207.
 
 # Antiguedad maxima de la ultima presentacion. Por encima de esto la empresa se
 # cae del panel: 550 dias son mas de cuatro trimestres de retraso, y una empresa
