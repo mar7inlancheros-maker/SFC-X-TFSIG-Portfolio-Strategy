@@ -425,10 +425,55 @@ Trampas:
   pide lo que falte en lotes de 25. Si sigue faltando y la caché cubre el
   inicio, se usa y `MarketData.stale` lo registra para el aviso. Sin esto, un
   corte de Yahoo borraba 16 de 50 pares y la validación corría con 38 nombres.
+- **`simulate_trades(time_stop=...)` es una variante para comparar, no la
+  regla.** Por defecto (`None`) la regla es la de siempre; con `time_stop`
+  cierra sin TP1 en ese día. El día de revisión sale de las mismas
+  operaciones (percentil 75 del día del TP1): la mejora que se muestra es
+  dentro de muestra y la ficha lo dice. No convertirla en la regla sin
+  validarla fuera de muestra.
+- **`tp1_day` en la salida de `simulate_trades` solo se anota.** Si cambia la
+  lógica del TP1, el día tiene que seguir siendo el de la sesión en que se
+  tocó, o `holding_window` medirá otra cosa.
 - **La t del backtest de la regla es de Newey-West** (`trade_plan.hac_t_stat`,
   retardo = la operación más larga). Las entradas diarias se solapan: con el
   error estándar ingenuo, 756 entradas parecerían 756 operaciones
   independientes y cualquier E(R) saldría significativo.
+
+## DCF automático (`src/quant_engine/valuation/`)
+
+```
+data (SEC XBRL | Compustat) ──> assumptions ──> dcf (puro, vectorizado) ──> engine ──> excel / cli / fichas
+```
+
+- **`dcf.value_vector` es la única fórmula.** Escenarios, rejillas, Monte Carlo
+  y DCF inverso la llaman con vectores. Si se cambia una línea del FCFF, se
+  cambia ahí y en `excel.py` (las fórmulas de la hoja DCF), y se vuelve a
+  comprobar que el Excel recalculado da lo mismo. Hoy coincide hasta 1e-13.
+- **Ventas = máximo entre etiquetas por ejercicio** (`data.annual_from_sec`),
+  no la primera por prioridad: un desglose ASC 606 ganaba al total (Gold.com).
+  **El modelo multifactor (`sfc_tfsig.data.sec`) usa todavía prioridad para
+  `revenue`**: probablemente tiene el mismo fallo en empresas así. Cambiarlo
+  exige subir `OBSERVATIONS_VERSION` y reconstruir el panel.
+- **La deuda no incluye arrendamientos operativos de US GAAP**: su coste ya está
+  en el EBIT. Sí los financieros, y todos los de IFRS 16.
+- **Las acciones de portada (dei) solo se usan si cuadran ±15% con las
+  diluidas**: en empresas con varias clases la SEC publica una sola (ARES: 103
+  M de unas 300).
+- **Compustat consolida la deuda de los fondos en las gestoras** (ARES): el
+  patrimonio sale negativo. No es un fallo del DCF: un FCFF no vale para
+  gestoras, bancos ni aseguradoras, y el aviso lo dice.
+- **`CRITICAL` en `engine.py` decide qué avisos invalidan el número.** Un aviso
+  nuevo que deba invalidar va ahí, con un prefijo de texto estable.
+- **El suelo de reinversión usa el ventas/capital propio si es mayor que 5**
+  (tope 25). Con 5 fijo, un comerciante de metales (18x) necesitaba 2.000 M
+  de capital al año y valía 0.
+- **El valor por acción tiene suelo en 0** (responsabilidad limitada); el
+  patrimonio negativo se conserva para el aviso.
+- **Las consultas nuevas de WRDS (funda, consenso de ventas) van al final de
+  `wrds_data.load` y cada una en su try.** Un error SQL deja la transacción
+  abortada; si fueran antes, tumbarían todo lo demás.
+- **rf de monedas distintas del USD vive en el YAML** (`valuation.risk_free`) y
+  caduca: revisarlo cada trimestre.
 
 ## WRDS (`src/sfc_tfsig/data/wrds.py`)
 

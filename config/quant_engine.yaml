@@ -55,6 +55,10 @@ signal_weights:
   beta: 0.05                 # beta, invertida (anomalia de baja beta, BAB)
   liquidity: 0.025           # log del volumen medio en dolares
   statistical: 0.025         # calidad de tendencia: signo(pendiente) x R2
+  # En validacion: se calculan y su IC sale en cada corrida, pero con peso 0 no
+  # mueven el score. Subirlos solo si la validacion los respalda fuera de muestra.
+  high_52w: 0.0              # precio / maximo de 52 semanas (George-Hwang 2004)
+  residual_momentum: 0.0     # momentum 12-1 del residuo frente al mercado (Blitz-Huij-Martens 2011)
 
 # Umbrales de acuerdo entre research y cuantitativo, en unidades de z-score del
 # Quant Score ALINEADO: score si el research dice LONG, -score si dice SHORT.
@@ -115,6 +119,32 @@ validation:
   horizon_d: 21              # retorno futuro de un mes: fechas mensuales sin solape
   plan_horizon_d: 63         # y al horizonte del plan (solapado, t de Newey-West); 0 lo apaga
   min_names: 20              # nombres minimos con dato en una fecha para contarla
+
+# DCF automatico (FCFF) de cada nombre de la canasta: src/quant_engine/valuation.
+# Informa al plan (valor, escenarios, DCF inverso); no cambia veredictos ni el
+# Quant Score: un factor de valor por DCF tendria que validarse antes.
+valuation:
+  enabled: true
+  years: 10                  # anos explicitos; el crecimiento converge al terminal en el ultimo
+  margin_years: 5            # anos para llegar al margen objetivo
+  terminal_growth: 0.025     # nunca por encima de la tasa libre de riesgo
+  erp: 0.045                 # prima de riesgo del mercado (implicita de Damodaran, ~4,3-4,6% en 2024-26)
+  ronic_excess: 0.0          # RONIC - WACC en el terminal: 0 = el crecimiento perpetuo no crea valor
+  sales_to_capital: 5.0      # cada 5 de ventas nuevas exige al menos 1 de reinversion neta
+  start_growth_bounds: [-0.20, 0.40]   # sin consenso, el crecimiento del ano 1 sale de la historia acotado
+  fair_band: 0.20            # +-20% sobre el precio: valor razonable
+  scenario_weights: {bear: 0.25, base: 0.50, bull: 0.25}
+  scenario_wacc_shift: 0.01
+  scenario_g_shift: 0.005
+  marginal_tax: {USD: 0.25, CAD: 0.265, EUR: 0.25, GBP: 0.25, default: 0.25}
+  # USD sale del bono a 10 anos (Yahoo ^TNX) en cada corrida; esto es el
+  # respaldo. Las demas monedas no tienen serie gratis fiable: revisar cada
+  # trimestre (fecha de la ultima revision: 2026-10).
+  risk_free: {USD: 0.0425, CAD: 0.032, EUR: 0.026, GBP: 0.045}
+  # Supuestos del analista por ticker, encima de los automaticos. Claves:
+  # growth (ano 1 o [ano 1, ano 2]), target_margin, terminal_growth, wacc,
+  # beta, erp, ronic_excess, da_pct, capex_pct, nwc_pct, sales_to_capital.
+  overrides: {}
 
 output:
   directory: output/quant_engine

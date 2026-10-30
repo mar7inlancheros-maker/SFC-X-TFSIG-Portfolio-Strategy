@@ -412,8 +412,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_wrds.set_defaults(func=cmd_wrds)
 
     from quant_engine.app import add_parser as add_research_parser
+    from quant_engine.valuation.cli import add_parser as add_dcf_parser
 
     add_research_parser(sub)
+    add_dcf_parser(sub)
     return parser
 
 

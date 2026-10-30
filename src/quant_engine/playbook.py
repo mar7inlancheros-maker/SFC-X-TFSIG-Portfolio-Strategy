@@ -233,6 +233,74 @@ def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.S
     return steps
 
 
+def borrow_tier(si_pct: float | None) -> tuple[str, float] | None:
+    """Tramo probable del coste de prestamo por el interes en corto.
+
+    Regla general, no un dato del broker: la mayoria de las acciones se presta
+    a tasa general (~0,25-0,5% al ano) y las muy vendidas en corto se encarecen
+    (D'Avolio, 2002). Devuelve (descripcion, tasa central del tramo).
+    """
+    if si_pct is None or not np.isfinite(si_pct):
+        return None
+    if si_pct < 0.05:
+        return "general collateral (about 0.25-0.5% a year)", 0.004
+    if si_pct < 0.15:
+        return "possibly 'warm' (about 0.5-5% a year)", 0.02
+    return "likely hard to borrow (5% a year or more)", 0.08
+
+
+def time_window(ticker: str, row: pd.Series, side: int, shares: int, fx: float, levels_date: pd.Timestamp,
+                horizon_d: int, borrow_cost: float, ex_dividend: pd.Timestamp | None = None,
+                si_pct: float | None = None) -> list[str]:
+    """Rango de tiempo de la posicion: cuando abrir, cuanto suele durar, cuando
+    revisar, cuando cerrar si o si, y lo que cuesta mantenerla.
+
+    Todo sale de la misma regla abierta cada dia de los ultimos anos en este
+    valor (`trade_plan.holding_window`), no de una regla general.
+    """
+    start = pd.Timestamp(levels_date) + pd.offsets.BDay(1)
+    day = lambda n: start + pd.offsets.BDay(int(round(n)))  # noqa: E731
+    lines = [f"Open on {start:%Y-%m-%d} (next session). If it is not filled within 2 sessions, recompute the "
+             "levels: entry and R have moved."]
+    p25, p75, med = row.get("hold_p25"), row.get("hold_p75"), row.get("hold_median")
+    if p25 is not None and pd.notna(p25):
+        lines.append(f"Typical holding for this rule on {ticker}: {p25:.0f}-{p75:.0f} sessions, from "
+                     f"{day(p25):%Y-%m-%d} to {day(p75):%Y-%m-%d} (median {med:.0f}).")
+    review, late = row.get("review_day"), row.get("late_tp1_rate")
+    if review is not None and pd.notna(review):
+        tp1 = row.get("tp1_median_days")
+        cover = "cover" if side < 0 else "sell"
+        head = (f"TP1 usually comes in about {tp1:.0f} sessions. Review on {day(review):%Y-%m-%d} "
+                f"({review:.0f} sessions): if TP1 has not been reached, ")
+        if row.get("cut_at_review") and pd.notna(late):
+            ts, plain = row.get("bt_exp_r_time_stop"), row.get("bt_exp_r")
+            gain = (f" With that time stop the rule's E(R) on {ticker} was {ts:+.2f}R against {plain:+.2f}R "
+                    "without it (in-sample: the review day comes from the same trades)."
+                    if ts is not None and pd.notna(ts) and plain is not None and pd.notna(plain) else "")
+            lines.append(head + f"{cover} the position: only {late:.0%} of past trades still open then reached it, "
+                         "below the break-even for TP1." + gain)
+        elif pd.notna(late):
+            lines.append(head + f"keep the stop and hold: {late:.0%} of past trades still open then reached it later.")
+    hard = day(horizon_d)
+    lines.append(f"Hard exit: {'cover' if side < 0 else 'close'} whatever is left by {hard:%Y-%m-%d} "
+                 f"({horizon_d} sessions), whatever the price.")
+    if side < 0:
+        notional = shares * float(row["entry"]) * fx
+        if med is not None and pd.notna(med) and notional > 0:
+            lines.append(f"Borrow over the typical holding: about {notional * borrow_cost * med / 252:,.0f} USD at the "
+                         f"assumed {borrow_cost:.2%} a year (about {notional * borrow_cost * 21 / 252:,.0f} USD per "
+                         "extra month).")
+            tier = borrow_tier(si_pct)
+            if tier and tier[1] > borrow_cost:
+                lines.append(f"With {si_pct:.1%} of the shares sold short, borrow is {tier[0]}: at {tier[1]:.0%} the "
+                             f"typical holding would cost about {notional * tier[1] * med / 252:,.0f} USD. Get the "
+                             "real fee from the broker before opening.")
+        if ex_dividend is not None and pd.notna(ex_dividend) and start <= pd.Timestamp(ex_dividend) <= hard:
+            lines.append(f"Ex-dividend on {pd.Timestamp(ex_dividend):%Y-%m-%d}, inside the window: a short open that "
+                         "day pays the dividend; it is not in the expectation above.")
+    return lines
+
+
 def standalone_hedge(beta: float, shares: int, side: int, entry: float, fx: float, bench: str,
                      bench_price: float) -> dict | None:
     """Benchmark que deja una posicion suelta sin beta de mercado."""
@@ -296,6 +364,17 @@ def build_cards(result) -> dict[str, dict]:
             "size_mult": p.reduce_size if (row["verdict"] == "REDUCE" or row.get("unproven_flip")) else 1.0,
             "earnings": earnings.get(t),
         }
+        from .factors import technical  # noqa: PLC0415
+        from .valuation.engine import summary  # noqa: PLC0415
+
+        close_l, high_l, low_l = result.clean.local_prices(t)
+        vol = result.clean.volume.get(t)
+        tech = technical.technical_view(close_l, high_l, low_l, vol)
+        card["technical"] = technical.describe(tech)
+        card["timing"] = technical.timing_advice(tech, side, float(row["entry"]), float(row["stop"]),
+                                                 float(row["tp1"])) if side else []
+        val = (getattr(result, "valuation", None) or {}).get(t)
+        card["valuation"], card["valuation_vs_signal"] = valuation_lines(row["signal"], summary(val) if val else None)
         if side and shares > 0:
             short_facts = {"si_pct": row_facts.get("si_pct_float"), "days_to_cover": row_facts.get("days_to_cover")}
             short_facts["squeeze"] = squeeze_risk(short_facts["si_pct"], short_facts["days_to_cover"])
@@ -306,6 +385,13 @@ def build_cards(result) -> dict[str, dict]:
             card["steps"] = execution_steps(t, side, shares, current, row, float(row["fx"]), capital, p.horizon_d,
                                             tp.get("levels_date", result.as_of), s.borrow_cost, short_facts,
                                             hedge, earnings.get(t))
+            # El rango de tiempo se pidio para los cortos: ahi el tiempo cuesta
+            # prestamo y dividendos.
+            if side < 0:
+                card["time_window"] = time_window(t, row, side, shares, float(row["fx"]),
+                                                  tp.get("levels_date", result.as_of), p.horizon_d, s.borrow_cost,
+                                                  (getattr(result, "ex_dividend", None) or {}).get(t),
+                                                  short_facts.get("si_pct"))
             card["notional"] = shares * float(row["entry"]) * float(row["fx"])
             card["beta"] = float(beta) if beta is not None and pd.notna(beta) else None
             card["risk_pct"] = shares * abs(float(row["entry"]) - float(row["stop"])) * float(row["fx"]) / capital
@@ -339,6 +425,42 @@ def standalone_total(cards: dict[str, dict], bench: str, bench_price: float) -> 
             "short": -sum(n for n in signed if n < 0), "net": sum(signed), "beta_usd": beta_usd,
             "risk_pct": sum(c["risk_pct"] for c in live), "hedge_shares": n_bench,
             "hedge_action": "SELL SHORT" if beta_usd > 0 else "BUY", "bench": bench, "bench_price": bench_price}
+
+
+def valuation_lines(signal: str, val: dict | None) -> tuple[list[str], str]:
+    """El DCF del nombre en frases, y si respalda o contradice la senal."""
+    if not val:
+        return [], ""
+    if not val.get("available"):
+        return [f"DCF not available: {val.get('reason')}"], ""
+    ccy = val.get("trading_currency", "USD")
+    cases = val["value_cases"]
+    lines = [f"DCF ({val['source']}, FY {val['fiscal_end']}): base {cases['base']:,.2f} {ccy} vs price "
+             f"{val['price']:,.2f} ({val['upside_base']:+.0%}): {val['stance']}. "
+             f"Bear / bull {cases['bear']:,.2f} / {cases['bull']:,.2f}, probability-weighted "
+             f"{val['value_expected']:,.2f}; "
+             f"WACC {val['wacc']:.1%}, terminal g {val['terminal_growth']:.1%}"
+             + (f", terminal value {val['tv_share']:.0%} of EV." if val.get("tv_share") is not None
+                and np.isfinite(val["tv_share"]) else ", enterprise value not positive.")]
+    if val.get("implied_cagr") is not None:
+        lines.append(f"The price implies {val['implied_cagr']:+.1%} revenue growth a year for {val['years']} years; "
+                     f"the base case assumes {val['base_cagr']:+.1%}.")
+    elif val.get("reverse_note"):
+        lines.append(f"Reverse DCF: {val['reverse_note']}.")
+    if val.get("mc_prob_above_price") is not None:
+        lines.append(f"Monte Carlo: value above the price in {val['mc_prob_above_price']:.0%} of draws.")
+    lines.extend(f"DCF check: {f}" for f in val.get("flags", []))
+    stance = val["stance"]
+    if val.get("critical"):
+        return lines, "valuation is not decision-grade for this name: see the DCF checks"
+    agree = ""
+    if signal in ("LONG", "SHORT") and stance in ("UNDERVALUED", "OVERVALUED"):
+        backs = (signal == "LONG") == (stance == "UNDERVALUED")
+        agree = (f"valuation {'supports' if backs else 'contradicts'} the {signal}: the DCF says "
+                 f"{stance.lower()}")
+    elif signal in ("LONG", "SHORT"):
+        agree = "valuation is neutral for this trade: the DCF is within the fair-value band"
+    return lines, agree
 
 
 def card_size_note(card: dict, max_risk: float) -> str:

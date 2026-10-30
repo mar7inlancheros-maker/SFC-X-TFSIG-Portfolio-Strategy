@@ -66,6 +66,8 @@ class WrdsData:
     ibes_recs: pd.DataFrame = field(default_factory=pd.DataFrame)     # consenso mensual crudo
     ibes_eps: pd.DataFrame = field(default_factory=pd.DataFrame)      # estimaciones mensuales crudas
     short_interest_raw: pd.DataFrame = field(default_factory=pd.DataFrame)  # quincenal crudo
+    funda: pd.DataFrame = field(default_factory=pd.DataFrame)         # anual (comp.funda), para el DCF
+    ibes_sales: pd.DataFrame = field(default_factory=pd.DataFrame)    # consenso de ventas FY1/FY2
 
     @property
     def sectors(self) -> dict[str, str]:
@@ -431,6 +433,31 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
                     f"select {cols} from ibes.statsum_epsint {where}", f"ibes_eps_{day}")
             analysts = analyst_panel(recs, eps, ids, as_of)
 
+        # Para el DCF: estados anuales y consenso de ventas. Van al final y cada
+        # una en su propio try: si una tabla o columna cambia en WRDS, se pierde
+        # solo esa parte, no todo lo anterior.
+        funda, sales = pd.DataFrame(), pd.DataFrame()
+        if gvkeys:
+            try:
+                funda = q("select gvkey, datadate, fyear, curcd, revt, oiadp, dp, capx, stkco, txt, pi, xint, "
+                          "che, dltt, dlc, mib, pstk, act, lct, ceq, cshfd, csho from comp.funda "
+                          f"where gvkey in ({_in_list(gvkeys)}) and indfmt='INDL' and datafmt='STD' "
+                          f"and consol='C' and popsrc='D' "
+                          f"and datadate >= '{as_of - pd.DateOffset(years=9):%Y-%m-%d}' and datadate <= '{day}'",
+                          f"funda_{day}")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("comp.funda no disponible para el DCF: %s", exc)
+        if len(ibtics):
+            try:
+                where_s = (f"where ticker in ({_in_list(ibtics.unique())}) and measure='SAL' and fpi in ('1', '2') "
+                           f"and statpers >= '{as_of - pd.DateOffset(months=3):%Y-%m-%d}' and statpers <= '{day}'")
+                sales = q(f"select ticker, statpers, fpi, fpedats, meanest, numest, 'USD' as curcode "
+                          f"from ibes.statsum_xepsus {where_s} union all "
+                          f"select ticker, statpers, fpi, fpedats, meanest, numest, curcode "
+                          f"from ibes.statsum_xepsint {where_s}", f"ibes_sales_{day}")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("consenso de ventas de IBES no disponible: %s", exc)
+
         return WrdsData(
             available=True,
             factors=factors,
@@ -443,6 +470,8 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
             ibes_recs=recs,
             ibes_eps=eps,
             short_interest_raw=raw_si,
+            funda=funda,
+            ibes_sales=sales,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("fallo leyendo WRDS")

@@ -17,6 +17,12 @@ completa; los pesos estan en `config/quant_engine.yaml`.
 | quality (WRDS) | ROE, rentabilidad bruta, margen de caja; deuda y devengo en contra | + | QMJ, Novy-Marx, Sloan |
 | analyst (WRDS) | revision de EPS a 3m; cambio y nivel de recomendacion en contra | + | Chan-Jegadeesh-Lakonishok |
 | short_interest (WRDS) | % de acciones prestadas en corto | - | Boehmer-Jones-Zhang |
+| high_52w | precio / maximo de 52 semanas | + | George-Hwang (2004) |
+| residual_momentum | momentum 12-1 del residuo frente al mercado | + | Blitz-Huij-Martens (2011) |
+
+Los dos ultimos entran con peso 0 en el YAML: se calculan y se validan (IC
+propio en cada corrida), pero no mueven el score hasta que la validacion los
+respalde. Un factor que no se sostiene solo diluye la combinacion.
 
 Los cuatro ultimos solo existen con WRDS. Sin WRDS salen vacios y el score se
 renormaliza sobre los componentes de precio, manteniendo sus proporciones.
@@ -48,6 +54,8 @@ COMPONENTS: dict[str, list[tuple[str, int]]] = {
                 ("debt_to_equity", -1), ("accruals", -1)],
     "analyst": [("eps_revision_3m", 1), ("rec_change_3m", -1), ("meanrec", -1)],
     "short_interest": [("si_pct_float", -1)],
+    "high_52w": [("pct_52w_high", 1)],
+    "residual_momentum": [("resid_mom", 1)],
 }
 
 # Matriz de caracteristicas estandarizadas del apartado de seccion cruzada. Sin

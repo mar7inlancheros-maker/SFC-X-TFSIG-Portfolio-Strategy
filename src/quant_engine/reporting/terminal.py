@@ -785,6 +785,14 @@ def signal_cards(console: Console, r: AnalysisResult) -> None:
             console.print(f"  Against research {c['research']}: " + escape("; ".join(c["why_against"])))
         if c["fundamentals"]:
             console.print("  Fundamentals: " + escape(" | ".join(c["fundamentals"])))
+        for line in c.get("valuation", []):
+            console.print("  " + escape(line))
+        for line in c.get("technical", []):
+            console.print("  Technical: " + escape(line))
+        for line in c.get("timing", []):
+            console.print("  [bold]Timing:[/] " + escape(line))
+        if c.get("valuation_vs_signal"):
+            console.print(f"  [bold]{escape(c['valuation_vs_signal'][0].upper() + c['valuation_vs_signal'][1:])}.[/]")
         if c["data_flags"]:
             console.print("[yellow]  Data to verify: " + escape("; ".join(c["data_flags"])) + "[/]")
         if c.get("steps"):
@@ -793,6 +801,10 @@ def signal_cards(console: Console, r: AnalysisResult) -> None:
             console.print("  How to execute:")
             for i, step in enumerate(c["steps"], 1):
                 console.print(f"    {i}. {escape(step)}")
+        if c.get("time_window"):
+            console.print("  [bold]Time window (short):[/]")
+            for line in c["time_window"]:
+                console.print(f"    - {escape(line)}")
         console.print()
     if total:
         console.print(f"[bold]All standalone positions together[/] ({', '.join(total['names'])}): long "

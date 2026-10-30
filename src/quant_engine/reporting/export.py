@@ -38,6 +38,12 @@ def _clean(value):
     return value
 
 
+def _valuation_json(r: AnalysisResult) -> dict:
+    from ..valuation.engine import summary  # noqa: PLC0415
+
+    return {t: summary(v) for t, v in (getattr(r, "valuation", None) or {}).items()}
+
+
 def to_json(r: AnalysisResult) -> dict:
     s = r.settings
     return _clean({
@@ -82,6 +88,7 @@ def to_json(r: AnalysisResult) -> dict:
                                           if k != "pnl"}}
                        if r.trade_plan else None),
         "score_validation": {k: v for k, v in (getattr(r, "score_validation", None) or {}).items() if k != "ic"},
+        "valuation": _valuation_json(r),
         "warnings": r.warnings,
         "disclaimer": "Descriptive quantitative analysis. Not investment advice.",
     })
@@ -118,6 +125,15 @@ def export_all(r: AnalysisResult, console: Console, directory: Path, stamp: str,
         from . import plan_html  # noqa: PLC0415
 
         paths["trade_plan_html"] = plan_html.write(r, directory / f"trade_plan_{stamp}.html")
+
+    # Un Excel con formulas vivas por nombre valorado: el analista puede tocar
+    # supuestos y el modelo recalcula.
+    from ..valuation import excel as dcf_excel  # noqa: PLC0415
+
+    for t, v in (getattr(r, "valuation", None) or {}).items():
+        if v.get("available"):
+            safe = t.replace(".", "_").replace("^", "")
+            paths[f"dcf_{t}"] = dcf_excel.write(v, directory / "dcf" / f"DCF_{safe}_{stamp}.xlsx")
 
     paths["correlation"] = directory / f"correlation_{stamp}.csv"
     r.correlation["pearson"].to_csv(paths["correlation"])

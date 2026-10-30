@@ -405,7 +405,8 @@ EXITS = ("stop", "tp1_be", "tp1_tp2", "tp1_time", "time")
 
 
 def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.Series,
-                    side: int, p: PlanParams, cost: float = 0.0, borrow: float = 0.0) -> pd.DataFrame:
+                    side: int, p: PlanParams, cost: float = 0.0, borrow: float = 0.0,
+                    time_stop: int | None = None) -> pd.DataFrame:
     """La regla exacta del plan, abierta cada dia de los ultimos `history_d`.
 
     Entrada al cierre; stop a `stop_atr` ATR; en TP1 sale la mitad y el stop
@@ -427,7 +428,7 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
         if not (np.isfinite(entry) and np.isfinite(r)) or r <= 0:
             continue
         stop, tp1, tp2 = entry - side * r, entry + side * m1 * r, entry + side * m2 * r
-        half, realized, outcome = False, 0.0, None
+        half, realized, outcome, tp1_day = False, 0.0, None, np.nan
         for j in range(1, horizon + 1):
             hi, lo = h[i + j], l[i + j]
             if side > 0:
@@ -441,10 +442,16 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
                     outcome = (side * (worst_stop - entry) / r, "stop", j)
                     break
                 if hit_tp1:
-                    half, realized = True, 0.5 * m1
+                    half, realized, tp1_day = True, 0.5 * m1, j
                     if hit_be:
                         outcome = (realized, "tp1_be", j)
                         break
+                    continue
+                # Variante con stop por tiempo: sin TP1 a esta altura, se cierra
+                # al cierre del dia. Solo para comparar; la regla del plan no la usa.
+                if time_stop is not None and j >= time_stop:
+                    outcome = (side * (c[i + j] - entry) / r, "time_stop", j)
+                    break
                 continue
             if hit_be:
                 outcome = (realized + 0.5 * side * (worst_be - entry) / r, "tp1_be", j)
@@ -459,9 +466,45 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
         r_mult -= 2 * cost * entry / r
         if side < 0:
             r_mult -= borrow * days / 252 * entry / r
-        rows.append((r_mult, exit_type, days))
+        rows.append((r_mult, exit_type, days, tp1_day))
         dates.append(close.index[i])
-    return pd.DataFrame(rows, index=pd.DatetimeIndex(dates), columns=["r_mult", "exit", "days"])
+    return pd.DataFrame(rows, index=pd.DatetimeIndex(dates), columns=["r_mult", "exit", "days", "tp1_day"])
+
+
+def holding_window(trades: pd.DataFrame, p: PlanParams) -> dict[str, float]:
+    """Cuanto dura la operacion con esta regla en este valor, y cuando revisarla.
+
+    Sale de las mismas entradas historicas del backtest de la regla:
+
+    - Ventana tipica: percentiles 25-75 de los dias hasta la salida.
+    - TP1: en que dia suele tocarse (mediana y percentil 75).
+    - Revision (stop por tiempo): el percentil 75 del dia del TP1. De las
+      operaciones que a esa altura seguian vivas sin TP1 (ni stop), que
+      fraccion lo toco despues. Si es menor que el break-even del TP1
+      (1 / (1 + TP1 en R)), seguir esperando tiene expectativa negativa: se
+      cierra en esa fecha en vez de agotar el horizonte. Mantener un corto
+      cuesta prestamo cada dia, y el tiempo sin avance es informacion.
+    """
+    if trades is None or trades.empty:
+        return {"n": 0}
+    days = trades["days"].astype(float)
+    out: dict[str, float] = {"n": len(trades), "p25": float(days.quantile(0.25)),
+                             "median": float(days.median()), "p75": float(days.quantile(0.75)),
+                             "max": float(p.horizon_d)}
+    tp1 = trades["tp1_day"].dropna() if "tp1_day" in trades else pd.Series(dtype=float)
+    out["tp1_share"] = float(len(tp1) / len(trades))
+    if len(tp1) >= 10:
+        out["tp1_median"] = float(tp1.median())
+        k = int(np.ceil(tp1.quantile(0.75)))
+        stopped_by_k = (trades["exit"] == "stop") & (trades["days"] <= k)
+        tp1_by_k = trades["tp1_day"] <= k
+        alive = trades[~stopped_by_k & ~tp1_by_k.fillna(False)]
+        out["review_day"] = float(k)
+        out["alive_at_review"] = float(len(alive) / len(trades))
+        out["late_tp1_rate"] = float(alive["tp1_day"].notna().mean()) if len(alive) else float("nan")
+        out["breakeven_tp1"] = 1.0 / (1.0 + p.tp_r[0])
+        out["cut_at_review"] = bool(len(alive) >= 10 and out["late_tp1_rate"] < out["breakeven_tp1"])
+    return out
 
 
 def hac_t_stat(x: np.ndarray, lag: int) -> float:
@@ -657,11 +700,22 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         sims[t] = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost,
                                   borrow=s.borrow_cost)
         st = trade_stats(sims[t])
+        hw = holding_window(sims[t], p)
+        if hw.get("cut_at_review"):
+            # Lo que habria dado la regla cerrando en la revision (dentro de
+            # muestra: el dia de revision sale de estas mismas operaciones).
+            ts = trade_stats(simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost,
+                                             borrow=s.borrow_cost, time_stop=int(hw["review_day"])))
+            hw["exp_r_time_stop"] = ts.get("exp_r")
         rows[-1].update({
             "bt_trades": st.get("n", 0), "bt_win_rate": st.get("win_rate"), "bt_exp_r": st.get("exp_r"),
             "bt_t_stat": st.get("t_stat"),
             "bt_avg_win_r": st.get("avg_win_r"), "bt_avg_loss_r": st.get("avg_loss_r"),
             "bt_profit_factor": st.get("profit_factor"), "bt_avg_days": st.get("avg_days"),
+            "hold_p25": hw.get("p25"), "hold_median": hw.get("median"), "hold_p75": hw.get("p75"),
+            "tp1_median_days": hw.get("tp1_median"), "review_day": hw.get("review_day"),
+            "late_tp1_rate": hw.get("late_tp1_rate"), "cut_at_review": hw.get("cut_at_review", False),
+            "bt_exp_r_time_stop": hw.get("exp_r_time_stop"),
             "exp_return_pct": (st.get("exp_r") or 0.0) * lv["stop_pct"] if st.get("n") else float("nan"),
         })
     plan = pd.DataFrame(rows).set_index("ticker")

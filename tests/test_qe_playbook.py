@@ -240,3 +240,87 @@ def test_las_posiciones_sueltas_se_ven_juntas_con_una_sola_cobertura():
     assert total["beta_usd"] == pytest.approx(-150_000 + 50_000)    # beta desconocida cuenta como 1
     assert total["hedge_action"] == "BUY" and total["hedge_shares"] == 200
     assert total["risk_pct"] == pytest.approx(0.015)
+
+
+# ---------------------------------------------------------------------------
+#  Rango de tiempo de los cortos
+# ---------------------------------------------------------------------------
+
+
+def test_la_regla_anota_el_dia_del_tp1_sin_cambiar_el_resultado():
+    idx = pd.bdate_range("2026-01-01", periods=7)
+    c = pd.Series([100, 100, 104, 108, 108, 108, 108], index=idx, dtype=float)
+    out = tp.simulate_trades(c, c + 0.2, c - 0.2, pd.Series(1.0, index=idx), 1,
+                             tp.PlanParams(horizon_d=5, history_d=1))
+    # Entrada en la segunda sesion (history_d = 1): el TP1 llega al dia siguiente.
+    assert out["tp1_day"].iloc[0] == 1 and out["r_mult"].iloc[0] == pytest.approx(2.25)
+
+
+def _trades(n_fast=60, n_slow=40, late_hits=10, late_day=40):
+    """60 llegan al TP1 en 5-14 dias; de 40 lentos, `late_hits` llegan despues (dia `late_day`)."""
+    rows = [{"r_mult": 1.0, "exit": "tp1_tp2", "days": 30, "tp1_day": 5 + i % 10} for i in range(n_fast)]
+    rows += [{"r_mult": 0.5, "exit": "tp1_time", "days": 63, "tp1_day": late_day} for _ in range(late_hits)]
+    rows += [{"r_mult": -0.3, "exit": "time", "days": 63, "tp1_day": np.nan} for _ in range(n_slow - late_hits)]
+    return pd.DataFrame(rows)
+
+
+def test_ventana_de_tenencia_y_revision_por_tiempo():
+    p = tp.PlanParams()
+    w = tp.holding_window(_trades(), p)
+    assert w["n"] == 100 and w["p25"] == 30 and w["p75"] == 63
+    tp1_days = pd.Series([5 + i % 10 for i in range(60)] + [40] * 10, dtype=float)
+    k = int(np.ceil(tp1_days.quantile(0.75)))
+    assert w["review_day"] == k
+    # Vivos en k: los 40 lentos (y los rapidos con TP1 despues de k, si los hay).
+    alive_fast = sum(1 for i in range(60) if 5 + i % 10 > k)
+    assert w["late_tp1_rate"] == pytest.approx((10 + alive_fast) / (40 + alive_fast))
+    assert w["cut_at_review"]                                   # 10/40 < 40% de break-even
+    # 20 de 40 lentos llegan tarde (dia 50): seguir esperando compensa.
+    patient = tp.holding_window(_trades(late_hits=20, late_day=50), p)
+    assert patient["late_tp1_rate"] == pytest.approx(0.5) and not patient["cut_at_review"]
+
+
+def test_rango_de_tiempo_del_corto_con_fechas_coste_y_dividendo():
+    row = pd.Series({"entry": 100.0, "hold_p25": 10.0, "hold_median": 21.0, "hold_p75": 40.0,
+                     "tp1_median_days": 8.0, "review_day": 15.0, "late_tp1_rate": 0.2, "cut_at_review": True})
+    lines = pb.time_window("ARES", row, -1, 1000, 1.0, pd.Timestamp("2026-10-30"), 63, 0.0252,
+                           ex_dividend=pd.Timestamp("2026-11-20"))
+    text = " ".join(lines)
+    assert lines[0].startswith("Open on 2026-11-02")            # viernes -> lunes
+    assert "10-40 sessions, from 2026-11-16 to 2026-12-28" in text
+    assert "Review on 2026-11-23" in text and "cover the position" in text
+    assert "Hard exit: cover whatever is left by 2027-01-28" in text
+    assert "about 210 USD" in text                              # 100.000 x 2,52% x 21/252
+    assert "Ex-dividend on 2026-11-20" in text
+
+
+def test_fechas_ex_dividendo(monkeypatch):
+    store = {}
+    monkeypatch.setattr(loader.cache, "read_json", lambda name: store.get(name))
+    monkeypatch.setattr(loader.cache, "write_json", lambda name, data: store.__setitem__(name, data))
+    out = loader.load_ex_dividend_dates(["X"], pd.Timestamp("2026-10-30"),
+                                        fetch=lambda t: pd.Timestamp("2026-11-20"))
+    assert out == {"X": pd.Timestamp("2026-11-20")} and "qe_ex_dividend_dates" in store
+
+
+def test_stop_por_tiempo_cierra_sin_tp1_y_no_cambia_la_regla_por_defecto():
+    idx = pd.bdate_range("2026-01-01", periods=8)
+    c = pd.Series([100, 100, 100.5, 101, 101.5, 102, 102, 102], index=idx, dtype=float)
+    p = tp.PlanParams(horizon_d=6, history_d=1)
+    plain = tp.simulate_trades(c, c + 0.2, c - 0.2, pd.Series(1.0, index=idx), 1, p)
+    timed = tp.simulate_trades(c, c + 0.2, c - 0.2, pd.Series(1.0, index=idx), 1, p, time_stop=2)
+    assert plain["exit"].iloc[0] == "time"
+    assert timed["exit"].iloc[0] == "time_stop" and timed["days"].iloc[0] == 2
+    assert timed["r_mult"].iloc[0] == pytest.approx((101 - 100) / 2.5)
+
+
+@pytest.mark.parametrize("si, rate", [(0.02, 0.004), (0.10, 0.02), (0.25, 0.08), (None, None)])
+def test_tramo_de_prestamo_por_interes_en_corto(si, rate):
+    tier = pb.borrow_tier(si)
+    assert (tier is None) if rate is None else tier[1] == rate
+
+
+def test_rango_de_tiempo_avisa_del_prestamo_caro():
+    row = pd.Series({"entry": 100.0, "hold_p25": 10.0, "hold_median": 21.0, "hold_p75": 40.0})
+    lines = pb.time_window("X", row, -1, 1000, 1.0, pd.Timestamp("2026-10-30"), 63, 0.0025, si_pct=0.25)
+    assert any("likely hard to borrow" in x and "about 667 USD" in x for x in lines)   # 100.000 x 8% x 21/252

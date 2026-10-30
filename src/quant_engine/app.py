@@ -185,6 +185,9 @@ def _print_saved(console: Console, paths: dict[str, Path]) -> None:
     for kind, label in labels.items():
         if kind in paths:
             console.print(f"  {label:20} {paths[kind].name}")
+    for kind, path in paths.items():
+        if kind.startswith("dcf_"):
+            console.print(f"  {'DCF model (Excel)':20} dcf/{path.name}")
     console.print("  + JSON, CSVs (portfolio, signals, risk, correlation, trade plan) and charts/")
 
 

@@ -244,8 +244,25 @@ def _next_earnings(ticker: str) -> pd.Timestamp | None:
     return stamps[0]
 
 
+def _next_ex_dividend(ticker: str) -> pd.Timestamp | None:
+    import yfinance as yf  # perezoso: los tests no tocan la red
+
+    cal = yf.Ticker(ticker).calendar
+    d = cal.get("Ex-Dividend Date") if isinstance(cal, dict) else None
+    return pd.Timestamp(d) if d is not None else None
+
+
+def load_ex_dividend_dates(tickers, today: pd.Timestamp, timeout: float = 20.0,
+                           fetch=None) -> dict[str, pd.Timestamp]:
+    """Proxima fecha ex-dividendo de Yahoo. Un corto abierto ese dia paga el dividendo."""
+    return load_earnings_dates(tickers, today, timeout, fetch or _next_ex_dividend, cache_name=_EX_DIVIDEND)
+
+
+_EX_DIVIDEND = "qe_ex_dividend_dates"
+
+
 def load_earnings_dates(tickers, today: pd.Timestamp, timeout: float = 20.0,
-                        fetch=None) -> dict[str, pd.Timestamp]:
+                        fetch=None, cache_name: str = "") -> dict[str, pd.Timestamp]:
     """Proxima fecha de resultados de cada ticker, la que da Yahoo.
 
     Solo para la ejecucion: un resultado antes de la salida por tiempo puede
@@ -256,8 +273,9 @@ def load_earnings_dates(tickers, today: pd.Timestamp, timeout: float = 20.0,
     import concurrent.futures as cf  # noqa: PLC0415
 
     fetch = fetch or _next_earnings
+    cache_name = cache_name or _EARNINGS
     day = today.strftime("%Y-%m-%d")
-    cached = cache.read_json(_EARNINGS) or {}
+    cached = cache.read_json(cache_name) or {}
     known = cached.get(day, {})
     out = {t: pd.Timestamp(v) for t, v in known.items() if v}
     todo = [t for t in tickers if t not in known]
@@ -276,7 +294,7 @@ def load_earnings_dates(tickers, today: pd.Timestamp, timeout: float = 20.0,
             if d is not None and pd.notna(d):
                 out[t] = pd.Timestamp(d)
         pool.shutdown(wait=False, cancel_futures=True)
-        cache.write_json(_EARNINGS, {day: known})
+        cache.write_json(cache_name, {day: known})
     # Una fecha ya pasada (Yahoo tarda en actualizar) no es la proxima.
     return {t: d for t, d in out.items() if d >= today.normalize()}
 

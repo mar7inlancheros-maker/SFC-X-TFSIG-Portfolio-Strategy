@@ -228,6 +228,14 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
                          + escape("; ".join(c["why_against"])) + "</p>")
         if c["fundamentals"]:
             block.append("<p class='why'><b>Fundamentals:</b> " + escape(" | ".join(c["fundamentals"])) + "</p>")
+        if c.get("valuation"):
+            block.append("<p class='why'><b>Valuation:</b> " + escape(" ".join(c["valuation"]))
+                         + (f" <b>{escape(c['valuation_vs_signal'][0].upper() + c['valuation_vs_signal'][1:])}.</b>"
+                            if c.get("valuation_vs_signal") else "") + "</p>")
+        if c.get("technical"):
+            block.append("<p class='why'><b>Technical:</b> " + escape(" ".join(c["technical"])) + "</p>")
+        if c.get("timing"):
+            block.append("<p class='why'><b>Timing:</b> " + escape(" ".join(c["timing"])) + "</p>")
         if c["data_flags"]:
             block.append("<p class='why down'><b>Data to verify:</b> " + escape("; ".join(c["data_flags"])) + "</p>")
         if c.get("steps"):
@@ -235,6 +243,9 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
                          f"{c['risk_pct']:.2%} of capital ({escape(card_size_note(c, p.max_risk_per_trade))}).</p>")
             block.append("<p class='why'><b>How to execute:</b></p><ol>"
                          + "".join(f"<li>{escape(s)}</li>" for s in c["steps"]) + "</ol>")
+        if c.get("time_window"):
+            block.append("<p class='why'><b>Time window (short):</b></p><ul>"
+                         + "".join(f"<li>{escape(s)}</li>" for s in c["time_window"]) + "</ul>")
         block.append("</div>")
         out.append("".join(block))
     if total:
@@ -245,6 +256,60 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
                    f"of them instead of one per name: {escape(total['hedge_action'])} {total['hedge_shares']:,} "
                    f"{escape(bench)} at ~{total['bench_price']:,.2f}.</p>")
     return out
+
+
+def _valuation_section(r: AnalysisResult, h2) -> list[str]:
+    """Tabla del DCF de cada nombre y de donde sale cada supuesto."""
+    from ..valuation.engine import summary  # noqa: PLC0415
+
+    vals = {t: summary(v) for t, v in (getattr(r, "valuation", None) or {}).items()}
+    if not vals:
+        return []
+    out = [h2("Valuation: automated DCF")]
+    rows, missing = [], []
+    for t, v in vals.items():
+        if not v["available"]:
+            missing.append(f"{t}: {v['reason']}")
+            continue
+        c = v["value_cases"]
+        cls = "up" if v["stance"] == "UNDERVALUED" else "down" if v["stance"] == "OVERVALUED" else ""
+        implied = f"{v['implied_cagr'] * 100:+.1f}%" if v.get("implied_cagr") is not None else "n/a"
+        rows.append(
+            f"<tr><td class='l'><b>{escape(t)}</b> <span class='muted'>{escape(v['trading_currency'])}</span></td>"
+            f"<td>{_price(v['price'])}</td><td>{_price(c['bear'])}</td><td>{_price(c['base'])}</td>"
+            f"<td>{_price(c['bull'])}</td><td><b>{_price(v['value_expected'])}</b></td>"
+            f"<td class='{cls}'>{v['upside_base'] * 100:+.0f}%</td><td class='l {cls}'>{escape(v['stance'])}</td>"
+            f"<td>{_pct(v['wacc'])}</td><td>{_pct(v['tv_share'], 0) or 'n/a'}</td>"
+            f"<td>{_pct(v.get('mc_prob_above_price'), 0)}</td><td>{implied}</td></tr>")
+    if rows:
+        out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th>Price</th><th>Bear</th><th>Base</th>"
+                   "<th>Bull</th><th>Weighted</th><th>Base upside</th><th class='l'>Stance</th><th>WACC</th>"
+                   "<th>TV % EV</th><th>P(value &gt; price)</th><th>Implied 10y CAGR</th></tr>" + "".join(rows)
+                   + "</table></div>")
+        out.append("<p class='muted'>Free cash flow to the firm over 10 years: growth fades in a straight line to "
+                   "the terminal rate, margins converge to their target in 5, the tax rate rises to the marginal "
+                   "one, and growth needs capital (at least 1 of net reinvestment per 5 of new revenue). "
+                   "Terminal value reinvests g/RONIC of NOPAT, with RONIC = WACC. WACC from CAPM with a "
+                   "Blume-adjusted beta and a synthetic-rating cost of debt, at market weights; mid-year "
+                   "discounting. Scenarios weighted 25/50/25. Implied CAGR: the revenue growth the price needs "
+                   "with every other assumption unchanged. Stance from the base case; NOT DECISION-GRADE when "
+                   "a critical check fails (thin margin, negative equity, WACC too close to g, unreliable share "
+                   "count or debt, revenue jump). The DCF informs; it does not change the verdicts.</p>")
+        for t, v in vals.items():
+            if v["available"]:
+                items = "".join(f"<li>{escape(n)}</li>" for n in v["notes"])
+                checks = "".join(f"<li class='down'>{escape(f)}</li>" for f in v["flags"])
+                out.append(f"<details open><summary><b>{escape(t)}</b>: assumptions and checks</summary><ul>{items}"
+                           f"{checks}</ul></details>")
+    if missing:
+        out.append("<p class='note warn'><b>No DCF:</b> " + escape("; ".join(missing)) + "</p>")
+    return out
+
+
+def _hold(row) -> str:
+    """Percentiles 25-75 de los dias que dura la operacion con esta regla en este valor."""
+    p25, p75 = row.get("hold_p25"), row.get("hold_p75")
+    return "" if p25 is None or pd.isna(p25) else f"{p25:.0f}-{p75:.0f} d"
 
 
 def _tstat(v) -> str:
@@ -466,10 +531,12 @@ def build(r: AnalysisResult) -> str:
             f"<td>{_price(row['entry'])}</td><td>{_price(row['stop'])}</td><td>{_pct(row['stop_pct'])}</td>"
             f"<td>{_price(row['tp1'])}</td><td>{_price(row['tp2'])}</td><td>{int(row['shares']):,}</td>"
             f"<td>{_money(row['notional'])}</td><td>{row['weight'] * 100:+.1f}%</td>"
-            f"<td>{_odds(row['p_tp1_before_stop'], be1)}</td><td>{_odds(row['p_tp2_before_stop'], be2)}</td></tr>")
+            f"<td>{_odds(row['p_tp1_before_stop'], be1)}</td><td>{_odds(row['p_tp2_before_stop'], be2)}</td>"
+            f"<td>{_hold(row)}</td></tr>")
     out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th class='l'>Plan</th><th>Entry</th>"
                "<th>Stop</th><th>Stop %</th><th>TP1</th><th>TP2</th><th>Shares</th><th>Notional</th>"
-               "<th>Weight</th><th>P(TP1)</th><th>P(TP2)</th></tr>" + "".join(rows) + "</table></div>")
+               "<th>Weight</th><th>P(TP1)</th><th>P(TP2)</th><th>Typical hold</th></tr>" + "".join(rows)
+               + "</table></div>")
     capped = list(plan.index[plan["size_capped_by_risk"]])
     out.append(
         f"<p class='muted'>Stop = {p.stop_atr} &times; ATR(14) from entry. R = entry-to-stop distance; TP1 = "
@@ -484,6 +551,8 @@ def build(r: AnalysisResult) -> str:
 
     # 4. Expectativas
     out.extend(_expectations(r, tp, plan, p, h2))
+
+    out.extend(_valuation_section(r, h2))
 
     # 5. Cobertura
     out.append(h2("Market exposure"))

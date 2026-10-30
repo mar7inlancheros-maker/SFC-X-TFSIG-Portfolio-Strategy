@@ -90,6 +90,8 @@ class AnalysisResult:
     reference_peers: list[str] = field(default_factory=list)
     score_validation: dict[str, object] = field(default_factory=dict)
     earnings: dict[str, pd.Timestamp] = field(default_factory=dict)
+    ex_dividend: dict[str, pd.Timestamp] = field(default_factory=dict)
+    valuation: dict[str, dict] = field(default_factory=dict)
 
 
 def _params(settings: EngineSettings, beta_neutral: bool = False) -> ConstructionParams:
@@ -271,7 +273,9 @@ def _per_asset(settings: EngineSettings, clean: cleaning.CleanData, tickers: lis
         rolling[t] = beta_mod.rolling_beta(clean.returns[t], clean.returns[bench], 252)
         high, low = clean.high.get(t), clean.low.get(t)
         mom[t] = {**momentum.momentum_features(close, high, low),
-                  "trend_quality": momentum.trend_quality(close)}
+                  "trend_quality": momentum.trend_quality(close),
+                  "pct_52w_high": momentum.high_52w_ratio(close, high),
+                  "resid_mom": momentum.residual_momentum(clean.returns[t], clean.returns[bench])}
         mr_feat = mean_reversion.mean_reversion_features(close, clean.returns[t])
         mr_feat["regime"] = mean_reversion.classify_regime(
             mr_feat, float(regime_cfg.get("trend_threshold", 0.5)),
@@ -301,6 +305,8 @@ def _features(parts: dict[str, pd.DataFrame], corr: pd.DataFrame, tickers: list[
     f["price_to_sma_200"] = parts["momentum"]["price_to_sma_200"]
     f["macd_hist_pct"] = parts["momentum"]["macd_hist_pct"]
     f["trend_quality"] = parts["momentum"]["trend_quality"]
+    f["pct_52w_high"] = parts["momentum"]["pct_52w_high"]
+    f["resid_mom"] = parts["momentum"]["resid_mom"]
     f["sharpe_1y"] = parts["risk"]["sharpe_1y"]
     f["vol_annual"] = parts["risk"]["vol_annual"]
     f["max_dd"] = parts["risk"]["max_dd"]
@@ -658,6 +664,16 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     progress("fechas de resultados (Yahoo)")
     result.earnings = loader.load_earnings_dates(tickers, as_of)
+    if shorts:
+        result.ex_dividend = loader.load_ex_dividend_dates(shorts + [t for t in longs if t not in shorts], as_of)
+
+    progress("valoracion DCF (SEC / Compustat)")
+    from .valuation.engine import run_valuations  # noqa: PLC0415
+
+    result.valuation = run_valuations(result, wrds, fx_rates, as_of, tickers)
+    for t, v in result.valuation.items():
+        if not v.get("available"):
+            warnings.append(f"DCF de {t} no disponible: {v.get('reason')}")
 
     progress("plan de operacion")
     from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415

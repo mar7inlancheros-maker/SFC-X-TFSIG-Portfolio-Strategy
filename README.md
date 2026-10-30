@@ -419,6 +419,109 @@ empresas vivas: el 17 de octubre faltaron 16 de los 50 pares. Lo que falta se
 reintenta en lotes de 25. Si aun así falla y hay caché de días anteriores, se
 usa y se avisa con la fecha del último precio.
 
+**DCF automático (`src/quant_engine/valuation/`).** Cada nombre de la canasta
+se valora por flujo libre de la empresa (FCFF), y también se puede valorar
+suelto:
+
+```bash
+python main.py dcf PLTR AAPL ATZ.TO          # SEC XBRL; Excel con fórmulas por ticker
+python main.py dcf ATZ.TO --wrds             # Compustat y consenso de IBES (aprobación Duo)
+```
+
+Misma estructura que los Excel del club (PLTR, CNL), con lo que pediría un
+comité:
+
+- **Datos**: Compustat si hay WRDS (cubre Canadá); si no, los 10-K/20-F/40-F de
+  la SEC. Las ventas son la MAYOR de las etiquetas de cada ejercicio, porque
+  un desglose nunca supera al total. Gold.com publica 25.513 M de "Revenues" y
+  618 M de un desglose, y con prioridad de etiquetas sus ventas caían de 9.699
+  a 177.
+- **Supuestos con regla escrita** y anotada en el resultado:
+  - Crecimiento del año 1 del consenso de IBES; sin consenso, de la historia,
+    acotado a [−20%, +40%]. Baja en línea recta hasta el terminal en el año 10.
+  - Margen: se mantiene el actual. El escenario bajista lleva la reversión.
+  - Impuesto efectivo que sube al marginal del país.
+  - D&A, CapEx y circulante: medianas de 3 años.
+- **Crecer cuesta capital**: la reinversión neta nunca baja de lo nuevo vendido
+  entre ventas/capital. Se usa el de la propia empresa si es mayor que 5, con
+  tope en 25.
+- **Terminal coherente**: el FCFF del año N+1 reinvierte g/RONIC del NOPAT, con
+  RONIC = WACC. El Excel de PLTR crecía al 3% perpetuo con un CapEx del 0,6%
+  de las ventas: un ROIC infinito, y el 71% del valor.
+- **WACC**:
+  - rf del bono a 10 años del día (Yahoo ^TNX);
+  - beta de la regresión contra SPY, ajustada por Blume;
+  - prima de mercado del 4,5%;
+  - coste de deuda por rating sintético (cobertura de intereses, escala de
+    Damodaran);
+  - pesos de mercado.
+
+  El descuento es a mitad de año, también el del terminal.
+- **Escenarios** bajista, base y alcista (25/50/25); Monte Carlo de 5.000
+  sorteos; **DCF inverso**: qué crecimiento descuenta el precio de hoy;
+  sensibilidades WACC × g y crecimiento × margen.
+- **Comprobaciones críticas.** Con cualquiera de estas, el DCF sale NOT
+  DECISION-GRADE y no opina sobre la señal:
+  - margen fino (< 3%);
+  - patrimonio negativo;
+  - WACC a menos de 2 puntos de g;
+  - margen terminal negativo;
+  - acciones solo de la portada;
+  - intereses sin deuda;
+  - un salto de ventas de más de 3x.
+
+  El veredicto sale del caso base, no del ponderado: con el suelo de una acción
+  en 0, el ponderado se sesga.
+- **Excel con fórmulas vivas** (`output/quant_engine/dcf/`): inputs en azul,
+  fórmulas en negro, selector de escenario. Recalculado en Excel 16, da lo
+  mismo que el motor hasta 1e-13 en los tres escenarios de AAPL y PLTR.
+- **Supuestos del analista** por ticker en `valuation.overrides` del YAML.
+
+El DCF informa a la ficha de cada nombre: si respalda o contradice la señal.
+No cambia los veredictos ni el Quant Score: un factor de valor por DCF habría
+que validarlo antes.
+
+**Rango de tiempo de cada corto.** La ficha de un corto trae su ventana con
+fechas, sacada de la misma regla abierta cada día de los últimos años en ese
+valor (`trade_plan.holding_window`):
+
+- cuándo abrir; si no entra en dos sesiones, recalcular;
+- duración típica: percentiles 25–75 de los días hasta la salida, con fechas;
+- cuándo suele llegar el TP1, y una **fecha de revisión**: el percentil 75 de
+  ese día. Si para entonces no llegó, se mira qué fracción de las operaciones
+  aún vivas lo tocó después. Si está por debajo del break-even del TP1, se
+  cubre en esa fecha. La ficha muestra la E(R) histórica con y sin ese stop
+  por tiempo (dentro de muestra, y lo dice);
+- salida obligatoria a las 63 sesiones;
+- coste del préstamo en la ventana. Con mucho interés en corto, el tramo
+  probable: tasa general por debajo del 5% de las acciones, "warm" hasta el
+  15%, difícil de pedir prestada por encima (D'Avolio, 2002). Es una regla
+  general: el coste real lo da el broker;
+- fecha ex-dividendo dentro de la ventana: en corto el dividendo lo pagas tú.
+
+En octubre de 2026 el stop por tiempo mejoraba la E(R) de los tres cortos de
+la canasta (ARES −0,39R → −0,25R).
+
+**Lectura técnica para la entrada.** La ficha de cada nombre añade:
+- tendencia (SMA50/200 y su pendiente) y fuerza (ADX con +DI/−DI);
+- RSI de Wilder, cruce del MACD y %B de Bollinger con la compresión de
+  volatilidad;
+- distancia a máximos y mínimos de 52 semanas, soportes y resistencias por
+  pivotes confirmados, y volumen.
+
+De ahí salen consejos de ejecución:
+- comprar extendido: esperar un retroceso a la SMA20;
+- corto sobrevendido: esperar un rebote;
+- ir contra una tendencia fuerte;
+- un stop justo encima de un soporte: un test lo saltaría;
+- una resistencia antes del TP1.
+
+No cambian la dirección. Además, dos factores con evidencia académica entran
+con peso 0, validados en cada corrida: la proximidad al máximo de 52 semanas
+(George y Hwang, 2004) y el momentum residual frente al mercado (Blitz, Huij y
+Martens, 2011). Con WRDS, la validación de octubre de 2026 dio t −0,6 y +0,6:
+se quedan en 0.
+
 **Nombres de fuera de EE.UU.** El motor convierte a USD todo lo que cotiza en
 otra moneda (`ATZ.TO` en CAD, `VOD.L` en peniques), con el tipo de cambio de
 cada día de Yahoo (`CADUSD=X`). Retornos, beta frente a SPY, correlaciones,

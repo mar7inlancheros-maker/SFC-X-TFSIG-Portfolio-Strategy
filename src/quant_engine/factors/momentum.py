@@ -97,6 +97,45 @@ def momentum_features(
     return out
 
 
+def high_52w_ratio(close: pd.Series, high: pd.Series | None = None, window: int = 252) -> float:
+    """Precio sobre el maximo de 52 semanas (George y Hwang, 2004).
+
+    Cerca de 1: cotiza en maximos. El anclaje de los inversores al maximo hace
+    que las noticias buenas se incorporen tarde; en su estudio predice mejor
+    que el momentum de 12 meses y no revierte a largo plazo.
+    """
+    s = close.dropna()
+    if len(s) < window:
+        return float("nan")
+    ref = high.reindex(s.index) if high is not None else s
+    peak = float(ref.iloc[-window:].max())
+    return float(s.iloc[-1] / peak) if peak > 0 else float("nan")
+
+
+def residual_momentum(returns: pd.Series, bench: pd.Series, estimation: int = 756, formation: int = 252,
+                      skip: int = 21) -> float:
+    """Momentum del retorno propio, sin el del mercado (Blitz, Huij y Martens, 2011).
+
+    Alfa y beta frente al benchmark en ~3 anos hasta un mes antes; residuos de
+    los meses 12 a 2; se reporta su media sobre su desviacion por raiz de n (una
+    t). Quita la beta al momentum: el momentum clasico se carga de beta tras una
+    subida del mercado y se hunde en los rebotes (2009); este no.
+    """
+    df = pd.concat([returns.rename("y"), bench.rename("x")], axis=1).dropna()
+    if len(df) < formation + skip + 60:
+        return float("nan")
+    est = df.iloc[-(estimation + skip):-skip] if len(df) >= estimation + skip else df.iloc[:-skip]
+    var = float(est["x"].var())
+    if not var > 0:
+        return float("nan")
+    beta = float(est["x"].cov(est["y"])) / var
+    alpha = float(est["y"].mean() - beta * est["x"].mean())
+    window = df.iloc[-(formation + skip):-skip]
+    resid = window["y"] - alpha - beta * window["x"]
+    sd = float(resid.std(ddof=1))
+    return float(resid.mean() / sd * np.sqrt(len(resid))) if sd > 0 else float("nan")
+
+
 def trend_quality(close: pd.Series, window: int = 252) -> float:
     """signo(pendiente) x R2 del log-precio contra el tiempo, en `window` sesiones.
 
