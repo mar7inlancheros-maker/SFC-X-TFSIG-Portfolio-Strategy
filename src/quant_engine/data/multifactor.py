@@ -293,6 +293,35 @@ def agreement(direction: int, percentile: float | None) -> int:
     return 0
 
 
+# Lo que hizo la regla del plan segun el multifactor (`tools/qe_rule_studies.py
+# multifactor`, jul-2023 a jun-2026, 43.196 operaciones). Si cambia la regla,
+# se vuelve a correr y se actualiza aqui; las fichas lo citan tal cual.
+RULE_EVIDENCE = {
+    (1, 1): "on the plan's rule, longs in its Q1 made +0.23R against +0.12R for neutral ones (t 2.4)",
+    (1, -1): "on the plan's rule, longs in its Q5 made +0.08R against +0.12R for neutral ones (not significant)",
+    (-1, 1): ("but it does not raise conviction: on the plan's rule, shorts in its Q5 did no better than neutral "
+              "ones (+0.05R, t 0.8) and still lost -0.11R; it is a model for picking longs"),
+    (-1, -1): ("on the plan's rule, shorts against its Q1 lost -0.27R on average (t -3.6), 0.11R worse than "
+               "neutral ones (t -3.9): the strongest evidence against a trade in this plan"),
+}
+
+
+def conviction_step(direction: int, percentile: float | None) -> int:
+    """Escalon de conviccion (y respaldo de un FLIP) que el multifactor puede dar.
+
+    Medido con la regla del plan (`tools/qe_rule_studies.py multifactor`: 36
+    cierres de mes jul-2023 a jun-2026, 600 nombres mas liquidos, 43.196
+    operaciones), frente al grupo neutral:
+    - largo en Q1: +0,113R, t 2,39 -> sube;
+    - corto contra Q1: -0,106R, t -3,91 -> baja;
+    - largo contra Q5: -0,040R, t -0,62 -> baja igual (prudente: solo resta);
+    - corto en Q5: +0,050R, t 0,77, y en absoluto -0,112R -> NO sube. El
+      multifactor es un modelo de largos: su Q5 no encuentra buenos cortos.
+    """
+    agree = agreement(direction, percentile)
+    return 0 if (direction < 0 and agree > 0) else agree
+
+
 def usable(mf: dict | None) -> bool:
     """El multifactor cuenta como evidencia: panel al dia y validado en su reporte."""
     return bool(mf and mf.get("available") and not mf.get("stale")

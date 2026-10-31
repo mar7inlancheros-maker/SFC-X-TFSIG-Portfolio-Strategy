@@ -640,7 +640,12 @@ def multifactor_line(t: str, row: pd.Series, mf: dict | None) -> str:
     side = {"LONG": 1, "SHORT": -1}.get(row.get("signal"), 0)
     from .data.multifactor import agreement  # noqa: PLC0415
 
-    verdict = {1: "backs the trade", -1: "contradicts the trade", 0: "neutral for the trade"}[agreement(side, info["percentile"])]
+    from .data.multifactor import RULE_EVIDENCE  # noqa: PLC0415
+
+    agree = agreement(side, info["percentile"])
+    verdict = {1: "backs the trade", -1: "contradicts the trade", 0: "neutral for the trade"}[agree]
+    if (side, agree) in RULE_EVIDENCE:
+        verdict += ", " + RULE_EVIDENCE[(side, agree)]
     stale = " (panel more than 45 days old: not used as evidence)" if mf.get("stale") else ""
     return (f"Multifactor model ({proof}): {info['percentile']:.0%} percentile of {mf['universe']:,} names on "
             f"{pd.Timestamp(mf['date']):%Y-%m-%d}, quintile Q{q} ({parts}); {verdict if side else 'no trade'}.{stale}")

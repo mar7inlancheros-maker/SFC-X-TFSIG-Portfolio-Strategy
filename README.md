@@ -371,9 +371,27 @@ meses y quintiles casi perfectamente ordenados. Cada ficha dice en qué
 percentil del último panel del multifactor está el nombre (`data/multifactor.py`,
 de disco, sin red). Si el nombre está en su quintil extremo:
 
-- respalda la dirección (LONG en Q1, SHORT en Q5): la convicción sube un
-  escalón, y un FLIP sin evidencia del Quant Score va a tamaño completo;
-- la contradice: la convicción baja un escalón.
+- un LONG en su Q1: la convicción sube un escalón, y un FLIP hacia largo
+  sin evidencia del Quant Score va a tamaño completo;
+- lo contradice (LONG en Q5, SHORT en Q1): la convicción baja un escalón;
+- un SHORT en su Q5: no sube nada. La ficha dice que respalda y por qué no
+  cuenta.
+
+Esa asimetría sale de medir la regla del plan, no los retornos mensuales
+(`python tools/qe_rule_studies.py multifactor`): la regla abierta tras cada
+cierre de mes entre julio de 2023 y junio de 2026 en los 600 nombres más
+líquidos, en largo y en corto (43.196 operaciones). Frente al grupo neutral,
+los largos en Q1 ganaron +0,11R (t 2,4) y los cortos contra Q1 perdieron
+0,11R más (t −3,9). Los cortos en Q5 no ganaron a los neutrales (+0,05R,
+t 0,8) y en absoluto perdieron −0,11R: el multifactor es un modelo de largos y
+su Q5 no encuentra buenos cortos. Antes ese respaldo subía a HIGH el corto de
+ARES contra research y lo llevaba a tamaño completo. Cada ficha cita la cifra
+de su caso.
+
+Pendiente de decidir con el club: los cortos contra Q1 perdieron −0,27R de
+media (t −3,6). Es la evidencia más fuerte del plan contra una operación,
+pero convertirla en NO TRADE cambiaría un veredicto de research con el
+multifactor, y hoy los veredictos no los toca.
 
 La evidencia se lee del último reporte oficial de backtest
 (`output/reports/backtest_AAAAMMDD_HHMM.md`). Sin reporte, con un IC sin

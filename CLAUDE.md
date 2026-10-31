@@ -481,7 +481,11 @@ Trampas:
   Un contrafactual o un experimento va a otra carpeta
   (`output/reports/counterfactual/`): con el mismo patrón de nombre se colaría
   como evidencia. Solo mueve la convicción (±1 escalón) y los FLIP sin
-  evidencia; los veredictos no.
+  evidencia; los veredictos no. Y solo sube a los LARGOS
+  (`multifactor.conviction_step`): medido con la regla del plan, un corto en
+  Q5 no ganó a los neutrales (+0,05R, t 0,8). Las cifras de cada caso viven en
+  `multifactor.RULE_EVIDENCE` y las fichas las citan; si cambia la regla, se
+  vuelve a correr `tools/qe_rule_studies.py multifactor` y se actualizan.
 - **El score fuera del universo (`multifactor.outside_universe`) usa las
   funciones del modelo, no una copia**: `financials.compute_all` y
   `composite.build_scores` sobre la última sección cruzada con las filas

@@ -426,6 +426,8 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
     Entrada al cierre; stop a `stop_atr` ATR; en TP1 sale la mitad y el stop
     de la otra mitad pasa a la entrada; esa mitad sale en TP2, en la entrada o
     al cierre de la sesion `horizon_d`. El resultado va en multiplos de R.
+    Con `time_stop`, sin TP1 en esa sesion se cierra todo: la regla de los
+    cortos.
 
     Supuestos conservadores, porque solo hay maximo, minimo y cierre diarios:
     si un dia toca stop y objetivo, gana el stop; el dia de TP1, si tambien
@@ -461,8 +463,9 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
                         outcome = (realized, "tp1_be", j)
                         break
                     continue
-                # Variante con stop por tiempo: sin TP1 a esta altura, se cierra
-                # al cierre del dia. Solo para comparar; la regla del plan no la usa.
+                # Stop por tiempo: sin TP1 a esta altura, se cierra al cierre del
+                # dia. Es la regla en los cortos (`rule_time_stop`); en los largos
+                # solo se usa para comparar.
                 if time_stop is not None and j >= time_stop:
                     outcome = (side * (c[i + j] - entry) / r, "time_stop", j)
                     break
@@ -666,9 +669,11 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     if not flip_allowed(validation, p.flip_min_ic_t):
         flips = list(verdicts.index[verdicts == "FLIP"])
         # Un FLIP que el multifactor validado respalda en su quintil extremo no
-        # es "sin evidencia": va a tamano completo.
-        mf_backed = [t for t in flips if multifactor.agreement(int(np.sign(signs[t])),
-                                                                mf_rows.get(t, {}).get("percentile")) > 0]
+        # es "sin evidencia": va a tamano completo. Solo hacia LARGO: con la
+        # regla del plan, los cortos en Q5 no ganaron a los neutrales
+        # (`multifactor.conviction_step`).
+        mf_backed = [t for t in flips if multifactor.conviction_step(int(np.sign(signs[t])),
+                                                                      mf_rows.get(t, {}).get("percentile")) > 0]
         weak = [t for t in flips if t not in mf_backed]
         if p.unproven_flip == "no_trade" and weak:
             blocked_signs, blocked_verdicts, unproven = block_flips(signs[weak], verdicts[weak])
@@ -811,9 +816,11 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     plan["mf_percentile"] = [mf_rows.get(t, {}).get("percentile", np.nan) for t in plan.index]
     plan["mf_agreement"] = [multifactor.agreement({"LONG": 1, "SHORT": -1}.get(plan.loc[t, "signal"], 0),
                                                   plan.loc[t, "mf_percentile"]) for t in plan.index]
+    plan["mf_step"] = [multifactor.conviction_step({"LONG": 1, "SHORT": -1}.get(plan.loc[t, "signal"], 0),
+                                                   plan.loc[t, "mf_percentile"]) for t in plan.index]
     plan["flip_backed_by_multifactor"] = [t in mf_backed for t in plan.index]
     plan["conviction"] = [conviction(plan.loc[t, "verdict"], plan.loc[t, "aligned_score"], evidence,
-                                     bool(plan.loc[t, "unproven_flip"]), int(plan.loc[t, "mf_agreement"]))
+                                     bool(plan.loc[t, "unproven_flip"]), int(plan.loc[t, "mf_step"]))
                           for t in plan.index]
     try:
         from .signals.composite import normalized_weights  # noqa: PLC0415

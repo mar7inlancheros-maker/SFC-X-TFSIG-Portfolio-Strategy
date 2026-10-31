@@ -4,6 +4,7 @@
     python tools/qe_rule_studies.py time-stop      # stop por tiempo: largos vs cortos
     python tools/qe_rule_studies.py persistence    # el E(R) de la regla por nombre, persiste?
     python tools/qe_rule_studies.py persistence --end 2026-10-30 --years 6
+    python tools/qe_rule_studies.py multifactor    # la regla gana cuando sigue al multifactor?
 
 Corren sobre `scoring.reference_peers` del YAML (50 large caps) con la regla
 de `trade_plan.simulate_trades`. Descargan precios de Yahoo (con cache). Cada
@@ -101,14 +102,83 @@ def persistence(market, p) -> None:
     print("pooled mixes the sides: a positive correlation there can be only the market drift against shorts.")
 
 
+def multifactor(end: pd.Timestamp, months: int, top: int, p) -> None:
+    """La regla del plan abierta tras cada cierre de mes del panel, en los `top`
+    nombres mas liquidos, en largo y en corto, agrupada por lo que dice el
+    multifactor (`multifactor.agreement`, la misma funcion que usa el plan).
+
+    Criterio fijado antes de mirar: el multifactor merece su escalon de
+    conviccion si, en cada lado, respaldar menos neutral da t >= 2 y
+    contradecir menos neutral da t <= -2 (Newey-West sobre la serie mensual,
+    retardo 3: las operaciones de 63 sesiones se solapan unos tres meses).
+    """
+    import dataclasses  # noqa: PLC0415
+
+    from quant_engine.data import multifactor as mf  # noqa: PLC0415
+    from sfc_tfsig import cli as mf_cli  # noqa: PLC0415
+    from sfc_tfsig.config import load_config  # noqa: PLC0415
+    from sfc_tfsig.data import cache  # noqa: PLC0415
+
+    panel = cache.read_frame(mf_cli._panel_cache_name(load_config(None)))  # noqa: SLF001
+    panel = panel.dropna(subset=["score_composite"])
+    panel["percentile"] = panel.groupby("date")["score_composite"].rank(pct=True)
+    last_entry = end - pd.offsets.BDay(p.horizon_d + 5)
+    dates = sorted(d for d in panel["date"].unique() if d <= last_entry)[-months:]
+    picks = (panel[panel["date"].isin(dates)].sort_values("dollar_volume", ascending=False)
+             .groupby("date").head(top))
+    names = sorted(picks["ticker"].unique())
+    print(f"{len(dates)} month-ends {pd.Timestamp(dates[0]):%Y-%m} to {pd.Timestamp(dates[-1]):%Y-%m}, "
+          f"{len(names)} names; downloading OHLC...", flush=True)
+    market = loader.load_ohlcv(names, pd.Timestamp(dates[0]) - pd.DateOffset(months=3), end).ohlcv
+    one = dataclasses.replace(p, history_d=1)
+    rows = []
+    for t, grp in picks.groupby("ticker"):
+        if t not in market:
+            continue
+        c, h, lo, a = _series(market[t])
+        for _, row in grp.iterrows():
+            i = int(c.index.searchsorted(row["date"], side="right"))   # primera sesion DESPUES del cierre de mes
+            if i < 20 or i + p.horizon_d >= len(c):
+                continue
+            cut = slice(0, i + p.horizon_d + 1)
+            for side in (1, -1):
+                sims = tp.simulate_trades(c.iloc[cut], h.iloc[cut], lo.iloc[cut], a.iloc[cut], side, one,
+                                          cost=COST, borrow=BORROW if side < 0 else 0.0)
+                if len(sims):
+                    rows.append({"date": row["date"], "ticker": t, "side": side, "r": float(sims["r_mult"].iloc[-1]),
+                                 "agree": mf.agreement(side, row["percentile"])})
+    df = pd.DataFrame(rows)
+    print(f"{len(df):,} trades")
+    for side, label in ((1, "longs"), (-1, "shorts")):
+        sub = df[df.side == side]
+        monthly = sub.groupby(["date", "agree"])["r"].mean().unstack()
+        parts = []
+        for k, name in ((1, "backs"), (0, "neutral"), (-1, "contradicts")):
+            m = monthly.get(k, pd.Series(dtype=float)).dropna()
+            t = m.mean() / newey_west_se(m, 3) if len(m) > 3 else float("nan")
+            parts.append(f"{name} {m.mean():+.3f}R (t {t:+.2f}, n {int((sub.agree == k).sum())})")
+        diffs = []
+        for k, name in ((1, "backs-neutral"), (-1, "contradicts-neutral")):
+            d = (monthly.get(k) - monthly.get(0)).dropna() if k in monthly and 0 in monthly else pd.Series(dtype=float)
+            t = d.mean() / newey_west_se(d, 3) if len(d) > 3 else float("nan")
+            diffs.append(f"{name} {d.mean():+.3f}R t {t:+.2f}")
+        print(f"{label:7} " + " | ".join(parts))
+        print(f"{'':7} " + " | ".join(diffs))
+
+
 def main(argv: list[str] | None = None) -> int:
     enable_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("study", choices=["time-stop", "persistence"])
+    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor"])
     ap.add_argument("--end", default=None, help="ultima fecha (AAAA-MM-DD); por defecto, hoy")
     ap.add_argument("--years", type=int, default=6)
+    ap.add_argument("--months", type=int, default=36, help="multifactor: cierres de mes evaluados")
+    ap.add_argument("--top", type=int, default=600, help="multifactor: nombres mas liquidos por fecha")
     args = ap.parse_args(argv)
     end = pd.Timestamp(args.end) if args.end else pd.Timestamp.today().normalize()
+    if args.study == "multifactor":
+        multifactor(end, args.months, args.top, tp.PlanParams())
+        return 0
     peers = [str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]]
     market = loader.load_ohlcv(peers, end - pd.DateOffset(years=args.years), end).ohlcv
     p = tp.PlanParams()

@@ -153,3 +153,34 @@ def test_el_tope_de_nombres_liquidos_es_una_razon_de_exclusion():
     assert len(reasons) == 1 and "most liquid names" in reasons[0] and "max_names" in reasons[0]
     assert mf.exclusion_reasons(gold, cfg, liquidity_cutoff=10e6) == []
 
+
+
+@pytest.mark.parametrize("direction, pct, expected", [
+    (1, 0.95, 1),     # largo en Q1: sube (t 2,39 con la regla del plan)
+    (-1, 0.95, -1),   # corto contra Q1: baja (t -3,91)
+    (1, 0.05, -1),    # largo contra Q5: baja (prudente)
+    (-1, 0.05, 0),    # corto en Q5: no sube, no gano a los neutrales
+    (-1, 0.5, 0),
+])
+def test_el_multifactor_solo_sube_la_conviccion_de_los_largos(direction, pct, expected):
+    assert mf.conviction_step(direction, pct) == expected
+
+
+def test_la_ficha_dice_por_que_un_corto_en_q5_no_sube():
+    from quant_engine import playbook as pb
+
+    m = {"available": True, "stale": False, "universe": 2000, "date": "2026-09-30",
+         "evidence": {"ic": 0.027, "ic_t": 3.5, "months": 177, "validated": True},
+         "rows": {"ARES": {"percentile": 0.04, "value": -1.0, "quality": 0.2, "momentum": -1.2, "lowvol": -1.3}}}
+    line = pb.multifactor_line("ARES", pd.Series({"signal": "SHORT"}), m)
+    assert "backs the trade, but it does not raise conviction" in line
+
+
+def test_la_ficha_cita_lo_que_hizo_la_regla_contra_el_q1():
+    from quant_engine import playbook as pb
+
+    m = {"available": True, "stale": False, "universe": 2000, "date": "2026-09-30",
+         "evidence": {"ic": 0.027, "ic_t": 3.5, "months": 177, "validated": True},
+         "rows": {"GOLD": {"percentile": 1.0}}}
+    line = pb.multifactor_line("GOLD", pd.Series({"signal": "SHORT"}), m)
+    assert "contradicts the trade, on the plan's rule, shorts against its Q1 lost -0.27R" in line
