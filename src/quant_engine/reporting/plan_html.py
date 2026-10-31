@@ -190,6 +190,10 @@ def _equity_chart(r: AnalysisResult) -> str | None:
 _SIGNAL_BADGE = {"LONG": "BUY", "SHORT": "SELL SHORT", "NO TRADE": "NO TRADE", "NOT ANALYZED": "NOT ANALYZED"}
 
 
+def _date(v) -> str:
+    return "" if v is None or pd.isna(v) else f"{pd.Timestamp(v):%Y-%m-%d}"
+
+
 def _sentences(lines: list[str]) -> str:
     """Lineas de la ficha en un parrafo: cada una cierra con punto, o se pegan
     ("...the value per share DCF check: ...")."""
@@ -499,10 +503,13 @@ def build(r: AnalysisResult) -> str:
             f"<td>{int(o['current']):,} &rarr; {int(o['target']):,}</td><td>{_price(o.get('price'))}</td>"
             f"<td>{'' if is_hedge else _price(o.get('stop'))}</td><td>{'' if is_hedge else _price(o.get('tp1'))}</td>"
             f"<td>{'' if is_hedge else _price(o.get('tp2'))}</td>"
-            f"<td>{'beta hedge' if is_hedge else _pct(o.get('risk_capital_pct'), 2)}</td></tr>")
+            f"<td>{'beta hedge' if is_hedge else _pct(o.get('risk_capital_pct'), 2)}</td>"
+            f"<td>{_date(o.get('open_date'))}</td><td>{_date(o.get('time_stop_date'))}</td>"
+            f"<td>{_date(o.get('exit_date'))}</td></tr>")
     out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th class='l'>Signal</th><th>Qty</th>"
                "<th>Now &rarr; target</th><th>Last</th><th>Stop</th><th>TP1</th><th>TP2</th>"
-               "<th>Risk at stop</th></tr>" + "".join(rows) + "</table></div>")
+               "<th>Risk at stop</th><th>Open</th><th>Time stop<br>(no TP1)</th><th>Hard exit</th></tr>"
+               + "".join(rows) + "</table></div>")
     out.append("<p class='muted'>Orders at market next session. Stop and targets apply to the whole resulting "
                "position. Take 50% off at TP1 and move the stop to entry; the rest exits at TP2 or at that stop.</p>")
 

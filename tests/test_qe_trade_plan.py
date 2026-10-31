@@ -264,3 +264,13 @@ def test_backtest_del_plan_usa_las_mismas_fechas_para_todos():
     assert out["n_dates"] == 2
     assert list(out["pnl"]) == [100 - 50, -100 - 50]
     assert out["prob_loss"] == 0.5 and out["mean_pct"] == pytest.approx(-50 / 10_000)
+
+
+def test_rango_de_tiempo_de_la_orden():
+    d = pd.Timestamp("2026-10-30")
+    short = tp.time_range("ARES", -1, d, 63, 20.0)
+    assert short == {"open_date": pd.Timestamp("2026-11-02"), "time_stop_date": pd.Timestamp("2026-12-01"),
+                     "exit_date": pd.Timestamp("2027-02-03")}
+    long_ = tp.time_range("ARES", 1, d, 63, 20.0)            # el stop por tiempo es solo de los cortos
+    assert long_["time_stop_date"] is None and long_["exit_date"] == pd.Timestamp("2027-02-03")
+    assert tp.time_range("ARES", 0, d, 63, None)["open_date"] is None

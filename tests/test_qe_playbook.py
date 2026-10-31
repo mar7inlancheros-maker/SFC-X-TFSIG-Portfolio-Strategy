@@ -447,3 +447,18 @@ def test_un_dcf_sin_grado_de_decision_no_da_escenarios_ni_ponderado():
     assert "not decision-grade" in verdict
     ok = " ".join(pb.valuation_lines("LONG", _val(False))[0])
     assert "probability-weighted 370.28" in ok and "Monte Carlo: value above the price in 47%" in ok
+
+
+def test_el_resumen_del_stop_por_tiempo_cuenta_solo_los_cortos():
+    from types import SimpleNamespace
+
+    from rich.console import Console
+
+    from quant_engine.reporting import terminal
+
+    plan = pd.DataFrame({"signal": ["SHORT", "SHORT", "LONG"], "oos_ts_improvement": [0.1, -0.02, 0.3]},
+                        index=["A", "B", "C"])
+    con = Console(record=True, width=200)
+    terminal.time_stop_evidence(con, SimpleNamespace(trade_plan={"plan": plan}))
+    text = con.export_text()
+    assert "improved E(R) in 1 of 2 shorts here (mean +0.04R)" in text

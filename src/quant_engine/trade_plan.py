@@ -70,6 +70,7 @@ import numpy as np
 import pandas as pd
 
 from .data import multifactor
+from .sessions import session_date
 from .portfolio import construction
 from .portfolio.constraints import ConstructionParams
 from .signals import score_validation
@@ -398,6 +399,20 @@ def order_for(current: int, target: int, price: float, capital: float, p: PlanPa
     if current == 0:
         return ("BUY" if target > 0 else "SELL SHORT"), abs(target)
     return ("FLIP TO LONG" if target > 0 else "FLIP TO SHORT"), abs(delta)
+
+
+def time_range(ticker: str, side: int, levels_date: pd.Timestamp, horizon_d: int,
+               time_stop_day: float | None) -> dict[str, object]:
+    """Rango de tiempo de una posicion: apertura, stop por tiempo (cortos) y
+    salida obligatoria, en sesiones de su bolsa (`sessions.session_date`). Las
+    fichas usan la misma funcion: las fechas de la tabla y de la ficha cuadran.
+    """
+    if not side:
+        return {"open_date": None, "time_stop_date": None, "exit_date": None}
+    stop = (session_date(ticker, levels_date, int(time_stop_day))
+            if side < 0 and time_stop_day is not None and pd.notna(time_stop_day) else None)
+    return {"open_date": session_date(ticker, levels_date, 0), "time_stop_date": stop,
+            "exit_date": session_date(ticker, levels_date, horizon_d)}
 
 
 def _final(current: int, target: int, action: str) -> int:
@@ -852,7 +867,12 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         # research es larga aunque research dijera SHORT. Sin posicion, sin niveles.
         side = int(np.sign(final[t]))
         lv = levels(row["entry"], row["atr"], side, p) if side else {}
-        orders.append({"ticker": t, "signal": action, "qty": qty, "current": current, "target": final[t],
+        # El stop por tiempo es de la regla del lado del plan; una posicion que
+        # queda del otro lado no lo lleva.
+        plan_side = {"BUY": 1, "SELL SHORT": -1}.get(row["action"], 0)
+        when = time_range(t, side, result.clean.close.index[-1], p.horizon_d,
+                          row.get("time_stop_day") if side == plan_side else None)
+        orders.append({"ticker": t, "signal": action, "qty": qty, "current": current, "target": final[t], **when,
                        "price": row["entry"], "currency": row["currency"], "stop": lv.get("stop"),
                        "tp1": lv.get("tp1"), "tp2": lv.get("tp2"), "verdict": row["verdict"],
                        "risk_capital_pct": (abs(final[t]) * abs(row["entry"] - lv["stop"]) * row["fx"] / capital
@@ -899,6 +919,8 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
                            "target": int(current), "verdict": "NOT ANALYZED"})
 
     orders_df = pd.DataFrame(orders).set_index("ticker")
+    for col in ("open_date", "time_stop_date", "exit_date"):
+        plan[col] = orders_df[col].reindex(plan.index) if col in orders_df else None
     risk_at_stops = float(pd.DataFrame(orders)["risk_capital_pct"].fillna(0.0).sum())
     return {"plan": plan, "corrections": corrections, "note": note, "params": p, "hedge": hedge,
             "orders": orders_df, "has_positions": bool(positions),

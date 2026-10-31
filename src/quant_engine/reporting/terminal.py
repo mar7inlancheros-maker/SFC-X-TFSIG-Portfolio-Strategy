@@ -710,6 +710,15 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
                 else f"{fmt(o.get('stop')):>9}{fmt(o.get('tp1')):>9}{fmt(o.get('tp2')):>9}")
         qty = f"{int(o['qty']):,}" if o["qty"] else "-"
         console.print(f"{t:{w}}{o['signal']:15}{qty:>7}  {int(o['current']):>7,} -> {int(o['target']):<7,}{tail}")
+    timed = orders[orders.get("open_date", pd.Series(dtype=object)).notna()] if "open_date" in orders else orders.iloc[:0]
+    if len(timed):
+        console.print("TIME RANGE (sessions of each stock's exchange, counted from the opening session)")
+        for t, o in timed.iterrows():
+            side = "SHORT" if o["target"] < 0 else "LONG"
+            stop = (f"time stop {pd.Timestamp(o['time_stop_date']):%Y-%m-%d} if TP1 not hit | "
+                    if o.get("time_stop_date") is not None and pd.notna(o.get("time_stop_date")) else "")
+            console.print(f"  {t:{w}}{side:6} open {pd.Timestamp(o['open_date']):%Y-%m-%d} | {stop}"
+                          f"hard exit {pd.Timestamp(o['exit_date']):%Y-%m-%d}")
     notes = []
     if not tp.get("has_book", True):
         notes.append("No book to size: after the corrections " + ("no LONG is left to trade" if tp.get("long_only")
@@ -753,13 +762,15 @@ def time_stop_evidence(console: Console, r: AnalysisResult) -> None:
     plan = (r.trade_plan or {}).get("plan")
     if plan is None or "oos_ts_improvement" not in plan:
         return
-    imp = pd.to_numeric(plan["oos_ts_improvement"], errors="coerce").dropna()
+    # Solo los cortos: es su regla. Contar los largos mezclaba una regla que se
+    # aplica con una que no.
+    shorts = plan["signal"] == "SHORT"
+    imp = pd.to_numeric(plan.loc[shorts, "oos_ts_improvement"], errors="coerce").dropna()
     if imp.empty:
         return
-    console.print(f"Time stop out of sample: review day picked on the first half of each name's history, tested on "
-                  f"the second. It improved E(R) in {(imp > 0).sum()} of {len(imp)} names here (mean "
-                  f"{imp.mean():+.2f}R). It is part of the rule for shorts only: on 50 large caps it improved "
-                  "shorts and hurt longs.")
+    console.print(f"Time stop (rule for shorts) out of sample: review day picked on the first half of each short's "
+                  f"history, tested on the second. It improved E(R) in {(imp > 0).sum()} of {len(imp)} shorts here "
+                  f"(mean {imp.mean():+.2f}R); on 50 large caps, 80% of shorts (+0.05R, t 3.7), while it hurt longs.")
 
 
 def integrity(console: Console, r: AnalysisResult) -> None:
