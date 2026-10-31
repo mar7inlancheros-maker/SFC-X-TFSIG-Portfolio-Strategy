@@ -446,12 +446,19 @@ Trampas:
   pide lo que falte en lotes de 25. Si sigue faltando y la caché cubre el
   inicio, se usa y `MarketData.stale` lo registra para el aviso. Sin esto, un
   corte de Yahoo borraba 16 de 50 pares y la validación corría con 38 nombres.
-- **`simulate_trades(time_stop=...)` es una variante para comparar, no la
-  regla.** Por defecto (`None`) la regla es la de siempre; con `time_stop`
-  cierra sin TP1 en ese día. El día de revisión sale de las mismas
-  operaciones (percentil 75 del día del TP1): la mejora que se muestra es
-  dentro de muestra y la ficha lo dice. No convertirla en la regla sin
-  validarla fuera de muestra.
+- **El stop por tiempo es regla en los cortos y solo en ellos**
+  (`trade_plan.rule_time_stop`, `trade_plan.short_time_stop` en el YAML). Se
+  decidió fuera de muestra en los 50 pares (día de revisión de la primera
+  mitad de cada historia, medido en la segunda): cortos 80% de nombres mejor,
+  +0,05R, t 3,7; largos 40%, −0,03R, t −1,8. En un corto el backtest de la
+  regla, la ventana de tenencia y `plan_backtest` se calculan CON el stop; la
+  E(R) sin él queda en `bt_exp_r_no_time_stop` para comparar. A un largo no se
+  le aconseja cortar aunque dentro de muestra parezca ayudar. No extenderlo a
+  los largos sin repetir esa prueba con más canastas.
+- **`simulate_trades(time_stop=None)` es la regla sin stop por tiempo.** Con
+  `time_stop` cierra sin TP1 en ese día. El día sale de las mismas
+  operaciones (percentil 75 del día del TP1): la mejora en un nombre es
+  dentro de muestra y la ficha lo dice.
 - **La prueba del stop por tiempo es `time_stop_out_of_sample`**: día de
   revisión de la primera mitad de las entradas y E(R) medida en la segunda. La
   mejora dentro de muestra (`bt_exp_r_time_stop`) no sirve para decidir:

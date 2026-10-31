@@ -212,6 +212,10 @@ def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.S
                  f"on the other {rest:,} to {entry:,.2f} (break-even).")
     steps.append(f"TP2: {exit_verb} LIMIT {rest:,} at {tp2:,.2f}, good till cancelled; cancel the stop when it fills "
                  "(one-cancels-other if the broker has it).")
+    stop_day = row.get("time_stop_day")
+    if side < 0 and stop_day is not None and pd.notna(stop_day):
+        steps.append(f"Time stop: if TP1 has not been reached by {exit_date(levels_date, int(stop_day)):%Y-%m-%d} "
+                     f"({int(stop_day)} sessions), cover everything at market (rule for shorts).")
     steps.append(f"Time exit: if nothing is hit by {exit_date(levels_date, horizon_d):%Y-%m-%d} "
                  f"({horizon_d} sessions), close the rest at market.")
     if side < 0:
@@ -274,24 +278,35 @@ def time_window(ticker: str, row: pd.Series, side: int, shares: int, fx: float, 
         lines.append(f"Typical holding for this rule on {ticker}: {p25:.0f}-{p75:.0f} sessions, from "
                      f"{day(p25):%Y-%m-%d} to {day(p75):%Y-%m-%d} (median {med:.0f}).")
     review, late = row.get("review_day"), row.get("late_tp1_rate")
-    if review is not None and pd.notna(review):
+    oos_line = ""
+    imp = row.get("oos_ts_improvement")
+    if imp is not None and pd.notna(imp):
+        oos_line = (f" Out of sample on {ticker} (review day picked on trades before "
+                    f"{pd.Timestamp(row['oos_ts_split']):%Y-%m}, tested after): E(R) {row['oos_ts_exp_r_plain']:+.2f}R "
+                    f"without the time stop, {row['oos_ts_exp_r_time_stop']:+.2f}R with it.")
+    stop_day = row.get("time_stop_day")
+    if stop_day is not None and pd.notna(stop_day):
+        plain, with_stop = row.get("bt_exp_r_no_time_stop"), row.get("bt_exp_r")
+        cmp_ = (f" On {ticker} the rule gave {with_stop:+.2f}R with it and {plain:+.2f}R without it (in-sample: "
+                "the stop day comes from the same trades)."
+                if plain is not None and pd.notna(plain) and with_stop is not None and pd.notna(with_stop) else "")
+        lines.append(f"Time stop (rule for shorts): if TP1 has not been reached by {day(stop_day):%Y-%m-%d} "
+                     f"({stop_day:.0f} sessions), cover at market. Out of sample on 50 large caps it improved "
+                     f"shorts and hurt longs, so only shorts carry it.{cmp_}{oos_line}")
+    elif review is not None and pd.notna(review):
         tp1 = row.get("tp1_median_days")
-        cover = "cover" if side < 0 else "sell"
         head = (f"TP1 usually comes in about {tp1:.0f} sessions. Review on {day(review):%Y-%m-%d} "
                 f"({review:.0f} sessions): if TP1 has not been reached, ")
-        oos_line = ""
-        imp = row.get("oos_ts_improvement")
-        if imp is not None and pd.notna(imp):
-            oos_line = (f" Out of sample (review day picked on trades before {pd.Timestamp(row['oos_ts_split']):%Y-%m},"
-                        f" tested after): E(R) {row['oos_ts_exp_r_plain']:+.2f}R without the time stop, "
-                        f"{row['oos_ts_exp_r_time_stop']:+.2f}R with it.")
-        if row.get("cut_at_review") and pd.notna(late):
-            ts, plain = row.get("bt_exp_r_time_stop"), row.get("bt_exp_r")
-            gain = (f" With that time stop the rule's E(R) on {ticker} was {ts:+.2f}R against {plain:+.2f}R "
-                    "without it (in-sample: the review day comes from the same trades)."
-                    if ts is not None and pd.notna(ts) and plain is not None and pd.notna(plain) else "")
-            lines.append(head + f"{cover} the position: only {late:.0%} of past trades still open then reached it, "
-                         "below the break-even for TP1." + gain + oos_line)
+        if row.get("cut_at_review") and pd.notna(late) and side < 0:
+            # Corto con la regla apagada en el YAML: se informa, no se ordena.
+            lines.append(head + f"consider covering: only {late:.0%} of past trades still open then reached it, "
+                         "below the break-even for TP1 (the time stop is off in the config)." + oos_line)
+        elif row.get("cut_at_review") and pd.notna(late):
+            # En largos cortar a tiempo empeoro fuera de muestra: no se aconseja
+            # aunque dentro de muestra en este nombre parezca ayudar.
+            lines.append(head + f"keep the stop and hold. Only {late:.0%} of past trades still open then reached "
+                         f"it, but out of sample on 50 large caps cutting longs at the review day hurt E(R)."
+                         + oos_line)
         elif pd.notna(late):
             lines.append(head + f"keep the stop and hold: {late:.0%} of past trades still open then reached it later."
                          + oos_line)

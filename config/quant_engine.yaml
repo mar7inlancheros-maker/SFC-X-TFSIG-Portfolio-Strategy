@@ -169,6 +169,10 @@ trade_plan:
   # FLIP sin esa evidencia: "reduce" lo opera a reduce_size con conviccion LOW
   # (el plan dice como ejecutar el lado contrario); "no_trade" no lo opera.
   unproven_flip: reduce
+  # Stop por tiempo en los cortos: sin TP1 en el dia de revision (percentil 75
+  # del dia del TP1 en la historia del nombre), se cubre. Fuera de muestra en
+  # los 50 pares: cortos 80% mejor, +0,05R (t 3,7); largos 40%, -0,03R (t -1,8).
+  short_time_stop: true
 
 # Universo de referencia del Quant Score. Se usa cuando la canasta es solo LONG
 # o tiene menos de min_cross_section nombres: dentro de una canasta asi no hay

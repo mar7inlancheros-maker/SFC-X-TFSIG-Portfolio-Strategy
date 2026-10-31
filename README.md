@@ -556,12 +556,16 @@ valor (`trade_plan.holding_window`):
 - fecha ex-dividendo dentro de la ventana: en corto el dividendo lo pagas tú.
 
 En octubre de 2026 el stop por tiempo mejoraba la E(R) de los tres cortos de
-la canasta (ARES −0,39R → −0,25R). Eso es dentro de muestra. La prueba que
-cuenta va en cada ficha y en el resumen: el día de revisión se elige con la
-primera mitad de la historia del nombre y se mide en la segunda. El plan dice
-en cuántos nombres mejora fuera de muestra. Solo con una mejora consistente
-(3/4 de los nombres o más, en varias canastas) tendría sentido convertirlo en
-regla.
+la canasta (ARES −0,39R → −0,25R), pero eso es dentro de muestra. La prueba
+que decide se hizo en los 50 pares: el día de revisión se elige con la primera
+mitad de la historia del nombre y se mide en la segunda. En cortos mejoró la
+E(R) en el 80% de los nombres (+0,05R de media, t 3,7); en largos la empeoró
+(40%, −0,03R, t −1,8). Por eso **es regla en los cortos**: si el TP1 no llegó
+en la fecha de revisión, se cubre todo a mercado, y el backtest de la regla y
+el del plan ya lo incluyen. Un corto que no avanza pelea contra la deriva al
+alza del mercado y paga préstamo. En los largos la fecha de revisión solo
+informa: cortarlos quitaba el recorrido de los que acaban subiendo. Se apaga
+con `trade_plan.short_time_stop: false`.
 
 Los largos llevan la misma ventana, sin préstamo ni dividendo.
 

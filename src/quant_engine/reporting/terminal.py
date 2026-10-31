@@ -752,10 +752,9 @@ def time_stop_evidence(console: Console, r: AnalysisResult) -> None:
     if imp.empty:
         return
     console.print(f"Time stop out of sample: review day picked on the first half of each name's history, tested on "
-                  f"the second. It improved E(R) in {(imp > 0).sum()} of {len(imp)} names (mean "
-                  f"{imp.mean():+.2f}R). " + ("Consistent enough to consider making it the rule after more baskets."
-                                              if len(imp) >= 3 and (imp > 0).mean() >= 0.75 else
-                                              "Not consistent: it stays advice, not a rule."))
+                  f"the second. It improved E(R) in {(imp > 0).sum()} of {len(imp)} names here (mean "
+                  f"{imp.mean():+.2f}R). It is part of the rule for shorts only: on 50 large caps it improved "
+                  "shorts and hurt longs.")
 
 
 def integrity(console: Console, r: AnalysisResult) -> None:

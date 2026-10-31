@@ -93,6 +93,7 @@ class PlanParams:
     hold_band: float = 0.005
     flip_min_ic_t: float = 2.0
     unproven_flip: str = "reduce"
+    short_time_stop: bool = True
     max_position: float = 0.35
 
 
@@ -503,6 +504,20 @@ def time_stop_out_of_sample(trades: pd.DataFrame, timed: pd.DataFrame, p: PlanPa
             "improvement": float(later["r_mult"].mean() - second["r_mult"].mean())}
 
 
+def rule_time_stop(side: int, window: dict, p: PlanParams) -> int | None:
+    """Dia del stop por tiempo si la regla lo aplica: solo en cortos.
+
+    Fuera de muestra en los 50 pares (dia de revision de la primera mitad de
+    cada historia, medido en la segunda): en cortos mejoro la E(R) en el 80% de
+    los nombres, +0,05R de media con t 3,7; en largos la empeoro (40%, -0,03R,
+    t -1,8). Un corto que no avanza pelea contra la deriva al alza y paga
+    prestamo; a un largo cortarlo le quita el recorrido de los que suben.
+    """
+    if side < 0 and p.short_time_stop and window.get("review_day"):
+        return int(window["review_day"])
+    return None
+
+
 def holding_window(trades: pd.DataFrame, p: PlanParams) -> dict[str, float]:
     """Cuanto dura la operacion con esta regla en este valor, y cuando revisarla.
 
@@ -758,12 +773,24 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             timed = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost, borrow=s.borrow_cost,
                                     time_stop=int(hw_first["review_day"]))
             oos = time_stop_out_of_sample(sims[t], timed, p)
+        # La regla de los cortos incluye el stop por tiempo: el backtest de la
+        # regla, la ventana y el backtest del plan miden ESA regla, no la de
+        # sin stop (que queda para comparar).
+        plain_exp_r = st.get("exp_r")
+        stop_day = rule_time_stop(side, hw, p)
+        hold = hw
+        if stop_day:
+            sims[t] = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost, borrow=s.borrow_cost,
+                                      time_stop=stop_day)
+            st = trade_stats(sims[t])
+            hold = holding_window(sims[t], p)
         rows[-1].update({
+            "time_stop_day": stop_day, "bt_exp_r_no_time_stop": plain_exp_r,
             "bt_trades": st.get("n", 0), "bt_win_rate": st.get("win_rate"), "bt_exp_r": st.get("exp_r"),
             "bt_t_stat": st.get("t_stat"),
             "bt_avg_win_r": st.get("avg_win_r"), "bt_avg_loss_r": st.get("avg_loss_r"),
             "bt_profit_factor": st.get("profit_factor"), "bt_avg_days": st.get("avg_days"),
-            "hold_p25": hw.get("p25"), "hold_median": hw.get("median"), "hold_p75": hw.get("p75"),
+            "hold_p25": hold.get("p25"), "hold_median": hold.get("median"), "hold_p75": hold.get("p75"),
             "tp1_median_days": hw.get("tp1_median"), "review_day": hw.get("review_day"),
             "late_tp1_rate": hw.get("late_tp1_rate"), "cut_at_review": hw.get("cut_at_review", False),
             "bt_exp_r_time_stop": hw.get("exp_r_time_stop"),
@@ -888,5 +915,6 @@ def params_from_settings(settings) -> PlanParams:
         hold_band=float(tp.get("hold_band", 0.005)),
         flip_min_ic_t=float(tp.get("flip_min_ic_t", 2.0)),
         unproven_flip=str(tp.get("unproven_flip", "reduce")),
+        short_time_stop=bool(tp.get("short_time_stop", True)),
         max_position=float(settings.get("portfolio.max_position", 0.35)),
     )

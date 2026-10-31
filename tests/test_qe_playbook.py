@@ -288,7 +288,7 @@ def test_rango_de_tiempo_del_corto_con_fechas_coste_y_dividendo():
     text = " ".join(lines)
     assert lines[0].startswith("Open on 2026-11-02")            # viernes -> lunes
     assert "10-40 sessions, from 2026-11-16 to 2026-12-28" in text
-    assert "Review on 2026-11-23" in text and "cover the position" in text
+    assert "Review on 2026-11-23" in text and "consider covering" in text    # regla apagada: solo informa
     assert "Hard exit: cover whatever is left by 2027-01-28" in text
     assert "about 210 USD" in text                              # 100.000 x 2,52% x 21/252
     assert "Ex-dividend on 2026-11-20" in text
@@ -362,3 +362,34 @@ def test_salida_a_bolsa_reciente_tiene_ficha_limitada_sin_tamano():
     assert card["technical"] and card["technical"][0].startswith("Trend")
     short = SimpleNamespace(**{**result.__dict__, "quality": quality.assign(sessions=20)})
     assert pb.limited_card(short, "NEW", tp.PlanParams())["headline"].startswith("NOT ANALYZED")
+
+
+def test_stop_por_tiempo_es_regla_solo_en_cortos():
+    w = {"review_day": 20.0}
+    assert tp.rule_time_stop(-1, w, tp.PlanParams()) == 20
+    assert tp.rule_time_stop(1, w, tp.PlanParams()) is None
+    assert tp.rule_time_stop(-1, w, tp.PlanParams(short_time_stop=False)) is None
+    assert tp.rule_time_stop(-1, {}, tp.PlanParams()) is None
+
+
+def test_el_corto_lleva_el_paso_del_stop_por_tiempo():
+    row = pd.Series({"entry": 100.0, "stop": 105.0, "tp1": 92.5, "tp2": 85.0, "atr": 2.0, "currency": "USD",
+                     "time_stop_day": 20.0})
+    steps = pb.execution_steps("X", -1, 100, 0, row, 1.0, 1_000_000, 63, pd.Timestamp("2026-10-30"), 0.0025)
+    assert any(s.startswith("Time stop: if TP1 has not been reached by 2026-11-27") for s in steps)
+    long_row = row.copy()
+    long_row[["stop", "tp1", "tp2"]] = [95.0, 107.5, 115.0]
+    longs = pb.execution_steps("X", 1, 100, 0, long_row, 1.0, 1_000_000, 63,
+                               pd.Timestamp("2026-10-30"), 0.0025)
+    assert not any(s.startswith("Time stop") for s in longs)
+
+
+def test_la_ficha_del_corto_da_el_stop_por_tiempo_y_la_del_largo_no_corta():
+    base = {"entry": 100.0, "hold_p25": 10.0, "hold_median": 21.0, "hold_p75": 40.0, "tp1_median_days": 8.0,
+            "review_day": 15.0, "late_tp1_rate": 0.2, "cut_at_review": True}
+    short = pd.Series({**base, "time_stop_day": 15.0, "bt_exp_r": 0.12, "bt_exp_r_no_time_stop": 0.05})
+    text = " ".join(pb.time_window("ARES", short, -1, 1000, 1.0, pd.Timestamp("2026-10-30"), 63, 0.0252))
+    assert "Time stop (rule for shorts): if TP1 has not been reached by 2026-11-23 (15 sessions)" in text
+    assert "+0.12R with it and +0.05R without it" in text
+    long_ = " ".join(pb.time_window("ARES", pd.Series(base), 1, 1000, 1.0, pd.Timestamp("2026-10-30"), 63, 0.0))
+    assert "keep the stop and hold" in long_ and "Time stop" not in long_
