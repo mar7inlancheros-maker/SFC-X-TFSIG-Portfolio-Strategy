@@ -68,10 +68,10 @@ def test_solo_cuenta_si_esta_al_dia_y_validado():
 
 
 def test_el_multifactor_mueve_la_conviccion_un_escalon():
-    assert tp.conviction("CONFIRM", 0.3, "none", 0.0, False) == "MEDIUM"
-    assert tp.conviction("CONFIRM", 0.3, "none", 0.0, False, mf_agree=1) == "HIGH"
-    assert tp.conviction("CONFIRM", 0.3, "none", 0.0, False, mf_agree=-1) == "LOW"
-    assert tp.conviction("FLIP", -0.9, "none", 0.0, True, mf_agree=-1) == "LOW"   # no baja de LOW
+    assert tp.conviction("CONFIRM", 0.3, "none", False) == "MEDIUM"
+    assert tp.conviction("CONFIRM", 0.3, "none", False, mf_agree=1) == "HIGH"
+    assert tp.conviction("CONFIRM", 0.3, "none", False, mf_agree=-1) == "LOW"
+    assert tp.conviction("FLIP", -0.9, "none", True, mf_agree=-1) == "LOW"   # no baja de LOW
 
 
 def test_solo_los_reportes_oficiales_con_fecha_cuentan(tmp_path):

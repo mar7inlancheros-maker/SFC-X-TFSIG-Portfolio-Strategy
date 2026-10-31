@@ -60,17 +60,17 @@ def test_salto_x20_excluye_y_ultimo_precio_raro_avisa():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("verdict, aligned, evidence, bt_t, unproven, expected", [
-    ("CONFIRM", 0.7, "predictive", 1.0, False, "HIGH"),
-    ("CONFIRM", 0.7, "none", 1.0, False, "MEDIUM"),       # sin evidencia, techo MEDIUM
-    ("CONFIRM", 0.2, "predictive", -2.5, False, "LOW"),   # la regla perdio de forma clara
-    ("REDUCE", 0.05, "predictive", 0.0, False, "LOW"),
-    ("FLIP", -0.9, "none", 0.0, True, "LOW"),
-    ("FLIP", -0.9, "inverse", 0.0, False, "LOW"),
-    ("NO TRADE", -0.3, "none", 0.0, False, ""),
+@pytest.mark.parametrize("verdict, aligned, evidence, unproven, expected", [
+    ("CONFIRM", 0.7, "predictive", False, "HIGH"),
+    ("CONFIRM", 0.7, "none", False, "MEDIUM"),       # sin evidencia, techo MEDIUM
+    ("CONFIRM", 0.2, "predictive", False, "MEDIUM"),  # el backtest del nombre ya no resta: no predijo
+    ("REDUCE", 0.05, "predictive", False, "LOW"),
+    ("FLIP", -0.9, "none", True, "LOW"),
+    ("FLIP", -0.9, "inverse", False, "LOW"),
+    ("NO TRADE", -0.3, "none", False, ""),
 ])
-def test_conviccion(verdict, aligned, evidence, bt_t, unproven, expected):
-    assert tp.conviction(verdict, aligned, evidence, bt_t, unproven) == expected
+def test_conviccion(verdict, aligned, evidence, unproven, expected):
+    assert tp.conviction(verdict, aligned, evidence, unproven) == expected
 
 
 def test_tamano_propio_por_riesgo_con_tope_de_nocional_y_fx():
@@ -428,3 +428,22 @@ def test_el_html_no_pega_las_lineas_de_la_ficha():
 
     assert _sentences(["verify the value per share", "DCF check: financial company (x)", "Monte Carlo: 82%."]) == \
         "verify the value per share. DCF check: financial company (x). Monte Carlo: 82%."
+
+
+def _val(critical):
+    return {"available": True, "source": "SEC XBRL", "fiscal_end": "2026-06-30", "trading_currency": "USD",
+            "price": 38.03, "value_cases": {"bear": 0.0, "base": 0.0, "bull": 1481.13}, "value_expected": 370.28,
+            "upside_base": -1.0, "stance": "NOT DECISION-GRADE" if critical else "UNDERVALUED", "wacc": 0.093,
+            "terminal_growth": 0.025, "tv_share": 0.5, "implied_cagr": 0.105, "base_cagr": 0.207, "years": 10,
+            "mc_prob_above_price": 0.47, "flags": ["thin operating margin (0.7%)"],
+            "critical": ["equity value is zero or negative"] if critical else []}
+
+
+def test_un_dcf_sin_grado_de_decision_no_da_escenarios_ni_ponderado():
+    lines, verdict = pb.valuation_lines("SHORT", _val(True))
+    text = " ".join(lines)
+    assert "NOT DECISION-GRADE" in text and "for reference only" in text and "DCF check: thin operating" in text
+    assert "1,481" not in text and "370.28" not in text and "Monte Carlo:" not in text and "implies" not in text
+    assert "not decision-grade" in verdict
+    ok = " ".join(pb.valuation_lines("LONG", _val(False))[0])
+    assert "probability-weighted 370.28" in ok and "Monte Carlo: value above the price in 47%" in ok

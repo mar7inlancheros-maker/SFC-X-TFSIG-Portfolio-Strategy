@@ -501,6 +501,13 @@ Trampas:
 - **`tp1_day` en la salida de `simulate_trades` solo se anota.** Si cambia la
   lógica del TP1, el día tiene que seguir siendo el de la sesión en que se
   tocó, o `holding_window` medirá otra cosa.
+- **La convicción no usa el backtest de la regla en el nombre.** Se probó en
+  los 50 pares (`tools` no lo guarda; el método: E(R) de la primera mitad de
+  las entradas contra la segunda, por lado): sin persistencia dentro del
+  lado (rangos −0,05 cortos, −0,07 largos). Con el lado mezclado sale una
+  persistencia falsa (Spearman +0,35, t 3,7) que es solo la deriva del
+  mercado contra los cortos. No volver a meter la t del nombre en la
+  convicción ni bloquear por ella sin una prueba nueva que la sostenga.
 - **La t del backtest de la regla es de Newey-West** (`trade_plan.hac_t_stat`,
   retardo = la operación más larga). Las entradas diarias se solapan: con el
   error estándar ingenuo, 756 entradas parecerían 756 operaciones
@@ -531,7 +538,11 @@ data (SEC XBRL | Compustat) ──> assumptions ──> dcf (puro, vectorizado) 
   patrimonio sale negativo. No es un fallo del DCF: un FCFF no vale para
   gestoras, bancos ni aseguradoras, y el aviso lo dice.
 - **`CRITICAL` en `engine.py` decide qué avisos invalidan el número.** Un aviso
-  nuevo que deba invalidar va ahí, con un prefijo de texto estable.
+  nuevo que deba invalidar va ahí, con un prefijo de texto estable. Con un
+  aviso crítico la ficha da solo el caso base "for reference only" y los
+  avisos: escenarios, ponderado, Monte Carlo y DCF inverso se callan (en la
+  tabla del HTML, ponderado y P(valor > precio) salen n/a). Gold.com daba un
+  alcista de 1.481 con precio 38 y un ponderado de 370 que parecían cifras.
 - **El suelo de reinversión usa el ventas/capital propio si es mayor que 5**
   (tope 25). Con 5 fijo, un comerciante de metales (18x) necesitaba 2.000 M
   de capital al año y valía 0.

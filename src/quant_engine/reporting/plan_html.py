@@ -283,13 +283,18 @@ def _valuation_section(r: AnalysisResult, h2) -> list[str]:
         c = v["value_cases"]
         cls = "up" if v["stance"] == "UNDERVALUED" else "down" if v["stance"] == "OVERVALUED" else ""
         implied = f"{v['implied_cagr'] * 100:+.1f}%" if v.get("implied_cagr") is not None else "n/a"
+        # Sin grado de decision, el ponderado y la probabilidad del Monte Carlo
+        # se callan: arrastran el caso que rompe el modelo.
+        broken = bool(v.get("critical"))
+        weighted = "<span class='muted'>n/a</span>" if broken else f"<b>{_price(v['value_expected'])}</b>"
+        prob = "<span class='muted'>n/a</span>" if broken else _pct(v.get("mc_prob_above_price"), 0)
         rows.append(
             f"<tr><td class='l'><b>{escape(t)}</b> <span class='muted'>{escape(v['trading_currency'])}</span></td>"
             f"<td>{_price(v['price'])}</td><td>{_price(c['bear'])}</td><td>{_price(c['base'])}</td>"
-            f"<td>{_price(c['bull'])}</td><td><b>{_price(v['value_expected'])}</b></td>"
+            f"<td>{_price(c['bull'])}</td><td>{weighted}</td>"
             f"<td class='{cls}'>{v['upside_base'] * 100:+.0f}%</td><td class='l {cls}'>{escape(v['stance'])}</td>"
             f"<td>{_pct(v['wacc'])}</td><td>{_pct(v['tv_share'], 0) or 'n/a'}</td>"
-            f"<td>{_pct(v.get('mc_prob_above_price'), 0)}</td><td>{implied}</td></tr>")
+            f"<td>{prob}</td><td>{implied}</td></tr>")
     if rows:
         out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th>Price</th><th>Bear</th><th>Base</th>"
                    "<th>Bull</th><th>Weighted</th><th>Base upside</th><th class='l'>Stance</th><th>WACC</th>"
@@ -371,7 +376,11 @@ def _expectations(r: AnalysisResult, tp: dict, plan: pd.DataFrame, p, h2) -> lis
         if len(negative):
             out.append("<p class='note warn'><b>Negative historical expectancy on traded names:</b> "
                        + escape(", ".join(f"{t} ({v:+.2f}R)" for t, v in negative["bt_exp_r"].items()))
-                       + ". This rule lost money on these stocks in the past: review before entering.</p>")
+                       + ". This rule lost money on these stocks in the past. On 50 large caps a name's past "
+                       "E(R) did not predict its next one within the same side (rank correlation -0.05 for "
+                       "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.20R out of "
+                       "sample, the market's upward drift. A short needs its edge from the signal, not from "
+                       "this history.</p>")
     pb = tp.get("plan_backtest")
     if pb:
         out.append("<h3 class='sub3'>The whole plan, opened together</h3>")

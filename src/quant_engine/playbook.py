@@ -574,6 +574,19 @@ def valuation_lines(signal: str, val: dict | None, rel: dict | None = None) -> t
         return [f"DCF not available: {val.get('reason')}"], ""
     ccy = val.get("trading_currency", "USD")
     cases = val["value_cases"]
+    if val.get("critical"):
+        # Con un aviso critico el modelo esta roto para este nombre: un caso
+        # alcista de 1.481 frente a un precio de 38 (Gold.com, margen del 0,7%)
+        # o un promedio ponderado que lo arrastra parecen cifras y no lo son.
+        # Se da el caso base como referencia y los avisos; lo demas se calla.
+        lines = [f"DCF ({val['source']}, FY {val['fiscal_end']}): NOT DECISION-GRADE. Base {cases['base']:,.2f} "
+                 f"{ccy} vs price {val['price']:,.2f} for reference only; scenarios, weighted value, Monte Carlo "
+                 "and reverse DCF are withheld because the checks below break the model for this name."]
+        lines.extend(f"DCF check: {f}" for f in val.get("flags", []))
+        rel_line = relative_check("", rel)
+        if rel_line:
+            lines.append(rel_line)
+        return lines, "valuation is not decision-grade for this name: see the DCF checks"
     lines = [f"DCF ({val['source']}, FY {val['fiscal_end']}): base {cases['base']:,.2f} {ccy} vs price "
              f"{val['price']:,.2f} ({val['upside_base']:+.0%}): {val['stance']}. "
              f"Bear / bull {cases['bear']:,.2f} / {cases['bull']:,.2f}, probability-weighted "
@@ -593,8 +606,6 @@ def valuation_lines(signal: str, val: dict | None, rel: dict | None = None) -> t
     rel_line = relative_check(stance, rel)
     if rel_line:
         lines.append(rel_line)
-    if val.get("critical"):
-        return lines, "valuation is not decision-grade for this name: see the DCF checks"
     agree = ""
     if signal in ("LONG", "SHORT") and stance in ("UNDERVALUED", "OVERVALUED"):
         backs = (signal == "LONG") == (stance == "UNDERVALUED")

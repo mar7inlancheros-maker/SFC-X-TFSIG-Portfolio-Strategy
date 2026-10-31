@@ -249,14 +249,19 @@ def long_only_signs(signs: pd.Series, verdicts: pd.Series) -> tuple[pd.Series, p
 CONVICTION = ("LOW", "MEDIUM", "HIGH")
 
 
-def conviction(verdict_: str, aligned: float, evidence: str, bt_t: float, unproven: bool,
-               mf_agree: int = 0) -> str:
+def conviction(verdict_: str, aligned: float, evidence: str, unproven: bool, mf_agree: int = 0) -> str:
     """Cuanto respaldo tiene la senal de un nombre que se opera.
 
     Fuerza del score alineado (|score| >= 0,5 fuerte, >= 0,15 moderada), con
-    techo MEDIUM si la validacion no muestra que el score predice, LOW si
-    ordena al reves o si es un FLIP sin evidencia, y un escalon menos si la
-    regla perdio dinero de forma clara en este valor (t <= -2).
+    techo MEDIUM si la validacion no muestra que el score predice y LOW si
+    ordena al reves o si es un FLIP sin evidencia.
+
+    El backtest de la regla en el nombre NO entra: en los 50 pares, el E(R) de
+    la primera mitad de las entradas no predijo el de la segunda dentro del
+    mismo lado (rangos: cortos -0,05, largos -0,07). Lo que si persiste es el
+    lado: los cortos perdieron de media -0,20R fuera de muestra, la deriva del
+    mercado. Antes un t <= -2 bajaba un escalon, y eso castigaba al 40% de los
+    cortos por la deriva, no por el nombre.
     """
     if verdict_ == "NO TRADE":
         return ""
@@ -268,8 +273,6 @@ def conviction(verdict_: str, aligned: float, evidence: str, bt_t: float, unprov
         level = min(level, 1)
     if evidence == "inverse" or unproven:
         level = 0
-    if bt_t is not None and np.isfinite(bt_t) and bt_t <= -2:
-        level = max(level - 1, 0)
     # El multifactor validado (IC con t >= 2 en su backtest) en su quintil
     # extremo: un escalon arriba si respalda la direccion, uno abajo si la
     # contradice. Va despues del techo por falta de evidencia del Quant Score:
@@ -810,8 +813,7 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
                                                   plan.loc[t, "mf_percentile"]) for t in plan.index]
     plan["flip_backed_by_multifactor"] = [t in mf_backed for t in plan.index]
     plan["conviction"] = [conviction(plan.loc[t, "verdict"], plan.loc[t, "aligned_score"], evidence,
-                                     plan.loc[t, "bt_t_stat"], bool(plan.loc[t, "unproven_flip"]),
-                                     int(plan.loc[t, "mf_agreement"]))
+                                     bool(plan.loc[t, "unproven_flip"]), int(plan.loc[t, "mf_agreement"]))
                           for t in plan.index]
     try:
         from .signals.composite import normalized_weights  # noqa: PLC0415

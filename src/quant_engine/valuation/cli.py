@@ -30,8 +30,9 @@ def _print(console: Console, t: str, v: dict, rel: dict | None = None) -> None:
     c = sm["value_cases"]
     ccy = sm["trading_currency"]
     console.print(f"  Price {sm['price']:,.2f} {ccy} | bear {c['bear']:,.2f} | base {c['base']:,.2f} "
-                  f"({sm['upside_base']:+.0%}) | bull {c['bull']:,.2f} | weighted {sm['value_expected']:,.2f} "
-                  f"-> {sm['stance']}")
+                  f"({sm['upside_base']:+.0%}) | bull {c['bull']:,.2f} | "
+                  + ("weighted n/a (not decision-grade) " if sm["critical"] else f"weighted {sm['value_expected']:,.2f} ")
+                  + f"-> {sm['stance']}")
     coc = v["cost_of_capital"]
     console.print(f"  WACC {coc['wacc']:.2%} (Ke {coc['cost_of_equity']:.2%}, beta {coc['beta']:.2f} Blume, "
                   f"Kd {coc['cost_of_debt']:.2%} {coc['rating']}) | terminal g {sm['terminal_growth']:.1%} | "

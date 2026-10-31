@@ -431,7 +431,12 @@ terminal y al principio del HTML, cada nombre tiene una ficha:
 
 - **Señal**: LONG, SHORT o NO TRADE; si va con research o contra; y una
   convicción HIGH / MEDIUM / LOW. La convicción combina la fuerza del score,
-  la evidencia de la validación y la t del backtest de la regla.
+  la evidencia de la validación y el multifactor. El backtest de la regla en
+  el nombre ya no la mueve: en los 50 pares, el E(R) de la primera mitad de
+  las entradas no predijo el de la segunda dentro del mismo lado (correlación
+  de rangos −0,05 en cortos, −0,07 en largos). Lo que sí persistió fue el
+  lado: los cortos perdieron −0,20R de media fuera de muestra, la deriva al
+  alza del mercado. El aviso de expectativa negativa sigue, y lo explica.
 - **Por qué**: los componentes que respaldan a research y los que van en
   contra, con los números que hay detrás (momentum 12-1 −14%, ROE 25%,
   revisión de estimaciones +5,8%, 11,7% de las acciones en corto…).

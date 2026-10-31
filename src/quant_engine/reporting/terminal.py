@@ -616,7 +616,11 @@ def expectations(console: Console, r: AnalysisResult) -> None:
             console.print("[bold]Negative historical expectancy on traded names:[/] "
                           + ", ".join(f"{t} ({signed(v)}R" + (f", t {signed(t_of[t], 1)}" if t in t_of else "") + ")"
                                       for t, v in negative["bt_exp_r"].items())
-                          + ". This rule lost money on these stocks in the past: review before entering.")
+                          + ". This rule lost money on these stocks in the past. On 50 large caps a name's past "
+                          "E(R) did not predict its next one within the same side (rank correlation -0.05 for "
+                          "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.20R out of "
+                          "sample, the market's upward drift. A short needs its edge from the signal, not from "
+                          "this history.")
     pb = tp.get("plan_backtest")
     if pb:
         console.print(f"[bold]Plan expectation:[/] the whole plan opened together on each of {pb['n_dates']} past "
