@@ -465,7 +465,9 @@ Trampas:
   regla, la ventana de tenencia y `plan_backtest` se calculan CON el stop; la
   E(R) sin él queda en `bt_exp_r_no_time_stop` para comparar. A un largo no se
   le aconseja cortar aunque dentro de muestra parezca ayudar. No extenderlo a
-  los largos sin repetir esa prueba con más canastas.
+  los largos sin repetir esa prueba (`python tools/qe_rule_studies.py
+  time-stop`). Si cambia la regla (stop, objetivos, salida parcial), volver a
+  correr los dos estudios antes de fiarse de estas cifras.
 - **`simulate_trades(time_stop=None)` es la regla sin stop por tiempo.** Con
   `time_stop` cierra sin TP1 en ese día. El día sale de las mismas
   operaciones (percentil 75 del día del TP1): la mejora en un nombre es
@@ -502,9 +504,9 @@ Trampas:
   lógica del TP1, el día tiene que seguir siendo el de la sesión en que se
   tocó, o `holding_window` medirá otra cosa.
 - **La convicción no usa el backtest de la regla en el nombre.** Se probó en
-  los 50 pares (`tools` no lo guarda; el método: E(R) de la primera mitad de
-  las entradas contra la segunda, por lado): sin persistencia dentro del
-  lado (rangos −0,05 cortos, −0,07 largos). Con el lado mezclado sale una
+  los 50 pares (`python tools/qe_rule_studies.py persistence`: E(R) de la
+  primera mitad de las entradas contra la segunda, por lado): sin persistencia
+  dentro del lado (rangos −0,05 cortos, −0,07 largos). Con el lado mezclado sale una
   persistencia falsa (Spearman +0,35, t 3,7) que es solo la deriva del
   mercado contra los cortos. No volver a meter la t del nombre en la
   convicción ni bloquear por ella sin una prueba nueva que la sostenga.
