@@ -177,6 +177,15 @@ def test_sin_cartera_no_se_liquida_lo_que_el_modelo_apoya():
     assert tp.planned_without_book("CONFIRM", 1, 0) == 0         # sin tamano no se abre
 
 
+def test_sin_cartera_las_ordenes_llevan_el_tamano_propio():
+    # La senal final y la ficha tienen que decir lo mismo: si la ficha da
+    # 1.022 acciones en corto, la orden es esa.
+    assert tp.planned_without_book("CONFIRM", 1, 0, 300) == 300
+    assert tp.planned_without_book("FLIP", 1, 0, 1022) == -1022
+    assert tp.planned_without_book("REDUCE", -1, -500, 200) == -200   # se lleva al tamano propio
+    assert tp.planned_without_book("NO TRADE", -1, 0, 100) == 0
+
+
 def test_en_solo_long_un_flip_no_abre_un_corto():
     signs = pd.Series({"A": 1.0, "B": -1.0, "C": 0.0})      # B: FLIP de un LONG
     verdicts = pd.Series({"A": "CONFIRM", "B": "FLIP", "C": "NO TRADE"})

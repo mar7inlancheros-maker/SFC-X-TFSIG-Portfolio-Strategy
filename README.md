@@ -448,8 +448,16 @@ terminal y al principio del HTML, cada nombre tiene una ficha:
   resultados antes de la salida (fecha de Yahoo) y de la moneda.
 - **Tamaño**: el del libro long/short. Si no hay libro (queda una sola pata),
   un tamaño propio por riesgo: el stop cuesta el 1% del capital (por la
-  convicción), con tope de nocional. El total de todas esas posiciones se
-  muestra junto, con una sola cobertura en SPY.
+  convicción), con tope de nocional. Las órdenes de la señal final llevan ese
+  mismo tamaño: la tabla y la ficha dicen lo mismo. El total de todas esas
+  posiciones se muestra junto. Si el plan cubre la beta en sus órdenes, el
+  total da esa cobertura (betas de 1 año del libro) y la ficha no pide otra
+  por nombre; si no, propone una sola en SPY.
+- **Fechas**: en sesiones de bolsa, con los festivos de NYSE o de Toronto
+  según el sufijo (`quant_engine/sessions.py`), contadas desde la sesión de
+  entrada. Los pasos de ejecución y la ventana de tiempo usan la misma
+  función: antes daban dos fechas para la misma regla, y 63 sesiones que
+  cruzaban Thanksgiving, Navidad, Año Nuevo y MLK terminaban 4 sesiones antes.
 
 **Los números se comprueban antes de salir.** `trade_plan.check_plan` verifica:
 - precios positivos y stop y objetivos del lado correcto;

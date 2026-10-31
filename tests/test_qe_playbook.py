@@ -240,6 +240,24 @@ def test_las_posiciones_sueltas_se_ven_juntas_con_una_sola_cobertura():
     assert total["beta_usd"] == pytest.approx(-150_000 + 50_000)    # beta desconocida cuenta como 1
     assert total["hedge_action"] == "BUY" and total["hedge_shares"] == 200
     assert total["risk_pct"] == pytest.approx(0.015)
+    # Si el plan ya cubre en sus ordenes, el total da ESA cobertura.
+    planned = pb.standalone_total(cards, "SPY", 500.0, {"action": "BUY", "shares": 190, "price": 501.0,
+                                                         "beta_before": -0.095})
+    assert planned["hedge_in_plan"] and planned["hedge_shares"] == 190 and planned["bench_price"] == 501.0
+    assert planned["beta_usd"] == pytest.approx(-190 * 501.0)       # la exposicion que la cobertura cubre
+
+
+def test_con_cobertura_en_el_plan_la_ficha_no_pide_otra():
+    row = pd.Series({"entry": 100.0, "stop": 105.0, "tp1": 92.5, "tp2": 85.0, "atr": 2.0, "currency": "USD"})
+    hedge = {"beta": 1.5, "ticker": "SPY", "shares": 30, "price": 500.0, "action": "BUY",
+             "in_plan": {"action": "BUY", "shares": 190, "ticker": "SPY"}}
+    steps = pb.execution_steps("X", -1, 100, 0, row, 1.0, 1_000_000, 63, pd.Timestamp("2026-10-30"), 0.0025,
+                               hedge=hedge)
+    text = " ".join(steps)
+    assert "one BUY 190 SPY (1-year betas of the book): do not add a hedge per name" in text
+    assert "Optional market hedge" not in text
+    note = pb.card_size_note({"shares": 100, "sized_by": "standalone", "plan_hedged": True}, 0.01)
+    assert "market hedge takes out the beta" in note and "directional" not in note
 
 
 # ---------------------------------------------------------------------------
@@ -287,9 +305,9 @@ def test_rango_de_tiempo_del_corto_con_fechas_coste_y_dividendo():
                            ex_dividend=pd.Timestamp("2026-11-20"))
     text = " ".join(lines)
     assert lines[0].startswith("Open on 2026-11-02")            # viernes -> lunes
-    assert "10-40 sessions, from 2026-11-16 to 2026-12-28" in text
+    assert "10-40 sessions, from 2026-11-16 to 2026-12-30" in text   # Thanksgiving y Navidad no son sesiones
     assert "Review on 2026-11-23" in text and "consider covering" in text    # regla apagada: solo informa
-    assert "Hard exit: cover whatever is left by 2027-01-28" in text
+    assert "Hard exit: cover whatever is left by 2027-02-03" in text
     assert "about 210 USD" in text                              # 100.000 x 2,52% x 21/252
     assert "Ex-dividend on 2026-11-20" in text
 
@@ -376,7 +394,7 @@ def test_el_corto_lleva_el_paso_del_stop_por_tiempo():
     row = pd.Series({"entry": 100.0, "stop": 105.0, "tp1": 92.5, "tp2": 85.0, "atr": 2.0, "currency": "USD",
                      "time_stop_day": 20.0})
     steps = pb.execution_steps("X", -1, 100, 0, row, 1.0, 1_000_000, 63, pd.Timestamp("2026-10-30"), 0.0025)
-    assert any(s.startswith("Time stop: if TP1 has not been reached by 2026-11-27") for s in steps)
+    assert any(s.startswith("Time stop: if TP1 has not been reached by 2026-12-01") for s in steps)
     long_row = row.copy()
     long_row[["stop", "tp1", "tp2"]] = [95.0, 107.5, 115.0]
     longs = pb.execution_steps("X", 1, 100, 0, long_row, 1.0, 1_000_000, 63,
@@ -393,3 +411,20 @@ def test_la_ficha_del_corto_da_el_stop_por_tiempo_y_la_del_largo_no_corta():
     assert "+0.12R with it and +0.05R without it" in text
     long_ = " ".join(pb.time_window("ARES", pd.Series(base), 1, 1000, 1.0, pd.Timestamp("2026-10-30"), 63, 0.0))
     assert "keep the stop and hold" in long_ and "Time stop" not in long_
+
+
+def test_pasos_y_ventana_dan_la_misma_fecha_para_la_misma_regla():
+    row = pd.Series({"entry": 100.0, "stop": 105.0, "tp1": 92.5, "tp2": 85.0, "atr": 2.0, "currency": "USD",
+                     "time_stop_day": 20.0, "hold_p25": 10.0, "hold_median": 18.0, "hold_p75": 20.0})
+    d = pd.Timestamp("2026-10-30")
+    steps = " ".join(pb.execution_steps("ARES", -1, 100, 0, row, 1.0, 1_000_000, 63, d, 0.0025))
+    window = " ".join(pb.time_window("ARES", row, -1, 100, 1.0, d, 63, 0.0025))
+    assert "reached by 2026-12-01 (20 sessions)" in steps and "reached by 2026-12-01 (20 sessions)" in window
+    assert "hit by 2027-02-03 (63 sessions)" in steps and "left by 2027-02-03 (63 sessions)" in window
+
+
+def test_el_html_no_pega_las_lineas_de_la_ficha():
+    from quant_engine.reporting.plan_html import _sentences
+
+    assert _sentences(["verify the value per share", "DCF check: financial company (x)", "Monte Carlo: 82%."]) == \
+        "verify the value per share. DCF check: financial company (x). Monte Carlo: 82%."

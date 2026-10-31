@@ -21,10 +21,13 @@ analisis; si un numero no esta, la ficha lo dice en vez de inventarlo.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 
 from .data.validation import MIN_SESSIONS
+from .sessions import session_date
 
 EXCHANGE = {".TO": "TSX", ".V": "TSX Venture", ".NE": "Cboe Canada", ".CN": "CSE", ".L": "LSE",
             ".PA": "Euronext Paris", ".DE": "Xetra", ".AS": "Euronext Amsterdam", ".SW": "SIX",
@@ -171,8 +174,14 @@ def execution_flags(stats: dict) -> list[str]:
     return out
 
 
-def exit_date(levels_date: pd.Timestamp, horizon_d: int) -> pd.Timestamp:
-    return pd.Timestamp(levels_date) + pd.offsets.BDay(horizon_d)
+def exit_date(levels_date: pd.Timestamp, horizon_d: int, ticker: str = "") -> pd.Timestamp:
+    """Sesion `horizon_d` despues de la de entrada, con los festivos de su bolsa.
+
+    Los pasos de ejecucion y la ventana de tiempo usan esta misma fecha: antes
+    unos contaban desde el cierre de los niveles y la otra desde la entrada, y
+    la misma regla salia con dos fechas en la misma ficha.
+    """
+    return session_date(ticker, levels_date, horizon_d)
 
 
 def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.Series, fx: float,
@@ -214,9 +223,10 @@ def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.S
                  "(one-cancels-other if the broker has it).")
     stop_day = row.get("time_stop_day")
     if side < 0 and stop_day is not None and pd.notna(stop_day):
-        steps.append(f"Time stop: if TP1 has not been reached by {exit_date(levels_date, int(stop_day)):%Y-%m-%d} "
+        when = exit_date(levels_date, int(stop_day), ticker)
+        steps.append(f"Time stop: if TP1 has not been reached by {when:%Y-%m-%d} "
                      f"({int(stop_day)} sessions), cover everything at market (rule for shorts).")
-    steps.append(f"Time exit: if nothing is hit by {exit_date(levels_date, horizon_d):%Y-%m-%d} "
+    steps.append(f"Time exit: if nothing is hit by {exit_date(levels_date, horizon_d, ticker):%Y-%m-%d} "
                  f"({horizon_d} sessions), close the rest at market.")
     if side < 0:
         steps.append(f"Margin: about {SHORT_INITIAL_MARGIN * shares * entry * fx:,.0f} USD of own equity (Reg T: "
@@ -224,12 +234,16 @@ def execution_steps(ticker: str, side: int, shares: int, current: int, row: pd.S
                      "name. Any dividend paid while short is owed by you.")
     if ccy != "USD":
         steps.append(f"Prices are in {ccy}; size and risk are in USD at {fx:,.4f} USD per {ccy}.")
-    if hedge:
+    if hedge and hedge.get("in_plan"):
+        ph = hedge["in_plan"]
+        steps.append(f"Market hedge: the plan's orders hedge all positions together with one {ph['action']} "
+                     f"{ph['shares']:,} {ph['ticker']} (1-year betas of the book): do not add a hedge per name.")
+    elif hedge:
         steps.append(f"Optional market hedge: this position alone carries beta {hedge['beta']:+.2f}, like "
                      f"{hedge['beta'] * shares * entry * fx * side:+,.0f} USD of {hedge['ticker']}. To keep only the "
                      f"view on {ticker}: {hedge['action']} {hedge['shares']:,} {hedge['ticker']} at ~{hedge['price']:,.2f}.")
     if earnings is not None and pd.notna(earnings):
-        if pd.Timestamp(earnings) <= exit_date(levels_date, horizon_d):
+        if pd.Timestamp(earnings) <= exit_date(levels_date, horizon_d, ticker):
             size = ""
             if earnings_move:
                 stop_pct = abs(entry - stop) / entry
@@ -269,8 +283,8 @@ def time_window(ticker: str, row: pd.Series, side: int, shares: int, fx: float, 
     Todo sale de la misma regla abierta cada dia de los ultimos anos en este
     valor (`trade_plan.holding_window`), no de una regla general.
     """
-    start = pd.Timestamp(levels_date) + pd.offsets.BDay(1)
-    day = lambda n: start + pd.offsets.BDay(int(round(n)))  # noqa: E731
+    start = exit_date(levels_date, 0, ticker)
+    day = lambda n: exit_date(levels_date, n, ticker)  # noqa: E731
     lines = [f"Open on {start:%Y-%m-%d} (next session). If it is not filled within 2 sessions, recompute the "
              "levels: entry and R have moved."]
     p25, p75, med = row.get("hold_p25"), row.get("hold_p75"), row.get("hold_median")
@@ -431,6 +445,11 @@ def build_cards(result) -> dict[str, dict]:
             hedge = (standalone_hedge(float(beta) if beta is not None and pd.notna(beta) else float("nan"),
                                       shares, side, float(row["entry"]), float(row["fx"]), bench, bench_price)
                      if sized_by == "standalone" else None)
+            # Si el plan ya cubre la beta del libro en sus ordenes, una
+            # cobertura por nombre la duplicaria.
+            if hedge and tp.get("hedge"):
+                hedge["in_plan"] = tp["hedge"]
+            card["plan_hedged"] = bool(tp.get("hedge"))
             card["steps"] = execution_steps(t, side, shares, current, row, float(row["fx"]), capital, p.horizon_d,
                                             tp.get("levels_date", result.as_of), s.borrow_cost, short_facts,
                                             hedge, earnings.get(t), _earnings_move(result, t))
@@ -498,11 +517,14 @@ def limited_card(result, t: str, p) -> dict:
     return card
 
 
-def standalone_total(cards: dict[str, dict], bench: str, bench_price: float) -> dict | None:
+def standalone_total(cards: dict[str, dict], bench: str, bench_price: float,
+                     plan_hedge: dict | None = None) -> dict | None:
     """Todas las posiciones sueltas juntas: nocional, beta en dolares, riesgo y una sola cobertura.
 
     Sin libro long/short, cada nombre se dimensiona por su cuenta. Sumadas son
-    una apuesta direccional: hay que verla entera antes de abrirlas.
+    una apuesta direccional: hay que verla entera antes de abrirlas. Si el plan
+    ya manda la cobertura en sus ordenes, se da esa (betas del plan) y no una
+    calculada aqui con otras betas: dos cifras para la misma cobertura.
     """
     live = [c for c in cards.values() if c.get("steps") and c.get("sized_by") == "standalone"]
     if not live:
@@ -511,10 +533,19 @@ def standalone_total(cards: dict[str, dict], bench: str, bench_price: float) -> 
     betas = [c.get("beta") if c.get("beta") is not None and pd.notna(c.get("beta")) else 1.0 for c in live]
     beta_usd = sum(n * b for n, b in zip(signed, betas, strict=True))
     n_bench = round(abs(beta_usd) / bench_price) if bench_price > 0 else 0
-    return {"names": [c["ticker"] for c in live], "long": sum(n for n in signed if n > 0),
-            "short": -sum(n for n in signed if n < 0), "net": sum(signed), "beta_usd": beta_usd,
-            "risk_pct": sum(c["risk_pct"] for c in live), "hedge_shares": n_bench,
-            "hedge_action": "SELL SHORT" if beta_usd > 0 else "BUY", "bench": bench, "bench_price": bench_price}
+    out = {"names": [c["ticker"] for c in live], "long": sum(n for n in signed if n > 0),
+           "short": -sum(n for n in signed if n < 0), "net": sum(signed), "beta_usd": beta_usd,
+           "risk_pct": sum(c["risk_pct"] for c in live), "hedge_shares": n_bench,
+           "hedge_action": "SELL SHORT" if beta_usd > 0 else "BUY", "bench": bench, "bench_price": bench_price,
+           "hedge_in_plan": False}
+    if plan_hedge:
+        # La exposicion que se cubre es la del plan (betas de 1 ano del libro),
+        # no la de las betas del periodo de analisis de cada ficha.
+        out.update(hedge_shares=int(plan_hedge["shares"]), hedge_action=plan_hedge["action"],
+                   bench_price=float(plan_hedge["price"]), hedge_in_plan=True,
+                   beta_usd=math.copysign(float(plan_hedge["shares"]) * float(plan_hedge["price"]),
+                                          float(plan_hedge["beta_before"])))
+    return out
 
 
 def relative_check(stance: str, rel: dict | None) -> str:
@@ -612,5 +643,6 @@ def card_size_note(card: dict, max_risk: float) -> str:
         return "size from the long/short book"
     mult = card.get("size_mult", 1.0)
     cut = f" x {mult:.0%}" if mult < 1 else ""
-    return (f"standalone size: no long/short book to share, so the stop costs {max_risk:.0%} of capital{cut}; "
-            "this is a directional position")
+    tail = ("the plan's market hedge takes out the beta of all of them together" if card.get("plan_hedged")
+            else "this is a directional position")
+    return f"standalone size: no long/short book to share, so the stop costs {max_risk:.0%} of capital{cut}; {tail}"

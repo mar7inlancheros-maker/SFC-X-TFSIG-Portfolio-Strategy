@@ -190,6 +190,12 @@ def _equity_chart(r: AnalysisResult) -> str | None:
 _SIGNAL_BADGE = {"LONG": "BUY", "SHORT": "SELL SHORT", "NO TRADE": "NO TRADE", "NOT ANALYZED": "NOT ANALYZED"}
 
 
+def _sentences(lines: list[str]) -> str:
+    """Lineas de la ficha en un parrafo: cada una cierra con punto, o se pegan
+    ("...the value per share DCF check: ...")."""
+    return " ".join(x.rstrip() if x.rstrip().endswith((".", "!", "?")) else x.rstrip() + "." for x in lines if x)
+
+
 def _signal_cards(r: AnalysisResult, h2) -> list[str]:
     """Una ficha por nombre: senal, por que, fundamentales y pasos de ejecucion."""
     from ..playbook import (  # noqa: PLC0415
@@ -205,7 +211,8 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
     p = tp["params"]
     bench = r.settings.benchmark
     bench_close = r.clean.close[bench].dropna()
-    total = standalone_total(cards, bench, float(bench_close.iloc[-1]) if len(bench_close) else float("nan"))
+    total = standalone_total(cards, bench, float(bench_close.iloc[-1]) if len(bench_close) else float("nan"),
+                             (r.trade_plan or {}).get("hedge"))
     out = [h2("Signals: what to do, why, and how")]
     errors = tp.get("integrity_errors")
     if errors:
@@ -229,13 +236,13 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
         if c["fundamentals"]:
             block.append("<p class='why'><b>Fundamentals:</b> " + escape(" | ".join(c["fundamentals"])) + "</p>")
         if c.get("valuation"):
-            block.append("<p class='why'><b>Valuation:</b> " + escape(" ".join(c["valuation"]))
+            block.append("<p class='why'><b>Valuation:</b> " + escape(_sentences(c["valuation"]))
                          + (f" <b>{escape(c['valuation_vs_signal'][0].upper() + c['valuation_vs_signal'][1:])}.</b>"
                             if c.get("valuation_vs_signal") else "") + "</p>")
         if c.get("technical"):
-            block.append("<p class='why'><b>Technical:</b> " + escape(" ".join(c["technical"])) + "</p>")
+            block.append("<p class='why'><b>Technical:</b> " + escape(_sentences(c["technical"])) + "</p>")
         if c.get("timing"):
-            block.append("<p class='why'><b>Timing:</b> " + escape(" ".join(c["timing"])) + "</p>")
+            block.append("<p class='why'><b>Timing:</b> " + escape(_sentences(c["timing"])) + "</p>")
         if c["data_flags"]:
             block.append("<p class='why down'><b>Data to verify:</b> " + escape("; ".join(c["data_flags"])) + "</p>")
         if c.get("steps"):
@@ -251,9 +258,11 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
     if total:
         out.append(f"<p class='note warn'><b>All standalone positions together</b> "
                    f"({escape(', '.join(total['names']))}): long {total['long']:,.0f} USD, short "
-                   f"{total['short']:,.0f} USD, net {total['net']:+,.0f} USD, beta-weighted {total['beta_usd']:+,.0f} "
-                   f"USD of {escape(bench)}, {total['risk_pct']:.2%} of capital if every stop hits. One hedge for all "
-                   f"of them instead of one per name: {escape(total['hedge_action'])} {total['hedge_shares']:,} "
+                   f"{total['short']:,.0f} USD, net {total['net']:+,.0f} USD, beta-weighted{' (1-year betas)' if total['hedge_in_plan'] else ''} {total['beta_usd']:+,.0f} "
+                   f"USD of {escape(bench)}, {total['risk_pct']:.2%} of capital if every stop hits. "
+                   + ("The plan's orders already hedge them together: " if total["hedge_in_plan"]
+                      else "One hedge for all of them instead of one per name: ")
+                   + f"{escape(total['hedge_action'])} {total['hedge_shares']:,} "
                    f"{escape(bench)} at ~{total['bench_price']:,.2f}.</p>")
     return out
 
@@ -445,7 +454,9 @@ def build(r: AnalysisResult) -> str:
     if not tp.get("has_book", True):
         out.append("<p class='note warn'><b>No book to size.</b> After the corrections "
                    + ("no LONG is left to trade" if tp.get("long_only") else "one leg has nothing left to trade")
-                   + ", so names the data supports get levels but no size.</p>")
+                   + f". Each name the data supports is sized on its own (its stop costs "
+                   f"{tp['params'].max_risk_per_trade:.0%} of capital, less when reduced); the orders are those "
+                   "sizes.</p>")
     missing = tp.get("wrds_missing")
     if missing:
         out.append(

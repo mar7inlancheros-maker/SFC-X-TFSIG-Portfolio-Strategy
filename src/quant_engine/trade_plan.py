@@ -359,19 +359,22 @@ def target_shares(verdict_: str, research_sign: int, planned: int, current: int)
     return planned
 
 
-def planned_without_book(verdict_: str, research_sign: int, current: int) -> int:
+def planned_without_book(verdict_: str, research_sign: int, current: int, solo_shares: int = 0) -> int:
     """Objetivo cuando tras las correcciones solo queda una pata.
 
-    Sin cartera long/short no hay tamano: lo que no se puede dimensionar no se
-    abre, pero tampoco se liquida. Una posicion del lado que el modelo sigue
-    apoyando (CONFIRM o REDUCE en la direccion de research, FLIP en la
-    contraria) se mantiene; lo demas va a cero. Antes, sin cartera todos los
-    objetivos eran cero y el plan mandaba vender hasta los CONFIRM.
+    Sin cartera long/short, el lado que el modelo apoya (CONFIRM o REDUCE en la
+    direccion de research, FLIP en la contraria) se dimensiona por su cuenta
+    (`solo_size`). Las ordenes llevan ese tamano: antes la senal final decia
+    NO TRADE mientras la ficha del mismo nombre mandaba abrir 1.022 acciones.
+    Sin tamano propio, una posicion del lado apoyado se mantiene y lo demas va
+    a cero (antes todos los objetivos eran cero y se vendian hasta los CONFIRM).
     """
     supported = {"CONFIRM": research_sign, "REDUCE": research_sign, "FLIP": -research_sign}.get(verdict_)
-    if supported is not None and current * supported > 0:
-        return current
-    return 0
+    if supported is None:
+        return 0
+    if solo_shares > 0:
+        return supported * int(solo_shares)
+    return current if current * supported > 0 else 0
 
 
 def order_for(current: int, target: int, price: float, capital: float, p: PlanParams) -> tuple[str, int]:
@@ -693,10 +696,11 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             note = f"{method} failed with the corrected directions ({built.note}); equal_weight is used instead"
             weights.loc[traded.index] = construction.equal_weight(traded, params)
     elif long_only:
-        note = "after the corrections no LONG is left to trade: levels are given per name, with no size."
+        note = ("after the corrections no LONG is left to trade: each name the data supports is sized on its "
+                "own, with its stop costing the per-trade risk cap.")
     else:
-        note = ("after the corrections there are not both longs and shorts left: no long/short book. "
-                "Levels are given per name, with no size.")
+        note = ("after the corrections there are not both longs and shorts left: no long/short book. Each name "
+                "the data supports is sized on its own, with its stop costing the per-trade risk cap.")
     if flipped:
         flip_note = f"long-only: {', '.join(flipped)} scored as FLIP and stays NO TRADE, no short is opened"
         note = "; ".join(n for n in (note, flip_note) if n)
@@ -826,10 +830,12 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
     final = {}
     for t, row in plan.iterrows():
         current = int(positions.get(t, 0))
+        solo = int(row.get("solo_shares", 0) or 0)
         if has_book:
             planned = -int(row["shares"]) if row["action"] == "SELL SHORT" else int(row["shares"])
         else:
-            planned = planned_without_book(row["verdict"], research[t], current)
+            planned = planned_without_book(row["verdict"], research[t], current, solo if row["action"] != "NO TRADE"
+                                           else 0)
         target = target_shares(row["verdict"], research[t], planned, current)
         action, qty = order_for(current, target, row["entry"] * row["fx"], capital, p)
         final[t] = _final(current, target, action)
@@ -842,7 +848,9 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
                        "tp1": lv.get("tp1"), "tp2": lv.get("tp2"), "verdict": row["verdict"],
                        "risk_capital_pct": (abs(final[t]) * abs(row["entry"] - lv["stop"]) * row["fx"] / capital
                                             if side else 0.0),
+                       "sized_by": "book" if has_book else ("standalone" if final[t] and planned == target else ""),
                        "hold_reason": ("no long/short book: kept as is" if not has_book and action == "HOLD"
+                                       and not (solo and planned == target)
                                        else "kept against research" if target != planned
                                        else "within hold band" if action == "HOLD" else "")})
 

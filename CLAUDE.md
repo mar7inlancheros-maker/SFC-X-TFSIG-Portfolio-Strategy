@@ -349,8 +349,19 @@ Trampas:
 - **`ffill(limit=0)` revienta en pandas**; `cleaning._ffill` lo trata aparte.
 - **El plan de operación reconstruye la cartera con los signos corregidos.**
   No reutiliza los pesos de `primary`: tras un FLIP o un NO TRADE esos pesos
-  apuntan al lado equivocado. Si solo queda una pata, no hay cartera y el plan
-  da niveles sin tamaño.
+  apuntan al lado equivocado. Si solo queda una pata, no hay cartera: cada
+  nombre apoyado se dimensiona solo (`solo_size`) y las ÓRDENES llevan ese
+  tamaño (`planned_without_book`). Antes las órdenes quedaban a cero y la
+  señal final decía NO TRADE mientras la ficha mandaba abrir 1.022 acciones.
+- **Una sola cifra por cobertura.** Las fichas usan la beta del periodo de
+  análisis; el plan cubre con la de 1 año del libro. Si el plan ya manda la
+  cobertura, `standalone_total` da la del plan y el paso de la ficha no
+  propone otra por nombre. No calcular una segunda cobertura en el reporte.
+- **Toda fecha de la ficha sale de `sessions.session_date`**: sesión `n`
+  después de la de entrada, con festivos de NYSE o Toronto por sufijo. No
+  sumar `BDay` a mano: los pasos y la ventana daban fechas distintas para la
+  misma regla, y sin festivos 63 sesiones acababan 4 antes. Otras bolsas
+  (Londres, París) cuentan días hábiles: falta su calendario.
 - **El plan cubre la beta que dejan sus propias correcciones.** `risk_parity`
   no es beta-neutral por construcción; que la primaria saliera con beta ~0 fue
   casualidad. Tras un NO TRADE en un corto de beta alta y los recortes por

@@ -709,8 +709,9 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
     notes = []
     if not tp.get("has_book", True):
         notes.append("No book to size: after the corrections " + ("no LONG is left to trade" if tp.get("long_only")
-                     else "one leg has nothing left to trade") + ", so no orders from a book. Each traded name "
-                     "gets a standalone, directional size in its card below.")
+                     else "one leg has nothing left to trade") + ". Each name the data supports is sized on its own "
+                     f"(its stop costs {tp['params'].max_risk_per_trade:.0%} of capital, less when reduced); the "
+                     "orders above are those sizes.")
     for verdict, text in _NOTES.items():
         names = list(orders.index[(orders["verdict"] == verdict)
                                   & ((orders["target"] != 0) | (verdict not in ("CONFIRM", "REDUCE")))])
@@ -785,7 +786,8 @@ def signal_cards(console: Console, r: AnalysisResult) -> None:
     p = r.trade_plan["params"]
     bench = r.settings.benchmark
     bench_close = r.clean.close[bench].dropna()
-    total = standalone_total(cards, bench, float(bench_close.iloc[-1]) if len(bench_close) else float("nan"))
+    total = standalone_total(cards, bench, float(bench_close.iloc[-1]) if len(bench_close) else float("nan"),
+                             (r.trade_plan or {}).get("hedge"))
     console.print()
     console.print(LINE)
     console.print("SIGNALS: WHAT TO DO, WHY, AND HOW")
@@ -824,9 +826,11 @@ def signal_cards(console: Console, r: AnalysisResult) -> None:
     if total:
         console.print(f"[bold]All standalone positions together[/] ({', '.join(total['names'])}): long "
                       f"{total['long']:,.0f} USD, short {total['short']:,.0f} USD, net {total['net']:+,.0f} USD, "
-                      f"beta-weighted {total['beta_usd']:+,.0f} USD of {bench}, {total['risk_pct']:.2%} of capital "
-                      f"if every stop hits. One hedge for all of them instead of one per name: "
-                      f"{total['hedge_action']} {total['hedge_shares']:,} {bench} at ~{total['bench_price']:,.2f}.")
+                      f"beta-weighted{' (1-year betas)' if total['hedge_in_plan'] else ''} {total['beta_usd']:+,.0f} USD of {bench}, {total['risk_pct']:.2%} of capital "
+                      f"if every stop hits. "
+                      + ("The plan's orders already hedge them together: " if total["hedge_in_plan"]
+                         else "One hedge for all of them instead of one per name: ")
+                      + f"{total['hedge_action']} {total['hedge_shares']:,} {bench} at ~{total['bench_price']:,.2f}.")
         console.print()
 
 
