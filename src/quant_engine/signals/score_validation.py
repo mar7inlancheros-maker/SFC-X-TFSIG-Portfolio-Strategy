@@ -43,6 +43,14 @@ from sfc_tfsig.validation import ic_summary, information_coefficient
 from . import composite
 
 
+# El Quant Score solo con precios (como corre sin WRDS), medido a escala con
+# `tools/qe_rule_studies.py quant-score`: 600 nombres mas liquidos por fecha,
+# 36 cierres de mes jul-2023 a jun-2026. Sin evidencia de que prediga. Si cambian
+# los pesos o las caracteristicas, se vuelve a correr y se actualiza.
+PRICE_ONLY_AT_SCALE = ("on 600 liquid US names over 36 months the price-only score had a monthly IC of +0.025 "
+                       "(t 0.8): without WRDS it ranks but has not shown that it predicts")
+
+
 def month_end_dates(calendar: pd.DatetimeIndex, first: pd.Timestamp, last: pd.Timestamp,
                     max_dates: int) -> list[pd.Timestamp]:
     """Ultima sesion de cada mes entre `first` y `last`, las `max_dates` mas recientes.

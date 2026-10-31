@@ -388,6 +388,18 @@ su Q5 no encuentra buenos cortos. Antes ese respaldo subía a HIGH el corto de
 ARES contra research y lo llevaba a tamaño completo. Cada ficha cita la cifra
 de su caso.
 
+**El Quant Score solo con precios no predice, tampoco a escala.** La
+validación de cada corrida usa ~54 nombres y salía sin evidencia; podía ser
+falta de muestra. `python tools/qe_rule_studies.py quant-score` lo mide con las
+mismas funciones (`analysis.features_at`, `score_validation.validate`) en los
+600 nombres más líquidos de cada mes, 36 meses (jul-2023 a jun-2026): IC
+mensual +0,025 (t 0,8) a 21 sesiones y +0,050 (t 1,5) a 63; ningún componente
+pasa a 21. El criterio, fijado antes de mirar, era t ≥ 2. Sin WRDS, los
+veredictos contra research descansan en un score sin ventaja demostrada, y el
+aviso de "plan solo con precios" lo cita. Con WRDS (valor, calidad, analistas,
+interés en corto: el 50% del peso) está por medir. No se reajustan los pesos
+con este resultado: sería elegirlos con la muestra que los evalúa.
+
 Pendiente de decidir con el club: los cortos contra Q1 perdieron −0,27R de
 media (t −3,6). Es la evidencia más fuerte del plan contra una operación,
 pero convertirla en NO TRADE cambiaría un veredicto de research con el

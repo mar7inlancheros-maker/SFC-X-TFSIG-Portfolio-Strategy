@@ -21,6 +21,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from ..analysis import AnalysisResult
+from ..signals import score_validation
 
 Fmt = Callable[[object], str]
 LINE = "=" * 60
@@ -507,7 +508,8 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
     if missing:
         console.print(f"[bold red]WARNING: WRDS unavailable. Value, quality, analyst and short-interest "
                       f"({missing['weight']:.0%} of the Quant Score) are missing; verdicts below use price data "
-                      f"only and can differ from a run with WRDS.[/]")
+                      f"only and can differ from a run with WRDS; "
+                      f"{escape(score_validation.PRICE_ONLY_AT_SCALE)}.[/]")
         console.print(f"  Reason: {escape(missing['reason'])}")
         console.print()
     plan = tp["plan"]

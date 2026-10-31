@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from ..analysis import AnalysisResult  # noqa: E402
+from ..signals import score_validation  # noqa: E402
 
 LONG_COLOR, SHORT_COLOR, TP_COLOR, INK = "#2f6db5", "#c0392b", "#1e8449", "#1b1b1b"
 
@@ -475,7 +476,8 @@ def build(r: AnalysisResult) -> str:
         out.append(
             f"<p class='note alert'><b>Price-only plan: WRDS was unavailable.</b> Value, quality, analyst and "
             f"short-interest components ({missing['weight']:.0%} of the Quant Score) are missing, so the "
-            f"verdicts can differ from a run with WRDS. Reason: {escape(str(missing['reason']))}</p>")
+            f"verdicts can differ from a run with WRDS; {escape(score_validation.PRICE_ONLY_AT_SCALE)}. "
+            f"Reason: {escape(str(missing['reason']))}</p>")
 
     kpis = [
         (str(len(to_send)), "orders to send"),

@@ -423,6 +423,11 @@ Trampas:
   mismas funciones de hoy con `as_of = d`. El interés en corto histórico lleva
   `SHORT_INTEREST_LAG_DAYS` (14): la fecha de liquidación no es la de
   publicación. Hoy va sin retraso, porque lo que está en WRDS ya se publicó.
+- **El Quant Score solo con precios no predice a escala**
+  (`tools/qe_rule_studies.py quant-score`: 600 nombres líquidos, 36 meses,
+  IC +0,025, t 0,8). La cifra vive en `score_validation.PRICE_ONLY_AT_SCALE`
+  y el aviso de plan sin WRDS la cita; si cambian pesos o características, se
+  vuelve a correr. Falta medirlo con WRDS.
 - **No reajustar `signal_weights` con el IC de la validación.** Son 36 meses
   de un universo: elegir pesos con la muestra que los evalúa es sobreajuste, y
   la siguiente validación saldría buena por construcción.

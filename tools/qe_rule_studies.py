@@ -5,6 +5,7 @@
     python tools/qe_rule_studies.py persistence    # el E(R) de la regla por nombre, persiste?
     python tools/qe_rule_studies.py persistence --end 2026-10-30 --years 6
     python tools/qe_rule_studies.py multifactor    # la regla gana cuando sigue al multifactor?
+    python tools/qe_rule_studies.py quant-score    # el Quant Score (solo precios) predice a escala?
 
 Corren sobre `scoring.reference_peers` del YAML (50 large caps) con la regla
 de `trade_plan.simulate_trades`. Descargan precios de Yahoo (con cache). Cada
@@ -166,18 +167,77 @@ def multifactor(end: pd.Timestamp, months: int, top: int, p) -> None:
         print(f"{'':7} " + " | ".join(diffs))
 
 
+def quant_score(end: pd.Timestamp, months: int, top: int, p) -> None:
+    """El Quant Score del motor, solo con precios (como corre sin WRDS), en los
+    `top` nombres mas liquidos de cada cierre de mes del panel del multifactor.
+
+    Las mismas funciones que la validacion del analisis (`analysis.features_at`,
+    `score_validation.validate`), con ~600 nombres por fecha en vez de 54. Los
+    nombres de cada fecha son los liquidos ESE mes (sin sesgo de supervivencia).
+    Criterio fijado antes de mirar: predice si la t del IC a 21 sesiones es >= 2,
+    el mismo umbral que exige el plan para un FLIP (`flip_min_ic_t`).
+    """
+    from quant_engine import analysis  # noqa: PLC0415
+    from quant_engine.data import cleaning  # noqa: PLC0415
+    from quant_engine.settings import build_settings  # noqa: PLC0415
+    from quant_engine.signals import score_validation as sv  # noqa: PLC0415
+    from sfc_tfsig import cli as mf_cli  # noqa: PLC0415
+    from sfc_tfsig.config import load_config  # noqa: PLC0415
+    from sfc_tfsig.data import cache  # noqa: PLC0415
+
+    panel = cache.read_frame(mf_cli._panel_cache_name(load_config(None)))  # noqa: SLF001
+    last_entry = end - pd.offsets.BDay(p.horizon_d + 5)
+    dates = sorted(d for d in panel["date"].unique() if d <= last_entry)[-months:]
+    picks = (panel[panel["date"].isin(dates)].sort_values("dollar_volume", ascending=False)
+             .groupby("date").head(top))
+    by_month = {pd.Timestamp(d).to_period("M"): sorted(g["ticker"]) for d, g in picks.groupby("date")}
+    names = sorted(picks["ticker"].unique())
+    settings = build_settings(names[0], "")
+    start = pd.Timestamp(dates[0]) - pd.DateOffset(years=settings.lookback_years + 1, days=10)
+    print(f"{len(dates)} month-ends, {len(names)} names; downloading OHLC from {start:%Y-%m}...", flush=True)
+    market = loader.load_ohlcv([*names, settings.benchmark], start, end)
+    clean = cleaning.align(market, settings.benchmark)
+    names = [t for t in names if t in clean.close]
+    weights = settings.get("signal_weights", {}) or {}
+    memo: dict[pd.Timestamp, pd.DataFrame] = {}
+
+    def feats(d: pd.Timestamp) -> pd.DataFrame:
+        if d not in memo:
+            alive = [t for t in by_month.get(d.to_period("M"), []) if t in clean.close]
+            memo[d] = analysis.features_at(settings, clean, alive, d, None, {})
+            print(f"  {d:%Y-%m-%d}: {len(memo[d])} names", flush=True)
+        return memo[d]
+
+    for h in (21, p.horizon_d):
+        last = clean.calendar[-1 - h]
+        month_ends = [d for d in sv.month_end_dates(clean.calendar, pd.Timestamp(dates[0]), last, 10_000)
+                      if d.to_period("M") in by_month]
+        res = sv.validate(feats, sv.forward_returns(clean.close[names], month_ends, h), weights, horizon=h)
+        if not res.get("available"):
+            print(f"h {h}: {res.get('reason')}")
+            continue
+        print(f"h {h:2}: {res['months']} months, {res['avg_names']:.0f} names/date | IC {res['ic_mean']:+.4f} "
+              f"t {res['ic_t']:+.2f} hit {res['ic_hit']:.0%} | top-bottom tercile {res['spread_mean']:+.2%} "
+              f"t {res['spread_t']:+.2f}")
+        comp = res["components"]
+        if len(comp):
+            for name, r in comp.sort_values("ic_t").iterrows():
+                print(f"      {name:22} weight {r['weight']:.2f}  IC {r['ic_mean']:+.4f}  t {r['ic_t']:+.2f}")
+
+
 def main(argv: list[str] | None = None) -> int:
     enable_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor"])
+    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score"])
     ap.add_argument("--end", default=None, help="ultima fecha (AAAA-MM-DD); por defecto, hoy")
     ap.add_argument("--years", type=int, default=6)
     ap.add_argument("--months", type=int, default=36, help="multifactor: cierres de mes evaluados")
     ap.add_argument("--top", type=int, default=600, help="multifactor: nombres mas liquidos por fecha")
     args = ap.parse_args(argv)
     end = pd.Timestamp(args.end) if args.end else pd.Timestamp.today().normalize()
-    if args.study == "multifactor":
-        multifactor(end, args.months, args.top, tp.PlanParams())
+    if args.study in ("multifactor", "quant-score"):
+        {"multifactor": multifactor, "quant-score": quant_score}[args.study](end, args.months, args.top,
+                                                                             tp.PlanParams())
         return 0
     peers = [str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]]
     market = loader.load_ohlcv(peers, end - pd.DateOffset(years=args.years), end).ohlcv
