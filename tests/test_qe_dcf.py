@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import faulthandler
+import gc
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -287,3 +291,54 @@ def test_ventas_sobre_capital_de_la_propia_empresa_si_es_mayor_que_el_suelo():
     s2c = built["cases"]["base"].sales_to_capital
     assert s2c == pytest.approx(np.median([900 / 160, 1000 / 160, 1100 / 160]))
     assert asm.build(_hist(), {"rf": 0.04, "wacc": 0.09}, "USD")["cases"]["base"].sales_to_capital == 5.0
+
+
+def _excel():
+    """Excel por COM si esta instalado; si no, el test se salta."""
+    client = pytest.importorskip("win32com.client")
+    try:
+        app = client.DispatchEx("Excel.Application")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Excel no disponible por COM: {exc}")
+    app.Visible = False
+    app.DisplayAlerts = False
+    return app
+
+
+def test_el_excel_recalculado_da_lo_mismo_que_el_motor(tmp_path):
+    # La hoja DCF repite con formulas lo que hace dcf.value_vector. Si una de
+    # las dos cambia sin la otra, el analista ve en el Excel un valor distinto
+    # del que puso el motor en el plan.
+    from quant_engine.valuation import excel
+
+    v = value_company("X", _hist(), "USD", 30.0, 1.1, 0.04, shares_out=49.0)
+    path = excel.write(v, tmp_path / "x_dcf.xlsx")
+    app = _excel()
+    got = {}
+    try:
+        wb = app.Workbooks.Open(str(path.resolve()))
+        try:
+            for choice, case in enumerate(("bear", "base", "bull"), start=1):
+                wb.Worksheets("Inputs").Range("B28").Value = choice
+                app.CalculateFull()
+                got[case] = (wb.Worksheets("DCF").Range("B30").Value, wb.Worksheets("DCF").Range("B37").Value)
+        finally:
+            wb.Close(SaveChanges=False)
+            # Un proxy COM que se libera con Excel ya cerrado da RPC_E_DISCONNECTED.
+            del wb
+    finally:
+        # Al cerrar, Excel corta el canal RPC y Windows lanza 0x80010108, que
+        # pywin32 maneja; faulthandler lo imprime igual como "fatal". Es ruido.
+        was_on = faulthandler.is_enabled()
+        faulthandler.disable()
+        try:
+            app.Quit()
+            del app
+            gc.collect()
+        finally:
+            if was_on:
+                faulthandler.enable(file=sys.__stderr__)
+    for case, (ev, per_share) in got.items():
+        res = v["scenarios"]["cases"][case]
+        assert ev == pytest.approx(res["ev"], rel=1e-9), case
+        assert per_share == pytest.approx(res["per_share"], rel=1e-9), case

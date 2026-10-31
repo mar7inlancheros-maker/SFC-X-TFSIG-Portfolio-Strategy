@@ -504,7 +504,10 @@ data (SEC XBRL | Compustat) ──> assumptions ──> dcf (puro, vectorizado) 
 - **`dcf.value_vector` es la única fórmula.** Escenarios, rejillas, Monte Carlo
   y DCF inverso la llaman con vectores. Si se cambia una línea del FCFF, se
   cambia ahí y en `excel.py` (las fórmulas de la hoja DCF), y se vuelve a
-  comprobar que el Excel recalculado da lo mismo. Hoy coincide hasta 1e-13.
+  comprobar que el Excel recalculado da lo mismo. Hoy coincide hasta 1e-13:
+  `test_el_excel_recalculado_da_lo_mismo_que_el_motor` abre Excel por COM,
+  recalcula los tres escenarios y compara EV y valor por acción. Sin Excel
+  se salta: correrlo en esta máquina tras tocar `excel.py` o `dcf.py`.
 - **Ventas = máximo entre etiquetas por ejercicio** (`data.annual_from_sec`),
   no la primera por prioridad: un desglose ASC 606 ganaba al total (Gold.com).
   El modelo multifactor usa la misma regla desde `OBSERVATIONS_VERSION` v3.
