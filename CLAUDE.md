@@ -335,6 +335,13 @@ analysis.py orquesta todo ──> reporting/{terminal, charts, export}      robu
 
 Trampas:
 
+- **`tests/test_qe_end_to_end.py` corre el motor entero con datos
+  sintéticos**: análisis, plan, fichas, terminal (ASCII) y ficheros, como
+  `python modelo.py`. Sustituye Yahoo, tipos de cambio, sectores, WRDS, fechas
+  de resultados, DCF y panel del multifactor con `monkeypatch`. Si el motor
+  empieza a leer algo nuevo de la red o del disco, se sustituye ahí o el test
+  tocará la máquina real. Existe porque un `NameError` en el HTML del plan
+  pasó 808 tests: ninguno construía el HTML.
 - **Nada de `import statsmodels.api`.** Lo bloquea el Control de aplicaciones de
   Windows en esta máquina. Usar `from .. import _sm as sm`.
 - **`rich` interpreta `[texto]` como estilo.** Todo texto calculado que se
