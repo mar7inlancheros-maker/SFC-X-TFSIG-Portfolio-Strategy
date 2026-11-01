@@ -462,11 +462,23 @@ Trampas:
   pide lo que falte en lotes de 25. Si sigue faltando y la caché cubre el
   inicio, se usa y `MarketData.stale` lo registra para el aviso. Sin esto, un
   corte de Yahoo borraba 16 de 50 pares y la validación corría con 38 nombres.
+- **Los cortos tienen su propia regla de niveles: stop 2 ATR, objetivos 1R y
+  2R** (`short_stop_atr`, `short_take_profit_r` en el YAML; `trade_plan.for_side`).
+  Elegida en la primera mitad de 6 años de los 50 pares entre 9 combinaciones
+  y medida en la segunda: +0,082R frente a 2,5 ATR y 1,5R / 3R, t 7,8 (los
+  nombres comparten mercado: la t real es menor), mejor en el 84%
+  (`tools/qe_rule_studies.py short-rule`). `levels`, `hit_rate` y
+  `simulate_trades` aplican `for_side` dentro; `holding_window` no sabe el
+  lado y recibe los parámetros ya aplicados. Una función nueva que use
+  `p.stop_atr` o `p.tp_r` directamente tiene que pasar por `for_side`, o
+  medirá a los cortos con la regla de los largos. Los estudios de
+  `tools/qe_rule_studies.py` se volvieron a correr con esta regla y las cifras
+  citadas son las suyas.
 - **El stop por tiempo es regla en los cortos y solo en ellos**
   (`trade_plan.rule_time_stop`, `trade_plan.short_time_stop` en el YAML). Se
   decidió fuera de muestra en los 50 pares (día de revisión de la primera
-  mitad de cada historia, medido en la segunda): cortos 80% de nombres mejor,
-  +0,05R, t 3,7; largos 40%, −0,03R, t −1,8. En un corto el backtest de la
+  mitad de cada historia, medido en la segunda): cortos 68% de nombres mejor,
+  +0,04R, t 4,3 (con su regla propia); largos 40%, −0,03R, t −1,8. En un corto el backtest de la
   regla, la ventana de tenencia y `plan_backtest` se calculan CON el stop; la
   E(R) sin él queda en `bt_exp_r_no_time_stop` para comparar. A un largo no se
   le aconseja cortar aunque dentro de muestra parezca ayudar. No extenderlo a
@@ -488,7 +500,7 @@ Trampas:
   como evidencia. Solo mueve la convicción (±1 escalón) y los FLIP sin
   evidencia; los veredictos no. Y solo sube a los LARGOS
   (`multifactor.conviction_step`): medido con la regla del plan, un corto en
-  Q5 no ganó a los neutrales (+0,05R, t 0,8). Las cifras de cada caso viven en
+  Q5 no ganó a los neutrales (+0,02R, t 0,3). Las cifras de cada caso viven en
   `multifactor.RULE_EVIDENCE` y las fichas las citan; si cambia la regla, se
   vuelve a correr `tools/qe_rule_studies.py multifactor` y se actualizan.
 - **El score fuera del universo (`multifactor.outside_universe`) usa las
@@ -515,7 +527,7 @@ Trampas:
 - **La convicción no usa el backtest de la regla en el nombre.** Se probó en
   los 50 pares (`python tools/qe_rule_studies.py persistence`: E(R) de la
   primera mitad de las entradas contra la segunda, por lado): sin persistencia
-  dentro del lado (rangos −0,05 cortos, −0,07 largos). Con el lado mezclado sale una
+  dentro del lado (rangos +0,10 cortos, t 0,7; −0,07 largos). Con el lado mezclado sale una
   persistencia falsa (Spearman +0,35, t 3,7) que es solo la deriva del
   mercado contra los cortos. No volver a meter la t del nombre en la
   convicción ni bloquear por ella sin una prueba nueva que la sostenga.

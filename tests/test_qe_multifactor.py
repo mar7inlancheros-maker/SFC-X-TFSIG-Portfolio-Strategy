@@ -183,4 +183,4 @@ def test_la_ficha_cita_lo_que_hizo_la_regla_contra_el_q1():
          "evidence": {"ic": 0.027, "ic_t": 3.5, "months": 177, "validated": True},
          "rows": {"GOLD": {"percentile": 1.0}}}
     line = pb.multifactor_line("GOLD", pd.Series({"signal": "SHORT"}), m)
-    assert "contradicts the trade, on the plan's rule, shorts against its Q1 lost -0.27R" in line
+    assert "contradicts the trade, on the plan's rule, shorts against its Q1 lost -0.16R" in line

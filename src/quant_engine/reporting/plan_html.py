@@ -191,6 +191,14 @@ def _equity_chart(r: AnalysisResult) -> str | None:
 _SIGNAL_BADGE = {"LONG": "BUY", "SHORT": "SELL SHORT", "NO TRADE": "NO TRADE", "NOT ANALYZED": "NOT ANALYZED"}
 
 
+def _breakeven(p, row, k: int) -> float:
+    """Tasa de acierto que deja en cero un objetivo, con la regla del lado de la fila."""
+    from ..trade_plan import for_side  # noqa: PLC0415
+
+    side = 1 if row["stop"] < row["entry"] else -1   # los niveles ya dicen de que lado son
+    return 1 / (1 + for_side(p, side).tp_r[k])
+
+
 def _date(v) -> str:
     return "" if v is None or pd.isna(v) else f"{pd.Timestamp(v):%Y-%m-%d}"
 
@@ -368,7 +376,9 @@ def _expectations(r: AnalysisResult, tp: dict, plan: pd.DataFrame, p, h2) -> lis
                    "<th>Win rate</th><th>E[R]</th><th>t</th><th>Avg win</th><th>Avg loss</th><th>Profit factor</th>"
                    "<th>Avg days</th><th>E[return]</th><th>E[P&amp;L] today</th></tr>" + "".join(rows)
                    + "</table></div>")
-        out.append(f"<p class='muted'>The plan's levels (stop {p.stop_atr} ATR, TP1 {p.tp_r[0]}R, TP2 {p.tp_r[1]}R, "
+        from ..trade_plan import rule_text  # noqa: PLC0415
+
+        out.append(f"<p class='muted'>The plan's levels ({escape(rule_text(p))}; "
                    f"half out at TP1 and stop to entry) opened on every day of the last {p.history_d // 252} years, "
                    f"closed after {p.horizon_d} sessions at most, net of transaction costs and, for shorts, borrow. "
                    "E[R] is the average result in multiples of the risk at the stop; t is E[R] over its "
@@ -382,8 +392,8 @@ def _expectations(r: AnalysisResult, tp: dict, plan: pd.DataFrame, p, h2) -> lis
             out.append("<p class='note warn'><b>Negative historical expectancy on traded names:</b> "
                        + escape(", ".join(f"{t} ({v:+.2f}R)" for t, v in negative["bt_exp_r"].items()))
                        + ". This rule lost money on these stocks in the past. On 50 large caps a name's past "
-                       "E(R) did not predict its next one within the same side (rank correlation -0.05 for "
-                       "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.20R out of "
+                       "E(R) did not predict its next one within the same side (rank correlation +0.10 for "
+                       "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.15R out of "
                        "sample, the market's upward drift. A short needs its edge from the signal, not from "
                        "this history.</p>")
     pb = tp.get("plan_backtest")
@@ -551,7 +561,8 @@ def build(r: AnalysisResult) -> str:
                "the components with the largest weighted contribution for and against the research direction.</p>")
 
     # 3. Niveles y probabilidades
-    be1, be2 = 1 / (1 + p.tp_r[0]), 1 / (1 + p.tp_r[1])
+    from ..trade_plan import for_side, rule_text  # noqa: PLC0415
+
     out.append(h2("Levels, size and historical odds"))
     rows = []
     for t, row in plan.iterrows():
@@ -560,7 +571,8 @@ def build(r: AnalysisResult) -> str:
             f"<td>{_price(row['entry'])}</td><td>{_price(row['stop'])}</td><td>{_pct(row['stop_pct'])}</td>"
             f"<td>{_price(row['tp1'])}</td><td>{_price(row['tp2'])}</td><td>{int(row['shares']):,}</td>"
             f"<td>{_money(row['notional'])}</td><td>{row['weight'] * 100:+.1f}%</td>"
-            f"<td>{_odds(row['p_tp1_before_stop'], be1)}</td><td>{_odds(row['p_tp2_before_stop'], be2)}</td>"
+            f"<td>{_odds(row['p_tp1_before_stop'], _breakeven(p, row, 0))}</td>"
+            f"<td>{_odds(row['p_tp2_before_stop'], _breakeven(p, row, 1))}</td>"
             f"<td>{_hold(row)}</td></tr>")
     out.append("<div class='wrap'><table><tr><th class='l'>Ticker</th><th class='l'>Plan</th><th>Entry</th>"
                "<th>Stop</th><th>Stop %</th><th>TP1</th><th>TP2</th><th>Shares</th><th>Notional</th>"
@@ -568,13 +580,15 @@ def build(r: AnalysisResult) -> str:
                + "</table></div>")
     capped = list(plan.index[plan["size_capped_by_risk"]])
     out.append(
-        f"<p class='muted'>Stop = {p.stop_atr} &times; ATR(14) from entry. R = entry-to-stop distance; TP1 = "
-        f"{p.tp_r[0]}R, TP2 = {p.tp_r[1]}R. Size = portfolio weight with the corrected directions, capped so a "
+        f"<p class='muted'>Levels from the last close: {escape(rule_text(p))}. R = entry-to-stop distance. "
+        f"Size = portfolio weight with the corrected directions, capped so a "
         f"stop costs at most {p.max_risk_per_trade:.0%} of capital"
         + (f" (cap binds on {escape(', '.join(capped))})" if capped else "") + ". "
         f"P(TP) = share of past entries in this stock over the last {p.history_d // 252} years that reached the "
         f"target before the stop within {p.horizon_d} sessions. Green if above break-even for that target "
-        f"({be1:.0%} for TP1, {be2:.0%} for TP2), red if below. A historical base rate, not a forecast."
+        f"(longs {1 / (1 + p.tp_r[0]):.0%} for TP1 and {1 / (1 + p.tp_r[1]):.0%} for TP2; shorts "
+        f"{1 / (1 + for_side(p, -1).tp_r[0]):.0%} and {1 / (1 + for_side(p, -1).tp_r[1]):.0%}), red if below. "
+        "A historical base rate, not a forecast."
         + (" Prices are in each stock's trading currency (shown next to the ticker); notional, weight and "
            "risk are in USD." if "currency" in plan and plan["currency"].ne("USD").any() else "") + "</p>")
 

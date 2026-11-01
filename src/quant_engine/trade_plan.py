@@ -63,6 +63,7 @@ y no sabe nada de lo que viene.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 
@@ -96,6 +97,33 @@ class PlanParams:
     unproven_flip: str = "reduce"
     short_time_stop: bool = True
     max_position: float = 0.35
+    # Regla propia de los cortos: stop mas corto y objetivos mas cerca. Elegida
+    # en la primera mitad de 6 anos de los 50 pares y medida en la segunda:
+    # +0,082R frente a 2,5 ATR y 1,5R / 3R, t 7,8, mejor en el 84% de los
+    # nombres (`tools/qe_rule_studies.py short-rule`). En corto el tiempo juega
+    # en contra (la deriva del mercado): cobrar antes rinde mas.
+    short_stop_atr: float | None = 2.0
+    short_tp_r: tuple[float, float] | None = (1.0, 2.0)
+
+
+def rule_text(p: PlanParams) -> str:
+    """La regla de cada lado en una frase, para los reportes."""
+    q = for_side(p, -1)
+    return (f"longs: stop {p.stop_atr:g} x ATR(14), TP1 {p.tp_r[0]:g}R, TP2 {p.tp_r[1]:g}R; "
+            f"shorts: stop {q.stop_atr:g} x ATR(14), TP1 {q.tp_r[0]:g}R, TP2 {q.tp_r[1]:g}R"
+            + (", plus the time stop" if p.short_time_stop else ""))
+
+
+def for_side(p: PlanParams, side: int) -> PlanParams:
+    """Parametros de la regla del lado: los cortos llevan su stop y objetivos.
+
+    Idempotente: aplicarlo dos veces da lo mismo. `levels`, `hit_rate` y
+    `simulate_trades` lo aplican dentro, asi ningun camino usa la regla del
+    otro lado; `holding_window` no sabe el lado y lo recibe ya aplicado.
+    """
+    if side < 0 and p.short_stop_atr is not None and p.short_tp_r is not None:
+        return dataclasses.replace(p, stop_atr=float(p.short_stop_atr), tp_r=tuple(p.short_tp_r))
+    return p
 
 
 def verdict(aligned: float, p: PlanParams) -> str:
@@ -128,6 +156,7 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Se
 
 def levels(entry: float, atr_value: float, side: int, p: PlanParams) -> dict[str, float]:
     """Stop y take profits. side = +1 largo, -1 corto."""
+    p = for_side(p, side)
     r = p.stop_atr * atr_value
     return {
         "entry": entry,
@@ -147,6 +176,7 @@ def hit_rate(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.S
     como stop (supuesto conservador: no se sabe el orden dentro del dia).
     Las entradas que no tocan ninguno en el horizonte no cuentan como acierto.
     """
+    p = for_side(p, side)
     c, h, l, a = (s.to_numpy(float) for s in (close, high, low, atr_series))
     n = len(c)
     start = max(0, n - p.history_d - p.horizon_d)
@@ -259,8 +289,8 @@ def conviction(verdict_: str, aligned: float, evidence: str, unproven: bool, mf_
 
     El backtest de la regla en el nombre NO entra: en los 50 pares, el E(R) de
     la primera mitad de las entradas no predijo el de la segunda dentro del
-    mismo lado (rangos: cortos -0,05, largos -0,07). Lo que si persiste es el
-    lado: los cortos perdieron de media -0,20R fuera de muestra, la deriva del
+    mismo lado (rangos: cortos +0,10, t 0,7; largos -0,07). Lo que si persiste
+    es el lado: los cortos perdieron de media -0,15R fuera de muestra, la deriva del
     mercado. Antes un t <= -2 bajaba un escalon, y eso castigaba al 40% de los
     cortos por la deriva, no por el nombre.
     """
@@ -450,6 +480,7 @@ def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_serie
     se cobra al peor precio del dia en vez de al stop. Costes: `cost` por lado
     sobre el nocional (ida y vuelta) y, en cortos, `borrow` anual por dia.
     """
+    p = for_side(p, side)
     c, h, l, a = (x.to_numpy(float) for x in (close, high, low, atr_series))
     n, horizon = len(c), p.horizon_d
     m1, m2 = p.tp_r
@@ -532,8 +563,9 @@ def rule_time_stop(side: int, window: dict, p: PlanParams) -> int | None:
     """Dia del stop por tiempo si la regla lo aplica: solo en cortos.
 
     Fuera de muestra en los 50 pares (dia de revision de la primera mitad de
-    cada historia, medido en la segunda): en cortos mejoro la E(R) en el 80% de
-    los nombres, +0,05R de media con t 3,7; en largos la empeoro (40%, -0,03R,
+    cada historia, medido en la segunda): en cortos mejoro la E(R) en el 68% de
+    los nombres, +0,04R de media con t 4,3 (con su regla propia; con la de los
+    largos era 80%, +0,05R, t 3,7); en largos la empeoro (40%, -0,03R,
     t -1,8). Un corto que no avanza pelea contra la deriva al alza y paga
     prestamo; a un largo cortarlo le quita el recorrido de los que suben.
     """
@@ -747,7 +779,8 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
         low = low_l.reindex(close.index).fillna(close)
         a = atr(high, low, close)
         side = int(signs[t]) if signs[t] != 0 else research[t]
-        lv = levels(float(close.iloc[-1]), float(a.iloc[-1]), side, p)
+        q = for_side(p, side)
+        lv = levels(float(close.iloc[-1]), float(a.iloc[-1]), side, q)
         fx = result.clean.fx_rate(t).reindex(close.index).ffill()
         fx_now = float(fx.iloc[-1]) if len(fx) and pd.notna(fx.iloc[-1]) else 1.0
 
@@ -779,38 +812,38 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
             "against_research": bool(signs[t] != 0 and np.sign(signs[t]) != research[t]),
             "unproven_flip": is_unproven,
             "solo_shares": solo["shares"], "solo_notional": solo["notional"], "solo_risk_pct": solo["risk_pct"],
-            "p_tp1_before_stop": hit_rate(close, high, low, a, side, p, p.tp_r[0]),
-            "p_tp2_before_stop": hit_rate(close, high, low, a, side, p, p.tp_r[1]),
+            "p_tp1_before_stop": hit_rate(close, high, low, a, side, q, q.tp_r[0]),
+            "p_tp2_before_stop": hit_rate(close, high, low, a, side, q, q.tp_r[1]),
         })
-        sims[t] = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost,
+        sims[t] = simulate_trades(close, high, low, a, side, q, cost=s.transaction_cost,
                                   borrow=s.borrow_cost)
         st = trade_stats(sims[t])
-        hw = holding_window(sims[t], p)
+        hw = holding_window(sims[t], q)
         if hw.get("cut_at_review"):
             # Lo que habria dado la regla cerrando en la revision (dentro de
             # muestra: el dia de revision sale de estas mismas operaciones).
-            ts = trade_stats(simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost,
+            ts = trade_stats(simulate_trades(close, high, low, a, side, q, cost=s.transaction_cost,
                                              borrow=s.borrow_cost, time_stop=int(hw["review_day"])))
             hw["exp_r_time_stop"] = ts.get("exp_r")
         # Prueba fuera de muestra: dia de revision de la primera mitad, medido en la segunda.
         half = sims[t].iloc[: len(sims[t]) // 2]
-        hw_first = holding_window(half, p)
+        hw_first = holding_window(half, q)
         oos = None
         if hw_first.get("review_day"):
-            timed = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost, borrow=s.borrow_cost,
+            timed = simulate_trades(close, high, low, a, side, q, cost=s.transaction_cost, borrow=s.borrow_cost,
                                     time_stop=int(hw_first["review_day"]))
-            oos = time_stop_out_of_sample(sims[t], timed, p)
+            oos = time_stop_out_of_sample(sims[t], timed, q)
         # La regla de los cortos incluye el stop por tiempo: el backtest de la
         # regla, la ventana y el backtest del plan miden ESA regla, no la de
         # sin stop (que queda para comparar).
         plain_exp_r = st.get("exp_r")
-        stop_day = rule_time_stop(side, hw, p)
+        stop_day = rule_time_stop(side, hw, q)
         hold = hw
         if stop_day:
-            sims[t] = simulate_trades(close, high, low, a, side, p, cost=s.transaction_cost, borrow=s.borrow_cost,
+            sims[t] = simulate_trades(close, high, low, a, side, q, cost=s.transaction_cost, borrow=s.borrow_cost,
                                       time_stop=stop_day)
             st = trade_stats(sims[t])
-            hold = holding_window(sims[t], p)
+            hold = holding_window(sims[t], q)
         rows[-1].update({
             "time_stop_day": stop_day, "bt_exp_r_no_time_stop": plain_exp_r,
             "bt_trades": st.get("n", 0), "bt_win_rate": st.get("win_rate"), "bt_exp_r": st.get("exp_r"),
@@ -943,6 +976,8 @@ def params_from_settings(settings) -> PlanParams:
     return PlanParams(
         stop_atr=float(tp.get("stop_atr", 2.5)),
         tp_r=tuple(float(x) for x in tp.get("take_profit_r", [1.5, 3.0]))[:2],
+        short_stop_atr=float(tp.get("short_stop_atr", 2.0)),
+        short_tp_r=tuple(float(x) for x in tp.get("short_take_profit_r", [1.0, 2.0]))[:2],
         max_risk_per_trade=float(tp.get("max_risk_per_trade", 0.01)),
         reduce_size=float(tp.get("reduce_size", 0.5)),
         weak=float(ag.get("weak", 0.15)),

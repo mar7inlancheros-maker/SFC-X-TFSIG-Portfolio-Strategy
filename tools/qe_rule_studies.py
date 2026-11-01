@@ -6,6 +6,7 @@
     python tools/qe_rule_studies.py persistence --end 2026-10-30 --years 6
     python tools/qe_rule_studies.py multifactor    # la regla gana cuando sigue al multifactor?
     python tools/qe_rule_studies.py quant-score    # el Quant Score (solo precios) predice a escala?
+    python tools/qe_rule_studies.py short-rule     # otro stop / objetivos mejoraria los cortos?
 
 Corren sobre `scoring.reference_peers` del YAML (50 large caps) con la regla
 de `trade_plan.simulate_trades`. Descargan precios de Yahoo (con cache). Cada
@@ -13,11 +14,12 @@ estudio separa las entradas por fecha en dos mitades: lo que se elige con la
 primera se mide en la segunda. Si una regla del plan cambia (stop, objetivos,
 salida parcial), volver a correrlos antes de fiarse de las cifras de CLAUDE.md.
 
-Resultados del 30-oct-2026, 6 anos:
-- time-stop: cortos 80% de nombres mejor, +0,05R, t 3,7; largos 40%, -0,03R,
+Resultados del 30-oct-2026, 6 anos, con la regla propia de los cortos (stop
+2 ATR, objetivos 1R y 2R):
+- time-stop: cortos 68% de nombres mejor, +0,04R, t 4,3; largos 40%, -0,03R,
   t -1,8. Por eso es regla solo en los cortos.
 - persistence: dentro del lado, correlacion de rangos E(R)_1 vs E(R)_2 de
-  -0,05 (cortos) y -0,07 (largos). Por eso la conviccion no usa el backtest
+  +0,10 (cortos, t 0,7) y -0,07 (largos). Por eso la conviccion no usa el backtest
   del nombre.
 """
 
@@ -60,10 +62,11 @@ def time_stop(market, p) -> None:
         c, h, lo, a = _series(f)
         for side in (1, -1):
             sims = _sim(c, h, lo, a, side, p)
-            hw = tp.holding_window(sims.iloc[: len(sims) // 2], p)
+            hw = tp.holding_window(sims.iloc[: len(sims) // 2], tp.for_side(p, side))
             if not hw.get("review_day"):
                 continue
-            o = tp.time_stop_out_of_sample(sims, _sim(c, h, lo, a, side, p, int(hw["review_day"])), p)
+            o = tp.time_stop_out_of_sample(sims, _sim(c, h, lo, a, side, p, int(hw["review_day"])),
+                                           tp.for_side(p, side))
             if o:
                 rows.append({"ticker": t, "side": side, **o})
     df = pd.DataFrame(rows)
@@ -89,7 +92,7 @@ def persistence(market, p) -> None:
             cut = sims.index[len(sims) // 2]
             if side < 0 and p.short_time_stop:
                 # La regla de los cortos, con el dia de revision de la primera mitad.
-                hw = tp.holding_window(sims.loc[sims.index < cut], p)
+                hw = tp.holding_window(sims.loc[sims.index < cut], tp.for_side(p, side))
                 if hw.get("review_day"):
                     sims = _sim(c, h, lo, a, side, p, int(hw["review_day"]))
             s1, s2 = tp.trade_stats(sims.loc[sims.index < cut]), tp.trade_stats(sims.loc[sims.index >= cut])
@@ -225,10 +228,62 @@ def quant_score(end: pd.Timestamp, months: int, top: int, p) -> None:
                 print(f"      {name:22} weight {r['weight']:.2f}  IC {r['ic_mean']:+.4f}  t {r['ic_t']:+.2f}")
 
 
+SHORT_GRID = [(s, tp) for s in (2.0, 2.5, 3.0) for tp in ((1.0, 2.0), (1.5, 3.0), (2.0, 4.0))]
+
+
+def short_rule(market, p) -> None:
+    """Rejilla de stop (ATR) y objetivos (R) para los cortos, con el stop por
+    tiempo de la regla, en toda la historia de cada nombre partida por fecha.
+
+    Criterio fijado antes de mirar: la combinacion con mejor E(R) media en la
+    PRIMERA mitad (una para todos: el plan usa una sola regla) sustituye a la
+    actual solo si en la SEGUNDA mitad mejora +0,05R o mas, con t >= 2 entre
+    nombres y en el 60% de ellos o mas. E(R) es comparable entre stops porque el
+    tamano se fija por riesgo: el stop cuesta lo mismo del capital.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    rule = tp.for_side(p, -1)
+    current = (rule.stop_atr, tuple(rule.tp_r))
+    rows = []
+    for t, f in market.items():
+        c, h, lo, _ = _series(f)
+        for stop_atr, tps in SHORT_GRID:
+            # Tambien los campos del corto: `for_side` los aplica dentro de la simulacion.
+            q = dataclasses.replace(p, stop_atr=stop_atr, tp_r=tps, short_stop_atr=stop_atr, short_tp_r=tps,
+                                    history_d=100_000)
+            a = tp.atr(h, lo, c)
+            sims = _sim(c, h, lo, a, -1, q)
+            if len(sims) < 400:
+                continue
+            cut = sims.index[len(sims) // 2]
+            hw = tp.holding_window(sims.loc[sims.index < cut], q)
+            if hw.get("review_day"):
+                sims = _sim(c, h, lo, a, -1, q, int(hw["review_day"]))
+            rows.append({"ticker": t, "combo": (stop_atr, tps),
+                         "er1": tp.trade_stats(sims.loc[sims.index < cut])["exp_r"],
+                         "er2": tp.trade_stats(sims.loc[sims.index >= cut])["exp_r"]})
+    df = pd.DataFrame(rows)
+    first = df.groupby("combo")["er1"].mean().sort_values(ascending=False)
+    second = df.groupby("combo")["er2"].mean()
+    print("combo (stop ATR, TP1 R, TP2 R)   first half   second half")
+    for combo, v in first.items():
+        mark = "  <- current" if combo == current else ""
+        print(f"  {combo[0]:.1f}  {combo[1][0]:.1f} / {combo[1][1]:.1f}            {v:+.3f}R      {second[combo]:+.3f}R{mark}")
+    best = first.index[0]
+    wide = df.pivot(index="ticker", columns="combo", values="er2")
+    diff = (wide[best] - wide[current]).dropna()
+    t = diff.mean() / newey_west_se(diff, 0) if len(diff) > 2 and diff.std() > 0 else float("nan")
+    print(f"picked on the first half: {best}; second half vs current: {diff.mean():+.3f}R, t {t:+.2f}, "
+          f"improved in {(diff > 0).mean():.0%} of {len(diff)} names")
+    adopt = best != current and diff.mean() >= 0.05 and t >= 2 and (diff > 0).mean() >= 0.6
+    print("verdict: " + ("ADOPT the new rule for shorts" if adopt else "KEEP the current rule"))
+
+
 def main(argv: list[str] | None = None) -> int:
     enable_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score"])
+    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score", "short-rule"])
     ap.add_argument("--end", default=None, help="ultima fecha (AAAA-MM-DD); por defecto, hoy")
     ap.add_argument("--years", type=int, default=6)
     ap.add_argument("--months", type=int, default=36, help="multifactor: cierres de mes evaluados")
@@ -242,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     peers = [str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]]
     market = loader.load_ohlcv(peers, end - pd.DateOffset(years=args.years), end).ohlcv
     p = tp.PlanParams()
-    {"time-stop": time_stop, "persistence": persistence}[args.study](market, p)
+    {"time-stop": time_stop, "persistence": persistence, "short-rule": short_rule}[args.study](market, p)
     return 0
 
 

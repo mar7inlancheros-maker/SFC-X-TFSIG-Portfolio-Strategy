@@ -155,6 +155,12 @@ output:
 trade_plan:
   stop_atr: 2.5              # stop a 2,5 x ATR(14) de la entrada
   take_profit_r: [1.5, 3.0]  # TP1 y TP2 en multiplos del riesgo R (50% en cada uno)
+  # Los cortos tienen su propia regla: stop mas corto y objetivos mas cerca.
+  # Elegida en la primera mitad de 6 anos de los 50 pares y medida en la
+  # segunda: +0,082R frente a la de los largos, t 7,8, 84% de los nombres
+  # (tools/qe_rule_studies.py short-rule). En corto el tiempo juega en contra.
+  short_stop_atr: 2.0
+  short_take_profit_r: [1.0, 2.0]
   max_risk_per_trade: 0.01   # perdida maxima por operacion si salta el stop: 1% del capital
   reduce_size: 0.5           # veredicto REDUCE (senal neutral): mitad de tamano
   flip_threshold: -0.5       # score alineado por debajo: el modelo sugiere el lado contrario
@@ -171,7 +177,7 @@ trade_plan:
   unproven_flip: reduce
   # Stop por tiempo en los cortos: sin TP1 en el dia de revision (percentil 75
   # del dia del TP1 en la historia del nombre), se cubre. Fuera de muestra en
-  # los 50 pares: cortos 80% mejor, +0,05R (t 3,7); largos 40%, -0,03R (t -1,8).
+  # los 50 pares: cortos 68% mejor, +0,04R (t 4,3); largos 40%, -0,03R (t -1,8).
   short_time_stop: true
 
 # Universo de referencia del Quant Score. Se usa cuando la canasta es solo LONG

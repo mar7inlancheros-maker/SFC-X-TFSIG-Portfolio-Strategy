@@ -557,7 +557,9 @@ def trade_plan(console: Console, r: AnalysisResult) -> None:
                                "P(TP1)": lambda v: pct(v, 0), "P(TP2)": lambda v: pct(v, 0)},
                         title="Size and historical base rate", index_name="Ticker"))
     capped = list(plan.index[plan["size_capped_by_risk"]])
-    console.print(f"Entry: last close. Stop: {p.stop_atr} x ATR(14). TP1 = {p.tp_r[0]}R, TP2 = {p.tp_r[1]}R "
+    from ..trade_plan import rule_text  # noqa: PLC0415
+
+    console.print(f"Entry: last close. {rule_text(p)[0].upper()}{rule_text(p)[1:]} "
                   f"(R = entry-to-stop distance); exit 50% at each, move stop to entry after TP1. "
                   f"Size: portfolio weight with the corrected directions ({r.primary['method']}), capped so a "
                   f"stop costs at most {p.max_risk_per_trade:.0%} of capital (risk_cap)"
@@ -619,8 +621,8 @@ def expectations(console: Console, r: AnalysisResult) -> None:
                           + ", ".join(f"{t} ({signed(v)}R" + (f", t {signed(t_of[t], 1)}" if t in t_of else "") + ")"
                                       for t, v in negative["bt_exp_r"].items())
                           + ". This rule lost money on these stocks in the past. On 50 large caps a name's past "
-                          "E(R) did not predict its next one within the same side (rank correlation -0.05 for "
-                          "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.20R out of "
+                          "E(R) did not predict its next one within the same side (rank correlation +0.10 for "
+                          "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.15R out of "
                           "sample, the market's upward drift. A short needs its edge from the signal, not from "
                           "this history.")
     pb = tp.get("plan_backtest")
@@ -772,7 +774,7 @@ def time_stop_evidence(console: Console, r: AnalysisResult) -> None:
         return
     console.print(f"Time stop (rule for shorts) out of sample: review day picked on the first half of each short's "
                   f"history, tested on the second. It improved E(R) in {(imp > 0).sum()} of {len(imp)} shorts here "
-                  f"(mean {imp.mean():+.2f}R); on 50 large caps, 80% of shorts (+0.05R, t 3.7), while it hurt longs.")
+                  f"(mean {imp.mean():+.2f}R); on 50 large caps, 68% of shorts (+0.04R, t 4.3), while it hurt longs.")
 
 
 def integrity(console: Console, r: AnalysisResult) -> None:

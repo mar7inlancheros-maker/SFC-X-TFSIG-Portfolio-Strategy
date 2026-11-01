@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,8 +26,10 @@ def test_final_signs_flip_and_no_trade():
 
 
 def test_levels_long_and_short_are_mirrored():
-    long = tp.levels(100.0, 2.0, 1, P)
-    short = tp.levels(100.0, 2.0, -1, P)
+    # Con la misma regla en los dos lados, los niveles son espejo.
+    same = tp.PlanParams(short_stop_atr=None, short_tp_r=None)
+    long = tp.levels(100.0, 2.0, 1, same)
+    short = tp.levels(100.0, 2.0, -1, same)
     assert long["stop"] == pytest.approx(95.0)
     assert long["tp1"] == pytest.approx(107.5)
     assert long["tp2"] == pytest.approx(115.0)
@@ -33,6 +37,16 @@ def test_levels_long_and_short_are_mirrored():
     assert short["tp1"] == pytest.approx(92.5)
     assert short["tp2"] == pytest.approx(85.0)
     assert long["stop_pct"] == pytest.approx(0.05)
+
+
+def test_los_cortos_llevan_su_propia_regla():
+    # Stop a 2 ATR y objetivos a 1R y 2R (tools/qe_rule_studies.py short-rule).
+    short = tp.levels(100.0, 2.0, -1, P)
+    assert short["stop"] == pytest.approx(104.0) and short["risk_per_share"] == pytest.approx(4.0)
+    assert short["tp1"] == pytest.approx(96.0) and short["tp2"] == pytest.approx(92.0)
+    assert tp.levels(100.0, 2.0, 1, P)["stop"] == pytest.approx(95.0)       # los largos no cambian
+    assert tp.for_side(tp.for_side(P, -1), -1) == tp.for_side(P, -1)         # idempotente
+    assert "shorts: stop 2 x ATR(14), TP1 1R, TP2 2R" in tp.rule_text(P)
 
 
 def test_atr_constant_range():
@@ -204,10 +218,10 @@ def test_en_solo_long_un_flip_no_abre_un_corto():
 P1 = tp.PlanParams(horizon_d=5, history_d=1)
 
 
-def _sim(closes, side=1, spread=0.2, **kw):
+def _sim(closes, side=1, spread=0.2, p=None, **kw):
     idx = pd.bdate_range("2026-01-01", periods=len(closes))
     c = pd.Series(closes, index=idx, dtype=float)
-    out = tp.simulate_trades(c, c + spread, c - spread, pd.Series(1.0, index=idx), side, P1, **kw)
+    out = tp.simulate_trades(c, c + spread, c - spread, pd.Series(1.0, index=idx), side, p or P1, **kw)
     assert len(out) == 1
     return out.iloc[0]
 
@@ -234,8 +248,16 @@ def test_regla_sin_tocar_nada_sale_por_tiempo():
 
 
 def test_regla_en_corto_es_el_espejo():
-    t = _sim([100, 100, 96, 92, 92, 92, 92], side=-1)
+    # Con la misma regla en los dos lados, el corto es el espejo del largo.
+    same = dataclasses.replace(P1, short_stop_atr=None, short_tp_r=None)
+    t = _sim([100, 100, 96, 92, 92, 92, 92], side=-1, p=same)
     assert t["exit"] == "tp1_tp2" and t["r_mult"] == pytest.approx(2.25)
+
+
+def test_regla_propia_del_corto():
+    # Stop 2 ATR (R = 2), TP1 a 1R (98) y TP2 a 2R (96): 0,5 x 1 + 0,5 x 2 = 1,5R.
+    t = _sim([100, 100, 98, 96, 96, 96, 96], side=-1)
+    assert t["exit"] == "tp1_tp2" and t["r_mult"] == pytest.approx(1.5)
 
 
 def test_regla_descuenta_costes_y_prestamo():
@@ -243,7 +265,7 @@ def test_regla_descuenta_costes_y_prestamo():
     con_costes = _sim([100, 100, 104, 108, 108, 108, 108], cost=0.001)["r_mult"]
     assert base - con_costes == pytest.approx(2 * 0.001 * 100 / 2.5)
     corto = _sim([100, 100, 100.2, 99.9, 100.1, 100, 100], side=-1, borrow=0.0252)["r_mult"]
-    assert corto == pytest.approx(0.0 - 0.0252 * 5 / 252 * 100 / 2.5)
+    assert corto == pytest.approx(0.0 - 0.0252 * 5 / 252 * 100 / 2.0)   # R del corto: 2 ATR
 
 
 def test_estadisticas_de_la_regla():

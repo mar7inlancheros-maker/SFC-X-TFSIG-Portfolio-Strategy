@@ -381,10 +381,11 @@ Esa asimetría sale de medir la regla del plan, no los retornos mensuales
 (`python tools/qe_rule_studies.py multifactor`): la regla abierta tras cada
 cierre de mes entre julio de 2023 y junio de 2026 en los 600 nombres más
 líquidos, en largo y en corto (43.196 operaciones). Frente al grupo neutral,
-los largos en Q1 ganaron +0,11R (t 2,4) y los cortos contra Q1 perdieron
-0,11R más (t −3,9). Los cortos en Q5 no ganaron a los neutrales (+0,05R,
-t 0,8) y en absoluto perdieron −0,11R: el multifactor es un modelo de largos y
-su Q5 no encuentra buenos cortos. Antes ese respaldo subía a HIGH el corto de
+los largos en Q1 ganaron +0,11R (t 2,4). Con la regla propia de los cortos,
+los cortos contra Q1 perdieron 0,04R más que los neutrales (t −1,5; con la
+regla de los largos eran 0,11R, t −3,9), y los cortos en Q5 no ganaron a los
+neutrales (+0,02R, t 0,3) y en absoluto perdieron −0,10R: el multifactor es un
+modelo de largos y su Q5 no encuentra buenos cortos. Antes ese respaldo subía a HIGH el corto de
 ARES contra research y lo llevaba a tamaño completo. Cada ficha cita la cifra
 de su caso.
 
@@ -400,9 +401,9 @@ aviso de "plan solo con precios" lo cita. Con WRDS (valor, calidad, analistas,
 interés en corto: el 50% del peso) está por medir. No se reajustan los pesos
 con este resultado: sería elegirlos con la muestra que los evalúa.
 
-Pendiente de decidir con el club: los cortos contra Q1 perdieron −0,27R de
-media (t −3,6). Es la evidencia más fuerte del plan contra una operación,
-pero convertirla en NO TRADE cambiaría un veredicto de research con el
+Pendiente de decidir con el club: los cortos contra Q1 perdieron −0,16R de
+media con la regla propia de los cortos (t −2,3; −0,27R con la de los
+largos). Convertirlos en NO TRADE cambiaría un veredicto de research con el
 multifactor, y hoy los veredictos no los toca.
 
 La evidencia se lee del último reporte oficial de backtest
@@ -464,8 +465,8 @@ terminal y al principio del HTML, cada nombre tiene una ficha:
   la evidencia de la validación y el multifactor. El backtest de la regla en
   el nombre ya no la mueve: en los 50 pares, el E(R) de la primera mitad de
   las entradas no predijo el de la segunda dentro del mismo lado (correlación
-  de rangos −0,05 en cortos, −0,07 en largos). Lo que sí persistió fue el
-  lado: los cortos perdieron −0,20R de media fuera de muestra, la deriva al
+  de rangos +0,10 en cortos, t 0,7; −0,07 en largos). Lo que sí persistió fue
+  el lado: los cortos perdieron −0,15R de media fuera de muestra, la deriva al
   alza del mercado. El aviso de expectativa negativa sigue, y lo explica.
 - **Por qué**: los componentes que respaldan a research y los que van en
   contra, con los números que hay detrás (momentum 12-1 −14%, ROE 25%,
@@ -580,6 +581,16 @@ El DCF informa a la ficha de cada nombre: si respalda o contradice la señal.
 No cambia los veredictos ni el Quant Score: un factor de valor por DCF habría
 que validarlo antes.
 
+**Niveles propios de los cortos.** Un corto lleva stop a 2 ATR y objetivos a
+1R y 2R; un largo, 2,5 ATR y 1,5R / 3R. Se probaron 9 combinaciones en los
+50 pares: elegida la mejor con la primera mitad de 6 años, en la segunda
+mejoró +0,082R frente a la regla de los largos, en el 84% de los nombres
+(`python tools/qe_rule_studies.py short-rule`). El orden fue el mismo en las
+dos mitades: stop más corto y objetivos más cerca, mejor. En corto el tiempo
+juega en contra (la deriva al alza del mercado), y cobrar antes rinde más. Los
+cortos siguen perdiendo de media con la regla (−0,20R en esa segunda mitad):
+la ventaja de un corto tiene que venir de la señal.
+
 **Rango de tiempo de cada corto.** La ficha de un corto trae su ventana con
 fechas, sacada de la misma regla abierta cada día de los últimos años en ese
 valor (`trade_plan.holding_window`):
@@ -602,7 +613,8 @@ En octubre de 2026 el stop por tiempo mejoraba la E(R) de los tres cortos de
 la canasta (ARES −0,39R → −0,25R), pero eso es dentro de muestra. La prueba
 que decide se hizo en los 50 pares: el día de revisión se elige con la primera
 mitad de la historia del nombre y se mide en la segunda. En cortos mejoró la
-E(R) en el 80% de los nombres (+0,05R de media, t 3,7); en largos la empeoró
+E(R) en el 68% de los nombres (+0,04R de media, t 4,3, con su regla propia;
+80%, +0,05R y t 3,7 con la de los largos); en largos la empeoró
 (40%, −0,03R, t −1,8). Por eso **es regla en los cortos**: si el TP1 no llegó
 en la fecha de revisión, se cubre todo a mercado, y el backtest de la regla y
 el del plan ya lo incluyen. Un corto que no avanza pelea contra la deriva al
