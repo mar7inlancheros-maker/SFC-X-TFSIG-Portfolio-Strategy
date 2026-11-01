@@ -522,6 +522,11 @@ def build(r: AnalysisResult) -> str:
                "<th>Now &rarr; target</th><th>Last</th><th>Stop</th><th>TP1</th><th>TP2</th>"
                "<th>Risk at stop</th><th>Open</th><th>Time stop<br>(no TP1)</th><th>Hard exit</th></tr>"
                + "".join(rows) + "</table></div>")
+    from ..playbook import order_flags  # noqa: PLC0415
+
+    for t, flags in order_flags(r).items():
+        out.append(f"<p class='note alert'><b>{escape(t)}: check before sending.</b> "
+                   + escape("; ".join(flags)) + ".</p>")
     out.append("<p class='muted'>Orders at market next session. Stop and targets apply to the whole resulting "
                "position. Take 50% off at TP1 and move the stop to entry; the rest exits at TP2 or at that stop.</p>")
 

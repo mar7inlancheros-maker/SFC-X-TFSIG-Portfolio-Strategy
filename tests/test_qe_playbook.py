@@ -462,3 +462,14 @@ def test_el_resumen_del_stop_por_tiempo_cuenta_solo_los_cortos():
     terminal.time_stop_evidence(con, SimpleNamespace(trade_plan={"plan": plan}))
     text = con.export_text()
     assert "improved E(R) in 1 of 2 shorts here (mean +0.04R)" in text
+
+
+def test_los_avisos_de_datos_van_junto_a_la_orden():
+    from types import SimpleNamespace
+
+    orders = pd.DataFrame({"target": [-717, 0, 162], "current": [0, 0, 0], "verdict": ["REDUCE", "NO TRADE", "HEDGE"]},
+                          index=["INTC", "AMC", "SPY"])
+    stats = {"INTC": {"last_jump": -0.29}, "AMC": {"last_jump": -0.4}, "SPY": {"last_jump": -0.3}}
+    r = SimpleNamespace(trade_plan={"orders": orders}, clean=SimpleNamespace(stats=stats))
+    out = pb.order_flags(r)
+    assert list(out) == ["INTC"] and "-29%" in out["INTC"][0]     # sin orden o cobertura: no se avisa aqui

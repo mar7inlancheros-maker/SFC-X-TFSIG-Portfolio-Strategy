@@ -153,6 +153,21 @@ def why_lines(drivers: str, row: pd.Series) -> list[str]:
     return out
 
 
+def order_flags(result) -> dict[str, list[str]]:
+    """Avisos de datos de cada nombre con orden, para ponerlos junto a la orden.
+
+    En la ficha ya estaban; en la tabla de ordenes no, y quien mira solo la
+    tabla mandaba la orden de INTC tras un cierre de -29% sin verlo.
+    """
+    tp = getattr(result, "trade_plan", None) or {}
+    orders = tp.get("orders")
+    if orders is None:
+        return {}
+    live = orders[(orders["target"] != orders["current"]) & (orders["verdict"] != "HEDGE")]
+    stats = result.clean.stats
+    return {t: f for t in live.index if (f := execution_flags(stats.get(t, {})))}
+
+
 def execution_flags(stats: dict) -> list[str]:
     """Lo de la calidad de datos que cambia la ejecucion: el precio de entrada y el ATR.
 

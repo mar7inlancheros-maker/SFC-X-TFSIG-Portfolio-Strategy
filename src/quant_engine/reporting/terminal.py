@@ -734,6 +734,10 @@ def final_signal(console: Console, r: AnalysisResult) -> None:
                                   & ((orders["target"] != 0) | (verdict not in ("CONFIRM", "REDUCE")))])
         if names:
             notes.append(f"{', '.join(names)}: {text}.")
+    from ..playbook import order_flags  # noqa: PLC0415
+
+    for t, flags in order_flags(r).items():
+        notes.append(f"[bold red]{escape(t)}: CHECK BEFORE SENDING[/] - " + escape("; ".join(flags)) + ".")
     reason = orders.get("hold_reason", pd.Series("", index=orders.index)).fillna("")
     band = list(orders.index[reason == "within hold band"])
     if band:
