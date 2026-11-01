@@ -293,8 +293,9 @@ alineado (score × +1 si research dice LONG, × −1 si dice SHORT):
 | ≤ −0,50 | FLIP | el modelo sugiere el lado contrario |
 
 Para cada nombre da la acción (BUY / SELL SHORT / NO TRADE), la entrada
-(último cierre), el stop a 2,5 × ATR(14), TP1 y TP2 a 1,5R y 3R (R = distancia
-al stop; 50% en cada uno, stop a la entrada tras TP1) y el tamaño: el peso de
+(último cierre), el stop y los objetivos (largos: 3 × ATR(14), TP1 y TP2 a 2R
+y 4R; cortos: 2 × ATR(14), 1R y 2R; R = distancia al stop; 50% en cada uno,
+stop a la entrada tras TP1) y el tamaño: el peso de
 la cartera reconstruida con las direcciones corregidas, recortado para que un
 stop no cueste más del 1% del capital. Los niveles van por volatilidad, no por
 porcentajes fijos: un 5% es ruido en TSLA y mucho en MSFT. `P(TP1)` y `P(TP2)`
@@ -328,8 +329,8 @@ research). Una posición en el benchmark se trata como la cobertura. Las
 órdenes se guardan en `orders_<fecha>.csv`.
 
 **Qué esperar: el backtest de cada trade y del plan.** El plan ya no da solo
-niveles. Para cada nombre simula la regla exacta —entrada al cierre, stop a
-2,5 ATR, mitad en TP1 con el stop a la entrada, resto en TP2 o a las 63
+niveles. Para cada nombre simula la regla exacta —entrada al cierre, stop por
+ATR del lado, mitad en TP1 con el stop a la entrada, resto en TP2 o a las 63
 sesiones— abierta cada día de los últimos 3 años, neta de costes y, en cortos,
 de préstamo. Da aciertos, E(R) (resultado medio en múltiplos del riesgo),
 profit factor, días medios y el P&L esperado con el tamaño de hoy. Luego abre el
@@ -381,7 +382,7 @@ Esa asimetría sale de medir la regla del plan, no los retornos mensuales
 (`python tools/qe_rule_studies.py multifactor`): la regla abierta tras cada
 cierre de mes entre julio de 2023 y junio de 2026 en los 600 nombres más
 líquidos, en largo y en corto (43.196 operaciones). Frente al grupo neutral,
-los largos en Q1 ganaron +0,11R (t 2,4). Con la regla propia de los cortos,
+los largos en Q1 ganaron +0,13R (t 2,4). Con la regla propia de los cortos,
 los cortos contra Q1 perdieron 0,04R más que los neutrales (t −1,5; con la
 regla de los largos eran 0,11R, t −3,9), y los cortos en Q5 no ganaron a los
 neutrales (+0,02R, t 0,3) y en absoluto perdieron −0,10R: el multifactor es un
@@ -465,7 +466,7 @@ terminal y al principio del HTML, cada nombre tiene una ficha:
   la evidencia de la validación y el multifactor. El backtest de la regla en
   el nombre ya no la mueve: en los 50 pares, el E(R) de la primera mitad de
   las entradas no predijo el de la segunda dentro del mismo lado (correlación
-  de rangos +0,10 en cortos, t 0,7; −0,07 en largos). Lo que sí persistió fue
+  de rangos +0,10 en cortos, t 0,7; −0,11 en largos). Lo que sí persistió fue
   el lado: los cortos perdieron −0,15R de media fuera de muestra, la deriva al
   alza del mercado. El aviso de expectativa negativa sigue, y lo explica.
 - **Por qué**: los componentes que respaldan a research y los que van en
@@ -581,15 +582,23 @@ El DCF informa a la ficha de cada nombre: si respalda o contradice la señal.
 No cambia los veredictos ni el Quant Score: un factor de valor por DCF habría
 que validarlo antes.
 
-**Niveles propios de los cortos.** Un corto lleva stop a 2 ATR y objetivos a
-1R y 2R; un largo, 2,5 ATR y 1,5R / 3R. Se probaron 9 combinaciones en los
-50 pares: elegida la mejor con la primera mitad de 6 años, en la segunda
-mejoró +0,082R frente a la regla de los largos, en el 84% de los nombres
-(`python tools/qe_rule_studies.py short-rule`). El orden fue el mismo en las
-dos mitades: stop más corto y objetivos más cerca, mejor. En corto el tiempo
-juega en contra (la deriva al alza del mercado), y cobrar antes rinde más. Los
-cortos siguen perdiendo de media con la regla (−0,20R en esa segunda mitad):
-la ventaja de un corto tiene que venir de la señal.
+**Niveles por lado.** Un corto lleva stop a 2 ATR y objetivos a 1R y 2R; un
+largo, 3 ATR y 2R / 4R. Hasta octubre de 2026 los dos usaban 2,5 ATR y
+1,5R / 3R. Se probaron 9 combinaciones por lado en los 50 pares; la mejor con
+la primera mitad de 6 años se midió en la segunda contra la de entonces:
+
+- cortos (`python tools/qe_rule_studies.py short-rule`): +0,082R, t 7,8,
+  mejor en el 84% de los nombres. Stop más corto y objetivos más cerca: en
+  corto el tiempo juega en contra (la deriva al alza del mercado) y cobrar
+  antes rinde más. Siguen perdiendo de media (−0,20R en esa segunda mitad):
+  la ventaja de un corto tiene que venir de la señal;
+- largos (`long-rule`): +0,084R, t 5,9, mejor en el 76%. Es el espejo: la
+  deriva ayuda y conviene dejar correr. La primera mitad incluye el mercado
+  bajista de 2022 y también la eligió. Es el borde de la rejilla; más ancho
+  no se probó, y probarlo ahora sería buscar después de ver el resultado.
+
+El orden de las combinaciones fue el mismo en las dos mitades, en los dos
+lados. Las t exageran: los nombres comparten mercado.
 
 **Rango de tiempo de cada corto.** La ficha de un corto trae su ventana con
 fechas, sacada de la misma regla abierta cada día de los últimos años en ese
@@ -615,7 +624,7 @@ que decide se hizo en los 50 pares: el día de revisión se elige con la primera
 mitad de la historia del nombre y se mide en la segunda. En cortos mejoró la
 E(R) en el 68% de los nombres (+0,04R de media, t 4,3, con su regla propia;
 80%, +0,05R y t 3,7 con la de los largos); en largos la empeoró
-(40%, −0,03R, t −1,8). Por eso **es regla en los cortos**: si el TP1 no llegó
+(38%, −0,04R, t −2,5). Por eso **es regla en los cortos**: si el TP1 no llegó
 en la fecha de revisión, se cubre todo a mercado, y el backtest de la regla y
 el del plan ya lo incluyen. Un corto que no avanza pelea contra la deriva al
 alza del mercado y paga préstamo. En los largos la fecha de revisión solo

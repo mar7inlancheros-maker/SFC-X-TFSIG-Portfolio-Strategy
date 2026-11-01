@@ -81,8 +81,13 @@ VERDICTS = ("CONFIRM", "REDUCE", "NO TRADE", "FLIP")
 
 @dataclass(frozen=True)
 class PlanParams:
-    stop_atr: float = 2.5
-    tp_r: tuple[float, float] = (1.5, 3.0)
+    # Regla de los largos: elegida en la primera mitad de 6 anos de los 50 pares
+    # entre 9 combinaciones y medida en la segunda: +0,084R frente a 2,5 ATR y
+    # 1,5R / 3R, t 5,9, mejor en el 76% de los nombres (`tools/qe_rule_studies.py
+    # long-rule`). En largo la deriva ayuda: dejar correr rinde mas. Es el borde
+    # de la rejilla: mas ancho no se probo.
+    stop_atr: float = 3.0
+    tp_r: tuple[float, float] = (2.0, 4.0)
     max_risk_per_trade: float = 0.01
     reduce_size: float = 0.5
     weak: float = 0.15
@@ -289,7 +294,7 @@ def conviction(verdict_: str, aligned: float, evidence: str, unproven: bool, mf_
 
     El backtest de la regla en el nombre NO entra: en los 50 pares, el E(R) de
     la primera mitad de las entradas no predijo el de la segunda dentro del
-    mismo lado (rangos: cortos +0,10, t 0,7; largos -0,07). Lo que si persiste
+    mismo lado (rangos: cortos +0,10, t 0,7; largos -0,11). Lo que si persiste
     es el lado: los cortos perdieron de media -0,15R fuera de muestra, la deriva del
     mercado. Antes un t <= -2 bajaba un escalon, y eso castigaba al 40% de los
     cortos por la deriva, no por el nombre.
@@ -565,8 +570,8 @@ def rule_time_stop(side: int, window: dict, p: PlanParams) -> int | None:
     Fuera de muestra en los 50 pares (dia de revision de la primera mitad de
     cada historia, medido en la segunda): en cortos mejoro la E(R) en el 68% de
     los nombres, +0,04R de media con t 4,3 (con su regla propia; con la de los
-    largos era 80%, +0,05R, t 3,7); en largos la empeoro (40%, -0,03R,
-    t -1,8). Un corto que no avanza pelea contra la deriva al alza y paga
+    largos era 80%, +0,05R, t 3,7); en largos la empeoro (38%, -0,04R,
+    t -2,5). Un corto que no avanza pelea contra la deriva al alza y paga
     prestamo; a un largo cortarlo le quita el recorrido de los que suben.
     """
     if side < 0 and p.short_time_stop and window.get("review_day"):
@@ -974,8 +979,8 @@ def params_from_settings(settings) -> PlanParams:
     tp = settings.get("trade_plan", {}) or {}
     ag = settings.get("agreement", {}) or {}
     return PlanParams(
-        stop_atr=float(tp.get("stop_atr", 2.5)),
-        tp_r=tuple(float(x) for x in tp.get("take_profit_r", [1.5, 3.0]))[:2],
+        stop_atr=float(tp.get("stop_atr", 3.0)),
+        tp_r=tuple(float(x) for x in tp.get("take_profit_r", [2.0, 4.0]))[:2],
         short_stop_atr=float(tp.get("short_stop_atr", 2.0)),
         short_tp_r=tuple(float(x) for x in tp.get("short_take_profit_r", [1.0, 2.0]))[:2],
         max_risk_per_trade=float(tp.get("max_risk_per_trade", 0.01)),

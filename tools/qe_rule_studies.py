@@ -7,6 +7,7 @@
     python tools/qe_rule_studies.py multifactor    # la regla gana cuando sigue al multifactor?
     python tools/qe_rule_studies.py quant-score    # el Quant Score (solo precios) predice a escala?
     python tools/qe_rule_studies.py short-rule     # otro stop / objetivos mejoraria los cortos?
+    python tools/qe_rule_studies.py long-rule      # y los largos?
 
 Corren sobre `scoring.reference_peers` del YAML (50 large caps) con la regla
 de `trade_plan.simulate_trades`. Descargan precios de Yahoo (con cache). Cada
@@ -14,12 +15,12 @@ estudio separa las entradas por fecha en dos mitades: lo que se elige con la
 primera se mide en la segunda. Si una regla del plan cambia (stop, objetivos,
 salida parcial), volver a correrlos antes de fiarse de las cifras de CLAUDE.md.
 
-Resultados del 30-oct-2026, 6 anos, con la regla propia de los cortos (stop
-2 ATR, objetivos 1R y 2R):
-- time-stop: cortos 68% de nombres mejor, +0,04R, t 4,3; largos 40%, -0,03R,
-  t -1,8. Por eso es regla solo en los cortos.
+Resultados del 30-oct-2026, 6 anos, con la regla de cada lado (largos: stop
+3 ATR, objetivos 2R y 4R; cortos: 2 ATR, 1R y 2R):
+- time-stop: cortos 68% de nombres mejor, +0,04R, t 4,3; largos 38%, -0,04R,
+  t -2,5. Por eso es regla solo en los cortos.
 - persistence: dentro del lado, correlacion de rangos E(R)_1 vs E(R)_2 de
-  +0,10 (cortos, t 0,7) y -0,07 (largos). Por eso la conviccion no usa el backtest
+  +0,10 (cortos, t 0,7) y -0,11 (largos). Por eso la conviccion no usa el backtest
   del nombre.
 """
 
@@ -232,8 +233,16 @@ SHORT_GRID = [(s, tp) for s in (2.0, 2.5, 3.0) for tp in ((1.0, 2.0), (1.5, 3.0)
 
 
 def short_rule(market, p) -> None:
-    """Rejilla de stop (ATR) y objetivos (R) para los cortos, con el stop por
-    tiempo de la regla, en toda la historia de cada nombre partida por fecha.
+    side_rule(market, p, -1)
+
+
+def long_rule(market, p) -> None:
+    side_rule(market, p, 1)
+
+
+def side_rule(market, p, side: int) -> None:
+    """Rejilla de stop (ATR) y objetivos (R) para un lado (los cortos con el stop
+    por tiempo de su regla), en toda la historia de cada nombre partida por fecha.
 
     Criterio fijado antes de mirar: la combinacion con mejor E(R) media en la
     PRIMERA mitad (una para todos: el plan usa una sola regla) sustituye a la
@@ -243,7 +252,7 @@ def short_rule(market, p) -> None:
     """
     import dataclasses  # noqa: PLC0415
 
-    rule = tp.for_side(p, -1)
+    rule = tp.for_side(p, side)
     current = (rule.stop_atr, tuple(rule.tp_r))
     rows = []
     for t, f in market.items():
@@ -253,13 +262,13 @@ def short_rule(market, p) -> None:
             q = dataclasses.replace(p, stop_atr=stop_atr, tp_r=tps, short_stop_atr=stop_atr, short_tp_r=tps,
                                     history_d=100_000)
             a = tp.atr(h, lo, c)
-            sims = _sim(c, h, lo, a, -1, q)
+            sims = _sim(c, h, lo, a, side, q)
             if len(sims) < 400:
                 continue
             cut = sims.index[len(sims) // 2]
             hw = tp.holding_window(sims.loc[sims.index < cut], q)
-            if hw.get("review_day"):
-                sims = _sim(c, h, lo, a, -1, q, int(hw["review_day"]))
+            if side < 0 and p.short_time_stop and hw.get("review_day"):
+                sims = _sim(c, h, lo, a, side, q, int(hw["review_day"]))
             rows.append({"ticker": t, "combo": (stop_atr, tps),
                          "er1": tp.trade_stats(sims.loc[sims.index < cut])["exp_r"],
                          "er2": tp.trade_stats(sims.loc[sims.index >= cut])["exp_r"]})
@@ -277,13 +286,15 @@ def short_rule(market, p) -> None:
     print(f"picked on the first half: {best}; second half vs current: {diff.mean():+.3f}R, t {t:+.2f}, "
           f"improved in {(diff > 0).mean():.0%} of {len(diff)} names")
     adopt = best != current and diff.mean() >= 0.05 and t >= 2 and (diff > 0).mean() >= 0.6
-    print("verdict: " + ("ADOPT the new rule for shorts" if adopt else "KEEP the current rule"))
+    print("verdict: " + (f"ADOPT the new rule for {'shorts' if side < 0 else 'longs'}" if adopt
+                         else "KEEP the current rule"))
 
 
 def main(argv: list[str] | None = None) -> int:
     enable_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score", "short-rule"])
+    ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score", "short-rule",
+                                      "long-rule"])
     ap.add_argument("--end", default=None, help="ultima fecha (AAAA-MM-DD); por defecto, hoy")
     ap.add_argument("--years", type=int, default=6)
     ap.add_argument("--months", type=int, default=36, help="multifactor: cierres de mes evaluados")
@@ -297,7 +308,8 @@ def main(argv: list[str] | None = None) -> int:
     peers = [str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]]
     market = loader.load_ohlcv(peers, end - pd.DateOffset(years=args.years), end).ohlcv
     p = tp.PlanParams()
-    {"time-stop": time_stop, "persistence": persistence, "short-rule": short_rule}[args.study](market, p)
+    {"time-stop": time_stop, "persistence": persistence, "short-rule": short_rule,
+     "long-rule": long_rule}[args.study](market, p)
     return 0
 
 

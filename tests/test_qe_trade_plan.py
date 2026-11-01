@@ -27,7 +27,7 @@ def test_final_signs_flip_and_no_trade():
 
 def test_levels_long_and_short_are_mirrored():
     # Con la misma regla en los dos lados, los niveles son espejo.
-    same = tp.PlanParams(short_stop_atr=None, short_tp_r=None)
+    same = tp.PlanParams(stop_atr=2.5, tp_r=(1.5, 3.0), short_stop_atr=None, short_tp_r=None)
     long = tp.levels(100.0, 2.0, 1, same)
     short = tp.levels(100.0, 2.0, -1, same)
     assert long["stop"] == pytest.approx(95.0)
@@ -44,9 +44,11 @@ def test_los_cortos_llevan_su_propia_regla():
     short = tp.levels(100.0, 2.0, -1, P)
     assert short["stop"] == pytest.approx(104.0) and short["risk_per_share"] == pytest.approx(4.0)
     assert short["tp1"] == pytest.approx(96.0) and short["tp2"] == pytest.approx(92.0)
-    assert tp.levels(100.0, 2.0, 1, P)["stop"] == pytest.approx(95.0)       # los largos no cambian
+    long_ = tp.levels(100.0, 2.0, 1, P)                                      # largos: 3 ATR, 2R / 4R
+    assert long_["stop"] == pytest.approx(94.0) and long_["tp1"] == pytest.approx(112.0)
+    assert long_["tp2"] == pytest.approx(124.0)
     assert tp.for_side(tp.for_side(P, -1), -1) == tp.for_side(P, -1)         # idempotente
-    assert "shorts: stop 2 x ATR(14), TP1 1R, TP2 2R" in tp.rule_text(P)
+    assert tp.rule_text(P).startswith("longs: stop 3 x ATR(14), TP1 2R, TP2 4R; shorts: stop 2 x ATR(14), TP1 1R")
 
 
 def test_atr_constant_range():
@@ -215,7 +217,9 @@ def test_en_solo_long_un_flip_no_abre_un_corto():
 #  stop 97,5 · TP1 103,75 · TP2 107,5 para un largo desde 100
 # ---------------------------------------------------------------------------
 
-P1 = tp.PlanParams(horizon_d=5, history_d=1)
+# La mecanica de la regla con numeros redondos (2,5 ATR, 1,5R / 3R), fijos aqui
+# para que no dependan de la regla por defecto.
+P1 = tp.PlanParams(horizon_d=5, history_d=1, stop_atr=2.5, tp_r=(1.5, 3.0))
 
 
 def _sim(closes, side=1, spread=0.2, p=None, **kw):

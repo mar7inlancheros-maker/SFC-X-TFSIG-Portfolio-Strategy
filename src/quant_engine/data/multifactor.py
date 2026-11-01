@@ -297,8 +297,8 @@ def agreement(direction: int, percentile: float | None) -> int:
 # multifactor`, jul-2023 a jun-2026, 43.196 operaciones). Si cambia la regla,
 # se vuelve a correr y se actualiza aqui; las fichas lo citan tal cual.
 RULE_EVIDENCE = {
-    (1, 1): "on the plan's rule, longs in its Q1 made +0.23R against +0.12R for neutral ones (t 2.4)",
-    (1, -1): "on the plan's rule, longs in its Q5 made +0.08R against +0.12R for neutral ones (not significant)",
+    (1, 1): "on the plan's rule, longs in its Q1 made +0.31R against +0.17R for neutral ones (t 2.4)",
+    (1, -1): "on the plan's rule, longs in its Q5 made +0.12R against +0.17R for neutral ones (not significant)",
     (-1, 1): ("but it does not raise conviction: on the plan's rule, shorts in its Q5 did no better than neutral "
               "ones (+0.02R, t 0.3) and still lost -0.10R; it is a model for picking longs"),
     (-1, -1): ("on the plan's rule, shorts against its Q1 lost -0.16R on average (t -2.3), 0.04R worse than "
@@ -312,10 +312,10 @@ def conviction_step(direction: int, percentile: float | None) -> int:
     Medido con la regla del plan (`tools/qe_rule_studies.py multifactor`: 36
     cierres de mes jul-2023 a jun-2026, 600 nombres mas liquidos, 43.196
     operaciones), frente al grupo neutral:
-    - largo en Q1: +0,113R, t 2,39 -> sube;
+    - largo en Q1: +0,132R, t 2,38 -> sube;
     - corto contra Q1: -0,043R, t -1,46 (con la regla de los largos era
       -0,106R, t -3,91) -> baja igual (prudente: solo resta);
-    - largo contra Q5: -0,040R, t -0,62 -> baja igual (prudente: solo resta);
+    - largo contra Q5: -0,056R, t -0,74 -> baja igual (prudente: solo resta);
     - corto en Q5: +0,015R, t 0,28, y en absoluto -0,099R -> NO sube. El
       multifactor es un modelo de largos: su Q5 no encuentra buenos cortos.
     """

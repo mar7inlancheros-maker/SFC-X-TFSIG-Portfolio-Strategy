@@ -469,12 +469,15 @@ Trampas:
   pide lo que falte en lotes de 25. Si sigue faltando y la caché cubre el
   inicio, se usa y `MarketData.stale` lo registra para el aviso. Sin esto, un
   corte de Yahoo borraba 16 de 50 pares y la validación corría con 38 nombres.
-- **Los cortos tienen su propia regla de niveles: stop 2 ATR, objetivos 1R y
-  2R** (`short_stop_atr`, `short_take_profit_r` en el YAML; `trade_plan.for_side`).
-  Elegida en la primera mitad de 6 años de los 50 pares entre 9 combinaciones
-  y medida en la segunda: +0,082R frente a 2,5 ATR y 1,5R / 3R, t 7,8 (los
-  nombres comparten mercado: la t real es menor), mejor en el 84%
-  (`tools/qe_rule_studies.py short-rule`). `levels`, `hit_rate` y
+- **Cada lado tiene su regla de niveles: largos stop 3 ATR y objetivos 2R /
+  4R; cortos 2 ATR y 1R / 2R** (`stop_atr`, `take_profit_r`,
+  `short_stop_atr`, `short_take_profit_r` en el YAML; `trade_plan.for_side`).
+  Cada una elegida en la primera mitad de 6 años de los 50 pares entre 9
+  combinaciones y medida en la segunda contra la anterior (2,5 ATR, 1,5R /
+  3R): cortos +0,082R, t 7,8, 84% de nombres; largos +0,084R, t 5,9, 76% (los
+  nombres comparten mercado: la t real es menor). `tools/qe_rule_studies.py
+  short-rule` y `long-rule`. La de largos está en el borde de la rejilla: no
+  ensanchar sin un estudio nuevo pre-registrado. `levels`, `hit_rate` y
   `simulate_trades` aplican `for_side` dentro; `holding_window` no sabe el
   lado y recibe los parámetros ya aplicados. Una función nueva que use
   `p.stop_atr` o `p.tp_r` directamente tiene que pasar por `for_side`, o
@@ -485,7 +488,7 @@ Trampas:
   (`trade_plan.rule_time_stop`, `trade_plan.short_time_stop` en el YAML). Se
   decidió fuera de muestra en los 50 pares (día de revisión de la primera
   mitad de cada historia, medido en la segunda): cortos 68% de nombres mejor,
-  +0,04R, t 4,3 (con su regla propia); largos 40%, −0,03R, t −1,8. En un corto el backtest de la
+  +0,04R, t 4,3 (con su regla propia); largos 38%, −0,04R, t −2,5. En un corto el backtest de la
   regla, la ventana de tenencia y `plan_backtest` se calculan CON el stop; la
   E(R) sin él queda en `bt_exp_r_no_time_stop` para comparar. A un largo no se
   le aconseja cortar aunque dentro de muestra parezca ayudar. No extenderlo a
@@ -534,7 +537,7 @@ Trampas:
 - **La convicción no usa el backtest de la regla en el nombre.** Se probó en
   los 50 pares (`python tools/qe_rule_studies.py persistence`: E(R) de la
   primera mitad de las entradas contra la segunda, por lado): sin persistencia
-  dentro del lado (rangos +0,10 cortos, t 0,7; −0,07 largos). Con el lado mezclado sale una
+  dentro del lado (rangos +0,10 cortos, t 0,7; −0,11 largos). Con el lado mezclado sale una
   persistencia falsa (Spearman +0,35, t 3,7) que es solo la deriva del
   mercado contra los cortos. No volver a meter la t del nombre en la
   convicción ni bloquear por ella sin una prueba nueva que la sostenga.

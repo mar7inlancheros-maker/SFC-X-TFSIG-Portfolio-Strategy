@@ -622,7 +622,7 @@ def expectations(console: Console, r: AnalysisResult) -> None:
                                       for t, v in negative["bt_exp_r"].items())
                           + ". This rule lost money on these stocks in the past. On 50 large caps a name's past "
                           "E(R) did not predict its next one within the same side (rank correlation +0.10 for "
-                          "shorts, -0.07 for longs); what persisted was the side: shorts averaged -0.15R out of "
+                          "shorts, -0.11 for longs); what persisted was the side: shorts averaged -0.15R out of "
                           "sample, the market's upward drift. A short needs its edge from the signal, not from "
                           "this history.")
     pb = tp.get("plan_backtest")

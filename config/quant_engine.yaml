@@ -153,8 +153,12 @@ output:
 
 # Plan de operacion. Ver src/quant_engine/trade_plan.py.
 trade_plan:
-  stop_atr: 2.5              # stop a 2,5 x ATR(14) de la entrada
-  take_profit_r: [1.5, 3.0]  # TP1 y TP2 en multiplos del riesgo R (50% en cada uno)
+  # Regla de los largos: stop a 3 x ATR(14) de la entrada, TP1 y TP2 a 2R y 4R
+  # (R = distancia al stop; 50% en cada uno). Elegida en la primera mitad de 6
+  # anos de los 50 pares y medida en la segunda: +0,084R frente a 2,5 ATR y
+  # 1,5R / 3R, t 5,9, 76% de los nombres (tools/qe_rule_studies.py long-rule).
+  stop_atr: 3.0
+  take_profit_r: [2.0, 4.0]
   # Los cortos tienen su propia regla: stop mas corto y objetivos mas cerca.
   # Elegida en la primera mitad de 6 anos de los 50 pares y medida en la
   # segunda: +0,082R frente a la de los largos, t 7,8, 84% de los nombres
@@ -177,7 +181,7 @@ trade_plan:
   unproven_flip: reduce
   # Stop por tiempo en los cortos: sin TP1 en el dia de revision (percentil 75
   # del dia del TP1 en la historia del nombre), se cubre. Fuera de muestra en
-  # los 50 pares: cortos 68% mejor, +0,04R (t 4,3); largos 40%, -0,03R (t -1,8).
+  # los 50 pares: cortos 68% mejor, +0,04R (t 4,3); largos 38%, -0,04R (t -2,5).
   short_time_stop: true
 
 # Universo de referencia del Quant Score. Se usa cuando la canasta es solo LONG

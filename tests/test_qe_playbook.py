@@ -269,7 +269,7 @@ def test_la_regla_anota_el_dia_del_tp1_sin_cambiar_el_resultado():
     idx = pd.bdate_range("2026-01-01", periods=7)
     c = pd.Series([100, 100, 104, 108, 108, 108, 108], index=idx, dtype=float)
     out = tp.simulate_trades(c, c + 0.2, c - 0.2, pd.Series(1.0, index=idx), 1,
-                             tp.PlanParams(horizon_d=5, history_d=1))
+                             tp.PlanParams(horizon_d=5, history_d=1, stop_atr=2.5, tp_r=(1.5, 3.0)))
     # Entrada en la segunda sesion (history_d = 1): el TP1 llega al dia siguiente.
     assert out["tp1_day"].iloc[0] == 1 and out["r_mult"].iloc[0] == pytest.approx(2.25)
 
@@ -283,7 +283,7 @@ def _trades(n_fast=60, n_slow=40, late_hits=10, late_day=40):
 
 
 def test_ventana_de_tenencia_y_revision_por_tiempo():
-    p = tp.PlanParams()
+    p = tp.PlanParams(tp_r=(1.5, 3.0))                          # break-even del TP1: 1 / 2,5 = 40%
     w = tp.holding_window(_trades(), p)
     assert w["n"] == 100 and w["p25"] == 30 and w["p75"] == 63
     tp1_days = pd.Series([5 + i % 10 for i in range(60)] + [40] * 10, dtype=float)
@@ -324,7 +324,7 @@ def test_fechas_ex_dividendo(monkeypatch):
 def test_stop_por_tiempo_cierra_sin_tp1_y_no_cambia_la_regla_por_defecto():
     idx = pd.bdate_range("2026-01-01", periods=8)
     c = pd.Series([100, 100, 100.5, 101, 101.5, 102, 102, 102], index=idx, dtype=float)
-    p = tp.PlanParams(horizon_d=6, history_d=1)
+    p = tp.PlanParams(horizon_d=6, history_d=1, stop_atr=2.5, tp_r=(1.5, 3.0))
     plain = tp.simulate_trades(c, c + 0.2, c - 0.2, pd.Series(1.0, index=idx), 1, p)
     timed = tp.simulate_trades(c, c + 0.2, c - 0.2, pd.Series(1.0, index=idx), 1, p, time_stop=2)
     assert plain["exit"].iloc[0] == "time"
