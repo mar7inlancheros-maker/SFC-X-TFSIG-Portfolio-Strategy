@@ -600,6 +600,18 @@ la primera mitad de 6 años se midió en la segunda contra la de entonces:
 El orden de las combinaciones fue el mismo en las dos mitades, en los dos
 lados. Las t exageran: los nombres comparten mercado.
 
+Comprobación en nombres que no eligieron la regla (`python
+tools/qe_rule_studies.py rule-holdout`: 871 nombres líquidos del panel sin
+los 50 pares, una entrada al mes de julio de 2023 a junio de 2026, 21.596 por
+regla y lado, solo niveles): largos +0,055R frente a la regla anterior (t 1,8,
+mejor en el 69% de los meses), cortos +0,057R (t 1,9, 53% de los meses). El
+criterio fijado antes de mirar era t ≥ 2: **no confirmado**. Se mantienen
+porque la mejora va en la misma dirección y con un tamaño parecido en nombres
+independientes, y la regla anterior no tenía evidencia ninguna; pero es una
+mejora probable, no demostrada. En cortos, además, se concentra en pocos
+meses. No se ajusta más la regla con estos datos: la próxima validación, con
+meses nuevos.
+
 **Rango de tiempo de cada corto.** La ficha de un corto trae su ventana con
 fechas, sacada de la misma regla abierta cada día de los últimos años en ese
 valor (`trade_plan.holding_window`):

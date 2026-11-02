@@ -8,6 +8,7 @@
     python tools/qe_rule_studies.py quant-score    # el Quant Score (solo precios) predice a escala?
     python tools/qe_rule_studies.py short-rule     # otro stop / objetivos mejoraria los cortos?
     python tools/qe_rule_studies.py long-rule      # y los largos?
+    python tools/qe_rule_studies.py rule-holdout   # las reglas nuevas aguantan en OTROS nombres?
 
 Corren sobre `scoring.reference_peers` del YAML (50 large caps) con la regla
 de `trade_plan.simulate_trades`. Descargan precios de Yahoo (con cache). Cada
@@ -19,6 +20,9 @@ Resultados del 30-oct-2026, 6 anos, con la regla de cada lado (largos: stop
 3 ATR, objetivos 2R y 4R; cortos: 2 ATR, 1R y 2R):
 - time-stop: cortos 68% de nombres mejor, +0,04R, t 4,3; largos 38%, -0,04R,
   t -2,5. Por eso es regla solo en los cortos.
+- short-rule / long-rule: +0,082R (cortos) y +0,084R (largos) frente a 2,5 ATR y
+  1,5R / 3R en la segunda mitad. rule-holdout, en 871 nombres que no las
+  eligieron: +0,057R (t 1,9) y +0,055R (t 1,8), no confirmado a t >= 2.
 - persistence: dentro del lado, correlacion de rangos E(R)_1 vs E(R)_2 de
   +0,10 (cortos, t 0,7) y -0,11 (largos). Por eso la conviccion no usa el backtest
   del nombre.
@@ -290,20 +294,83 @@ def side_rule(market, p, side: int) -> None:
                          else "KEEP the current rule"))
 
 
+OLD_RULE = (2.5, (1.5, 3.0))   # la de los dos lados hasta octubre de 2026
+
+
+def rule_holdout(end: pd.Timestamp, months: int, top: int, p) -> None:
+    """Las reglas de cada lado contra la anterior, en nombres que no las eligieron.
+
+    `short-rule` y `long-rule` eligieron con los 50 pares de referencia; esto
+    mira los `top` mas liquidos de cada cierre de mes del panel SIN esos 50,
+    con una entrada por nombre y mes, y compara solo los niveles (sin stop por
+    tiempo en ninguna de las dos). Criterio fijado antes de mirar: la regla de
+    un lado se confirma si nueva menos anterior da t >= 2 (Newey-West sobre la
+    serie mensual, retardo 3).
+    """
+    import dataclasses  # noqa: PLC0415
+
+    from sfc_tfsig import cli as mf_cli  # noqa: PLC0415
+    from sfc_tfsig.config import load_config  # noqa: PLC0415
+    from sfc_tfsig.data import cache  # noqa: PLC0415
+
+    peers = {str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]}
+    panel = cache.read_frame(mf_cli._panel_cache_name(load_config(None)))  # noqa: SLF001
+    panel = panel[~panel["ticker"].isin(peers)]
+    last_entry = end - pd.offsets.BDay(p.horizon_d + 5)
+    dates = sorted(d for d in panel["date"].unique() if d <= last_entry)[-months:]
+    picks = (panel[panel["date"].isin(dates)].sort_values("dollar_volume", ascending=False)
+             .groupby("date").head(top))
+    names = sorted(picks["ticker"].unique())
+    print(f"{len(dates)} month-ends, {len(names)} names (reference peers left out)", flush=True)
+    market = loader.load_ohlcv(names, pd.Timestamp(dates[0]) - pd.DateOffset(months=3), end).ohlcv
+    rules = {}
+    for side in (1, -1):
+        new = tp.for_side(p, side)
+        for label, (stop_atr, tps) in (("new", (new.stop_atr, tuple(new.tp_r))), ("old", OLD_RULE)):
+            rules[(side, label)] = dataclasses.replace(p, stop_atr=stop_atr, tp_r=tps, short_stop_atr=stop_atr,
+                                                       short_tp_r=tps, history_d=1)
+    rows = []
+    for t, grp in picks.groupby("ticker"):
+        if t not in market:
+            continue
+        c, h, lo, a = _series(market[t])
+        for d in grp["date"]:
+            i = int(c.index.searchsorted(d, side="right"))
+            if i < 20 or i + p.horizon_d >= len(c):
+                continue
+            cut = slice(0, i + p.horizon_d + 1)
+            for (side, label), q in rules.items():
+                sims = tp.simulate_trades(c.iloc[cut], h.iloc[cut], lo.iloc[cut], a.iloc[cut], side, q,
+                                          cost=COST, borrow=BORROW if side < 0 else 0.0)
+                if len(sims):
+                    rows.append({"date": d, "ticker": t, "side": side, "rule": label,
+                                 "r": float(sims["r_mult"].iloc[-1])})
+    df = pd.DataFrame(rows)
+    print(f"{len(df) // 4:,} entries per rule and side")
+    for side, name in ((1, "longs"), (-1, "shorts")):
+        monthly = df[df.side == side].groupby(["date", "rule"])["r"].mean().unstack()
+        diff = (monthly["new"] - monthly["old"]).dropna()
+        t = diff.mean() / newey_west_se(diff, 3)
+        ok = t >= 2
+        print(f"{name:7} new {monthly['new'].mean():+.3f}R  old {monthly['old'].mean():+.3f}R  "
+              f"difference {diff.mean():+.3f}R t {t:+.2f}, better in {(diff > 0).mean():.0%} of months -> "
+              + ("CONFIRMED" if ok else "NOT CONFIRMED"))
+
+
 def main(argv: list[str] | None = None) -> int:
     enable_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score", "short-rule",
-                                      "long-rule"])
+                                      "long-rule", "rule-holdout"])
     ap.add_argument("--end", default=None, help="ultima fecha (AAAA-MM-DD); por defecto, hoy")
     ap.add_argument("--years", type=int, default=6)
     ap.add_argument("--months", type=int, default=36, help="multifactor: cierres de mes evaluados")
     ap.add_argument("--top", type=int, default=600, help="multifactor: nombres mas liquidos por fecha")
     args = ap.parse_args(argv)
     end = pd.Timestamp(args.end) if args.end else pd.Timestamp.today().normalize()
-    if args.study in ("multifactor", "quant-score"):
-        {"multifactor": multifactor, "quant-score": quant_score}[args.study](end, args.months, args.top,
-                                                                             tp.PlanParams())
+    if args.study in ("multifactor", "quant-score", "rule-holdout"):
+        {"multifactor": multifactor, "quant-score": quant_score,
+         "rule-holdout": rule_holdout}[args.study](end, args.months, args.top, tp.PlanParams())
         return 0
     peers = [str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]]
     market = loader.load_ohlcv(peers, end - pd.DateOffset(years=args.years), end).ohlcv

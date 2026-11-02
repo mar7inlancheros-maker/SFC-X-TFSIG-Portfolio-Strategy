@@ -477,7 +477,13 @@ Trampas:
   3R): cortos +0,082R, t 7,8, 84% de nombres; largos +0,084R, t 5,9, 76% (los
   nombres comparten mercado: la t real es menor). `tools/qe_rule_studies.py
   short-rule` y `long-rule`. La de largos está en el borde de la rejilla: no
-  ensanchar sin un estudio nuevo pre-registrado. `levels`, `hit_rate` y
+  ensanchar sin un estudio nuevo pre-registrado. En nombres que no las
+  eligieron (`rule-holdout`, 871 nombres sin los 50 pares) la mejora fue
+  +0,055R en largos (t 1,8) y +0,057R en cortos (t 1,9): mismo sentido, NO
+  confirmada a t ≥ 2. **No volver a ajustar stop, objetivos ni horizonte con
+  estos datos**: la segunda mitad de los 50 pares ya se usó cinco veces y
+  cada vuelta más la convierte en dentro de muestra. La próxima comprobación,
+  con meses posteriores a octubre de 2026. `levels`, `hit_rate` y
   `simulate_trades` aplican `for_side` dentro; `holding_window` no sabe el
   lado y recibe los parámetros ya aplicados. Una función nueva que use
   `p.stop_atr` o `p.tp_r` directamente tiene que pasar por `for_side`, o
