@@ -300,3 +300,19 @@ def test_rango_de_tiempo_de_la_orden():
     long_ = tp.time_range("ARES", 1, d, 63, 20.0)            # el stop por tiempo es solo de los cortos
     assert long_["time_stop_date"] is None and long_["exit_date"] == pd.Timestamp("2027-02-03")
     assert tp.time_range("ARES", 0, d, 63, None)["open_date"] is None
+
+
+def test_regla_mismo_dia_stop_y_objetivo_cuenta_como_stop():
+    # R = 2,5: stop 97,5 y TP1 103,75. Un dia que toca los dos: sin intradia no
+    # se sabe el orden, y suponer el objetivo inflaria la tasa de acierto.
+    t = _sim([100, 100, 100, 100, 100, 100, 100], spread=4.0)
+    assert t["exit"] == "stop" and t["r_mult"] == pytest.approx(-1.0)
+
+
+def test_la_t_de_la_regla_es_de_newey_west_con_el_solape_de_las_operaciones():
+    rng = np.random.default_rng(5)
+    r = pd.Series(rng.normal(0.1, 1.0, 300)).rolling(10, min_periods=1).mean()   # entradas solapadas
+    trades = pd.DataFrame({"r_mult": r, "exit": "time", "days": 10})
+    st = tp.trade_stats(trades)
+    assert st["t_stat"] == pytest.approx(tp.hac_t_stat(r.to_numpy(), 10))
+    assert abs(st["t_stat"]) < abs(tp.hac_t_stat(r.to_numpy(), 0))

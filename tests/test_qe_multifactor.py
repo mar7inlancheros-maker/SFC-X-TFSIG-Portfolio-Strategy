@@ -184,3 +184,8 @@ def test_la_ficha_cita_lo_que_hizo_la_regla_contra_el_q1():
          "rows": {"GOLD": {"percentile": 1.0}}}
     line = pb.multifactor_line("GOLD", pd.Series({"signal": "SHORT"}), m)
     assert "contradicts the trade, on the plan's rule, shorts against its Q1 lost -0.16R" in line
+
+
+def test_el_quintil_extremo_es_el_20_por_ciento():
+    assert mf.agreement(1, 0.85) == 1 and mf.agreement(-1, 0.15) == 1
+    assert mf.agreement(1, 0.79) == 0 and mf.agreement(-1, 0.21) == 0

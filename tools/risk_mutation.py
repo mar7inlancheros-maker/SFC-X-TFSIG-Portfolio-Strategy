@@ -5,6 +5,7 @@
     python tools/risk_mutation.py garch var    # solo los que mencionan esas palabras
     python tools/risk_mutation.py --list       # ver el catalogo
     python tools/risk_mutation.py --jobs 4     # en paralelo, una copia por proceso
+    python tools/risk_mutation.py --catalogo qe --jobs 4   # el plan long/short (tools/qe_mutants.py)
 
 **Nunca toca el arbol de trabajo.** Copia `src/`, `tests/` y `config/` a un
 directorio temporal y muta ahi. Asi se puede correr con el editor abierto o con
@@ -101,9 +102,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", action="store_true", help="lista el catalogo y sale")
     parser.add_argument("--jobs", type=int, default=1, help="procesos en paralelo")
     parser.add_argument("--timeout", type=float, default=240.0, help="segundos por mutante")
+    parser.add_argument("--catalogo", choices=["riesgo", "qe"], default="riesgo",
+                        help="riesgo: tools/risk_mutants.py; qe: el plan long/short, tools/qe_mutants.py")
     args = parser.parse_args(argv)
+    catalog = MUTANTS
+    if args.catalogo == "qe":
+        from qe_mutants import MUTANTS as catalog  # noqa: PLC0415
 
-    selected = [m for m in MUTANTS
+    selected = [m for m in catalog
                 if not args.filtro or any(f.lower() in (m.label + " " + m.path).lower() for f in args.filtro)]
     if args.list:
         for m in selected:
@@ -133,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         copies.put(sample)
         if state != "pasa":
             reason = "agotan el tiempo" if state == "timeout" else "fallan"
-            print(f"los tests de riesgo ya {reason} SIN mutar; arreglalo antes de medir mutantes")
+            print(f"los tests ya {reason} SIN mutar; arreglalo antes de medir mutantes")
             if tail:
                 print(tail)
             return 2
