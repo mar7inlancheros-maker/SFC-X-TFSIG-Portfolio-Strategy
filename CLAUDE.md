@@ -291,9 +291,12 @@ python tools/risk_mutation.py --list          # el catálogo
   `python tools/risk_mutation.py --catalogo qe --jobs 4`): lado de la regla,
   stop y objetivos, mismo día stop y objetivo, gaps, costes, stop por tiempo,
   t de Newey-West, tamaño con FX y tope, signo sin libro, cobertura, fechas
-  de sesión, fichas y multifactor. La primera pasada dejó vivos 4 de 25 (entre
-  ellos "un día que toca stop y objetivo cuenta como objetivo" y "la t sin
-  Newey-West"); hoy están los 25 cazados. `tests/test_qe_tools.py` comprueba
+  de sesión, fichas y multifactor, y la fórmula del DCF (Blume, WACC,
+  impuestos, capital de trabajo, suelo de reinversión, descuento a mitad de
+  año, terminal g/RONIC, puente al patrimonio, ventas = mayor etiqueta). La
+  primera pasada dejó vivos 5 de 40 (entre ellos "un día que toca stop y
+  objetivo cuenta como objetivo", "la t sin Newey-West" e "impuestos negativos
+  sobre pérdidas"); hoy están los 40 cazados. `tests/test_qe_tools.py` comprueba
   que cada fragmento sigue existiendo.
 - **`tests/risk_helpers.py` tiene los datos sintéticos compartidos** (mercado,
   cartera, estrategia completa y política ligera). Las fixtures de cada fichero

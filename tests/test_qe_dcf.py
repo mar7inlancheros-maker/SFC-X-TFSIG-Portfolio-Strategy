@@ -342,3 +342,13 @@ def test_el_excel_recalculado_da_lo_mismo_que_el_motor(tmp_path):
         res = v["scenarios"]["cases"][case]
         assert ev == pytest.approx(res["ev"], rel=1e-9), case
         assert per_share == pytest.approx(res["per_share"], rel=1e-9), case
+
+
+def test_una_perdida_operativa_no_genera_impuesto_negativo():
+    # Sin escudo de perdidas acumuladas modelado, el impuesto de un ano con EBIT
+    # negativo es cero: un "credito" sumaria flujo que la empresa no cobra.
+    one = np.array([0.0])
+    p = dcf._paths(1000.0, np.array([0.0, 0.0]), np.array([-0.1, 0.1]), np.array([0.25, 0.25]),
+                   one, one, one, np.array([np.inf]))
+    assert p["taxes"][0, 0] == 0.0 and p["nopat"][0, 0] == pytest.approx(-100.0)
+    assert p["taxes"][0, 1] == pytest.approx(25.0)
