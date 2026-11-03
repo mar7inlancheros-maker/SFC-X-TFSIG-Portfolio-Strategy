@@ -250,3 +250,20 @@ def test_si_yahoo_falla_se_usa_la_cache_vieja_y_se_dice(monkeypatch):
     out = loader.load_ohlcv(["AMZN", "NOPE"], start, pd.Timestamp("2026-02-01"))
     assert "AMZN" in out.ohlcv and out.stale["AMZN"] == old["date"].max()
     assert "NOPE" in out.failures and "AMZN" not in out.failures
+
+
+def test_ttm_cuenta_por_fecha_de_publicacion_y_no_por_cierre():
+    from quant_engine.data import wrds_data as wd
+
+    ends = pd.to_datetime(["2025-06-30", "2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30"])
+    rows = [{"gvkey": "1", "datadate": e, "rdq": e + pd.Timedelta(days=40), "saleq": 100.0, "niq": 10.0,
+             "cshoq": 10.0, "curcdq": "USD"} for e in ends]
+    rows[-1]["niq"] = 1e6
+    fq = pd.DataFrame(rows)
+    # El 20 de julio el trimestre de junio ya cerro pero no se ha publicado (sale el 9 de agosto).
+    out = wd.ttm_fundamentals(fq, pd.Timestamp("2026-07-20"))
+    assert out["fiscal_period_end"] == pd.Timestamp("2026-03-31") and out["net_income"] == pytest.approx(40.0)
+    # Sin rdq se supone publicado 90 dias despues del cierre, nunca antes.
+    no_rdq = fq.assign(rdq=pd.NaT)
+    assert wd.ttm_fundamentals(no_rdq, pd.Timestamp("2026-09-15"))["fiscal_period_end"] == pd.Timestamp("2026-03-31")
+    assert wd.ttm_fundamentals(no_rdq, pd.Timestamp("2026-10-15"))["fiscal_period_end"] == pd.Timestamp("2026-06-30")
