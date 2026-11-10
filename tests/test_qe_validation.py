@@ -246,6 +246,7 @@ def test_si_yahoo_falla_se_usa_la_cache_vieja_y_se_dice(monkeypatch):
     monkeypatch.setattr(loader.cache, "read_json", lambda name: {"AMZN": "2026-01-01"})
     monkeypatch.setattr(loader.cache, "write_json", lambda name, data: None)
     monkeypatch.setattr(loader.cache, "write_frame", lambda name, frame: None)
+    monkeypatch.setattr(loader.cache, "age_days", lambda name: None)
     monkeypatch.setattr(loader, "_download", lambda tickers, s, e: {})
     out = loader.load_ohlcv(["AMZN", "NOPE"], start, pd.Timestamp("2026-02-01"))
     assert "AMZN" in out.ohlcv and out.stale["AMZN"] == old["date"].max()
@@ -267,3 +268,39 @@ def test_ttm_cuenta_por_fecha_de_publicacion_y_no_por_cierre():
     no_rdq = fq.assign(rdq=pd.NaT)
     assert wd.ttm_fundamentals(no_rdq, pd.Timestamp("2026-09-15"))["fiscal_period_end"] == pd.Timestamp("2026-03-31")
     assert wd.ttm_fundamentals(no_rdq, pd.Timestamp("2026-10-15"))["fiscal_period_end"] == pd.Timestamp("2026-06-30")
+
+
+
+def test_la_barra_de_hoy_nunca_entra_ni_se_guarda(monkeypatch):
+    # El 10-nov-2026 a las 15:34 el 63,01 de media sesion de NFLX paso por
+    # "cierre" y quedo en la cache.
+    today = pd.Timestamp.today().normalize()
+    idx = pd.bdate_range(end=today, periods=30, name="date")
+    frame = pd.DataFrame({"Open": 10.0, "High": 11.0, "Low": 9.0, "Close": 10.0, "Volume": 1e6}, index=idx)
+    saved = {}
+    monkeypatch.setattr(loader.cache, "read_frame", lambda name, max_age_days=None: None)
+    monkeypatch.setattr(loader.cache, "read_json", lambda name: {})
+    monkeypatch.setattr(loader.cache, "write_json", lambda name, data: None)
+    monkeypatch.setattr(loader.cache, "write_frame", lambda name, f: saved.__setitem__(name, f))
+    monkeypatch.setattr(loader, "_download", lambda tickers, s, e: {t: frame for t in tickers})
+    out = loader.load_ohlcv(["NFLX"], idx[0], today)
+    assert out.ohlcv["NFLX"].index.max() < today
+    assert pd.to_datetime(saved["qe_ohlcv/NFLX"]["date"]).max() < today
+
+
+def test_ultima_sesion_cerrada_de_nyse():
+    assert loader.last_settled_session("2026-11-10") == pd.Timestamp("2026-11-09")
+    assert loader.last_settled_session("2026-11-09") == pd.Timestamp("2026-11-06")   # lunes -> viernes
+    assert loader.last_settled_session("2026-11-27") == pd.Timestamp("2026-11-25")   # tras Thanksgiving
+
+
+def test_la_cache_vale_solo_si_trae_la_ultima_sesion_y_se_escribio_despues():
+    idx = pd.bdate_range(end="2026-11-09", periods=10)
+    f = pd.DataFrame({"Close": 1.0}, index=idx)
+    today = "2026-11-10"
+    assert loader.cache_usable(f, pd.Timestamp("2026-11-10 08:00"), today)
+    # Escrita el mismo dia que su ultima barra: esa barra pudo ser de media sesion.
+    assert not loader.cache_usable(f, pd.Timestamp("2026-11-09 15:34"), today)
+    # Le falta la ultima sesion cerrada: el analisis saldria con el cierre de anteayer.
+    assert not loader.cache_usable(f.iloc[:-1], pd.Timestamp("2026-11-10 08:00"), today)
+    assert not loader.cache_usable(f, None, today)

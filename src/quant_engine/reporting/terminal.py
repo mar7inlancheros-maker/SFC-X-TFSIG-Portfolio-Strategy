@@ -664,9 +664,13 @@ def summary(console: Console, r: AnalysisResult, show_warnings: bool = True) -> 
     if r.spread:
         lines.append(f"- LONG minus SHORT daily spread: {pct(r.spread['mean_annual'])}/yr, p = "
                      f"{num(r.spread['p_value'], 4)} (Newey-West), in-sample.")
-    best = r.scores["quant_score"].idxmax()
-    worst = r.scores["quant_score"].idxmin()
-    lines.append(f"- {best} has the highest composite quant score in the universe; {worst} the lowest.")
+    qs = r.scores["quant_score"].dropna()
+    # Con un solo nombre (los pares solo puntuan y se recortan antes), "el mejor
+    # y el peor" eran el mismo: se da su posicion contra los pares.
+    if len(qs) >= 2:
+        lines.append(f"- {qs.idxmax()} has the highest composite quant score in the basket; {qs.idxmin()} the lowest.")
+    elif len(qs) == 1:
+        lines.append(f"- {qs.index[0]} composite quant score {qs.iloc[0]:+.2f} against the reference peers.")
     conflicts = list(r.agreement.index[r.agreement["agreement"] == "SIGNAL CONFLICT"])
     if conflicts:
         lines.append(f"- Quantitative data contradicts the research signal for: {', '.join(conflicts)}.")

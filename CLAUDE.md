@@ -480,6 +480,13 @@ Trampas:
 - **`composite.winsorize` no recorta si los percentiles coinciden.** Con 51
   valores iguales y uno distinto, recortar al 5–95 borraba la única
   diferencia.
+- **La barra de hoy tampoco entra en el motor long/short** (`loader.settled`,
+  `loader.cache_usable`). El 10 de noviembre de 2026 una corrida de NFLX a las
+  15:34 tomó el 63,01 de media sesión como "cierre" (entrada, stop y
+  objetivos un 1,5% movidos; el cierre del 9 era 63,95) y lo guardó en la
+  caché, donde al día siguiente habría seguido pasando por cierre. Ahora no se
+  usa ni se guarda la barra de hoy, y una caché vale solo si trae la última
+  sesión cerrada de NYSE y se escribió un día posterior a su última barra.
 - **El loader del motor reintenta y cae a la caché vieja.** `download_with_retry`
   pide lo que falte en lotes de 25. Si sigue faltando y la caché cubre el
   inicio, se usa y `MarketData.stale` lo registra para el aviso. Sin esto, un

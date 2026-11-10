@@ -17,10 +17,52 @@ import pandas as pd
 
 from sfc_tfsig.data import cache
 
+from ..sessions import NYSECalendar
+
 log = logging.getLogger(__name__)
 
 _FIELDS = ("Open", "High", "Low", "Close", "Volume")
 _MAX_AGE_DAYS = 1.0  # los cierres de ayer cambian el analisis; los de hace un ano no
+
+
+def _today(today=None) -> pd.Timestamp:
+    return (pd.Timestamp(today) if today is not None else pd.Timestamp.today()).normalize()
+
+
+def last_settled_session(today=None) -> pd.Timestamp:
+    """Ultima sesion de NYSE ya cerrada: la anterior a hoy, nunca hoy."""
+    return _today(today) - pd.offsets.CustomBusinessDay(calendar=NYSECalendar())
+
+
+def settled(frame: pd.DataFrame, today=None) -> pd.DataFrame:
+    """Sin la barra de hoy: con el mercado abierto no es un cierre.
+
+    El 10 de noviembre de 2026 una corrida de las 15:34 tomo el 63,01 de media
+    sesion de NFLX como "cierre" para entrada, stop y objetivos, y lo guardo en
+    la cache, donde al dia siguiente habria seguido pasando por cierre. Es la
+    misma regla que `sfc_tfsig.data.prices` (`_drop_unsettled`).
+    """
+    return frame.loc[frame.index < _today(today)]
+
+
+def written_at(name: str) -> pd.Timestamp | None:
+    """Cuando se escribio la cache de un nombre, o None si no existe."""
+    age = cache.age_days(name)
+    return None if age is None else pd.Timestamp.now() - pd.Timedelta(days=age)
+
+
+def cache_usable(frame: pd.DataFrame, written: pd.Timestamp | None, today=None) -> bool:
+    """La cache de un ticker vale si trae la ultima sesion cerrada y se escribio
+    DESPUES del dia de su ultima barra.
+
+    Escrita el mismo dia que su ultima barra, esa barra pudo ser de media sesion
+    (las caches anteriores a esta regla guardaban la de hoy). Sin la ultima sesion
+    cerrada, el analisis saldria con el cierre de anteayer.
+    """
+    if frame.empty or written is None:
+        return False
+    last = pd.Timestamp(frame.index.max()).normalize()
+    return pd.Timestamp(written).normalize() > last and last >= last_settled_session(today)
 
 
 @dataclass
@@ -167,8 +209,9 @@ def load_ohlcv(
         covered = asked_from is not None and pd.Timestamp(asked_from) <= start + pd.Timedelta(days=7)
         if cached is not None and not cached.empty and covered:
             frame = cached.set_index(pd.to_datetime(cached["date"])).drop(columns="date")
-            result.ohlcv[ticker] = frame.loc[frame.index >= start]
-            continue
+            if cache_usable(frame, written_at(_cache_name(ticker))):
+                result.ohlcv[ticker] = settled(frame.loc[frame.index >= start])
+                continue
         to_fetch.append(ticker)
 
     if to_fetch:
@@ -185,11 +228,17 @@ def load_ohlcv(
                 if (old is not None and not old.empty and asked_from is not None
                         and pd.Timestamp(asked_from) <= start + pd.Timedelta(days=7)):
                     frame = old.set_index(pd.to_datetime(old["date"])).drop(columns="date")
+                    # La barra del dia en que se escribio pudo ser de media sesion.
+                    when = written_at(_cache_name(ticker))
+                    if when is not None:
+                        frame = frame.loc[frame.index < when.normalize()]
+                    frame = settled(frame)
                     result.ohlcv[ticker] = frame.loc[frame.index >= start]
                     result.stale[ticker] = frame.index.max()
                     continue
                 result.failures[ticker] = "Yahoo returned no data (invalid ticker, delisted or no history)"
                 continue
+            frame = settled(frame)
             cache.write_frame(_cache_name(ticker), frame.reset_index())
             requested[ticker] = start.strftime("%Y-%m-%d")
             result.ohlcv[ticker] = frame
