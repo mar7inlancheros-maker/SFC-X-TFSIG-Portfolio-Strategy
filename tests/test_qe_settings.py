@@ -27,7 +27,7 @@ def test_fracciones_aceptan_porcentaje_o_decimal(text, value):
 
 
 def test_un_ticker_no_puede_estar_largo_y_corto():
-    with pytest.raises(SettingsError, match="LONG y SHORT a la vez"):
+    with pytest.raises(SettingsError, match="both LONG and SHORT"):
         build_settings("AAPL,MSFT", "MSFT,TSLA")
 
 
@@ -39,11 +39,11 @@ def test_el_benchmark_no_puede_estar_en_la_cartera():
 def test_con_pocos_nombres_el_tope_sube_al_minimo_y_se_anota():
     s = build_settings("AAPL,MSFT", "TSLA,INTC")  # 2 x 35% < 100% de pata
     assert s.get("portfolio.max_position") == pytest.approx(0.5)
-    assert "subido" in s.get("_notes")[0]
+    assert "raised" in s.get("_notes")[0]
 
 
 def test_coste_en_unidades_equivocadas_se_rechaza():
-    with pytest.raises(SettingsError, match="unidades"):
+    with pytest.raises(SettingsError, match="units"):
         build_settings("A,B,C", "D,E,F", transaction_cost=5.0)
 
 
@@ -157,7 +157,7 @@ def test_score_con_un_solo_componente_es_ese_componente():
 
 
 def test_componente_desconocido_se_rechaza():
-    with pytest.raises(ValueError, match="desconocidos"):
+    with pytest.raises(ValueError, match="unknown components"):
         composite.normalized_weights({"momentum": 1.0, "suerte": 1.0})
 
 
@@ -206,7 +206,7 @@ def test_sin_marcar_la_primera_mitad_va_long():
 def test_long_fuera_de_la_lista_se_rechaza():
     from quant_engine.app import split_long_short
 
-    with pytest.raises(SettingsError, match="no estan en la lista"):
+    with pytest.raises(SettingsError, match="not in the ticker list"):
         split_long_short(("A", "B"), "Z")
 
 
@@ -229,7 +229,7 @@ def test_canasta_solo_long_invierte_el_100_por_ciento():
     assert s.exposure == (1.0, 1.0)
     # Dos nombres con tope de 35% no llegan al 100%: el tope sube a 50% y se anota.
     assert s.get("portfolio.max_position") == pytest.approx(0.5)
-    assert any("2 nombre" in n for n in s.get("_notes"))
+    assert any("2 name" in n for n in s.get("_notes"))
 
 
 def test_long_short_conserva_la_exposicion_del_yaml():
@@ -243,7 +243,7 @@ def test_long_short_conserva_la_exposicion_del_yaml():
 def test_sin_long_se_rechaza():
     from quant_engine.settings import SettingsError, build_settings
 
-    with pytest.raises(SettingsError, match="al menos un ticker LONG"):
+    with pytest.raises(SettingsError, match="at least one LONG ticker"):
         build_settings("", "TSLA")
 
 

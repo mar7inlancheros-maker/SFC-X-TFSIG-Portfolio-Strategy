@@ -199,7 +199,7 @@ def risk_free_rate(as_of: pd.Timestamp, fallback: float) -> tuple[float, str]:
         if 0.0 < rate < 0.15:
             return rate, f"US 10Y Treasury {rate:.2%} ({close.index[-1]:%Y-%m-%d}, Yahoo ^TNX)"
     except Exception as exc:  # noqa: BLE001
-        log.info("sin ^TNX: %s", exc)
+        log.info("no ^TNX: %s", exc)
     return fallback, f"risk-free {fallback:.2%} from valuation.risk_free in the YAML (^TNX unavailable)"
 
 
@@ -267,7 +267,7 @@ def value_ticker(t: str, clean, beta: float, wrds, fx_rates: dict[str, pd.Series
                               "(debt is raw material); for asset managers and brokers it is a rough guide")
         return v
     except Exception as exc:  # noqa: BLE001 -- una empresa no tumba el analisis
-        log.exception("DCF de %s fallo", t)
+        log.exception("DCF for %s failed", t)
         return {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
 
 

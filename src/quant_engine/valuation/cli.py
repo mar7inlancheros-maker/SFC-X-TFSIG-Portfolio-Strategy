@@ -121,10 +121,10 @@ def _run(args) -> int:
 
 
 def add_parser(sub) -> None:
-    p = sub.add_parser("dcf", help="DCF automatico de uno o varios tickers, con Excel de formulas vivas")
-    p.add_argument("tickers", nargs="+", help="tickers de Yahoo: PLTR AAPL ATZ.TO")
-    p.add_argument("--beta", help="beta a usar en vez de la de la regresion")
-    p.add_argument("--wrds", action="store_true", help="Compustat y consenso de IBES (pide aprobacion Duo)")
+    p = sub.add_parser("dcf", help="automated DCF for one or more tickers, with a live-formula Excel")
+    p.add_argument("tickers", nargs="+", help="Yahoo tickers: PLTR AAPL ATZ.TO")
+    p.add_argument("--beta", help="beta to use instead of the regression one")
+    p.add_argument("--wrds", action="store_true", help="Compustat and IBES consensus (asks for Duo approval)")
     p.add_argument("--no-excel", action="store_true")
     p.add_argument("--width", type=int, default=140)
     p.set_defaults(func=run)

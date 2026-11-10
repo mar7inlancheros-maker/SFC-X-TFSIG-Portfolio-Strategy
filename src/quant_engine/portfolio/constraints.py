@@ -53,7 +53,7 @@ def cap_leg(raw: pd.Series, total: float, cap: float) -> pd.Series:
         x = pd.Series(1.0, index=raw.index)
     if len(x) * cap < total - 1e-12:
         raise ValueError(
-            f"{len(x)} nombres con tope {cap:.0%} no suman {total:.0%}: la pata no cabe"
+            f"{len(x)} names capped at {cap:.0%} do not add up to {total:.0%}: the leg does not fit"
         )
     x = x / x.sum() * total
     for _ in range(100):
@@ -85,7 +85,7 @@ def check(weights: pd.Series, signs: pd.Series, params: ConstructionParams, tol:
         problems.append(f"signo contrario al research: {list(wrong_sign.index)}")
     over = w[w.abs() > params.max_position + tol]
     if len(over):
-        problems.append(f"sobre el tope de {params.max_position:.0%}: {list(over.index)}")
+        problems.append(f"above the {params.max_position:.0%} cap: {list(over.index)}")
     e = exposures(w)
     if abs(e["gross"] - params.gross) > 1e-4:
         problems.append(f"bruta {e['gross']:.4f} != {params.gross}")

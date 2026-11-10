@@ -212,13 +212,13 @@ def _load_fx(tickers, data_start, as_of, warnings: list[str],
     rates, failed = loader.load_fx(set(currency.values()), data_start, as_of)
     unknown = [t for t in unknown if t in warn_for]
     if unknown:
-        warnings.append(f"moneda desconocida para {', '.join(unknown)} (sufijo de bolsa fuera de "
-                        "loader.QUOTE_CURRENCY): se analiza(n) sin convertir a USD; anade el sufijo a la tabla")
+        warnings.append(f"unknown currency for {', '.join(unknown)} (exchange suffix not in "
+                        "loader.QUOTE_CURRENCY): analyzed without converting to USD; add the suffix to the table")
     for c, why in failed.items():
         names = [t for t, ccy in currency.items() if ccy == c and t in warn_for]
         if names:
-            warnings.append(f"sin tipo de cambio {c}/USD ({why}): {', '.join(names)} sin convertir a USD; "
-                            "beta, liquidez y tamano de la orden salen en moneda local")
+            warnings.append(f"no {c}/USD exchange rate ({why}): {', '.join(names)} not converted to USD; "
+                            "beta, liquidity and order size come out in local currency")
     return fx_by_ticker(currency, scale, rates), currency, rates
 
 
@@ -370,14 +370,14 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         hist_schedule = bt.csv_schedule(signals_csv)
         universe = sorted(set(universe) | set(hist_schedule.tickers))
 
-    progress("descargando datos")
+    progress("downloading data")
     market = loader.load_ohlcv([*universe, settings.benchmark, *etfs], data_start, as_of)
 
     if market.stale:
-        warnings.append("Yahoo fallo al actualizar " + ", ".join(
-            f"{k} (precios hasta {v:%Y-%m-%d})" for k, v in market.stale.items()) + ": se usa la cache")
+        warnings.append("Yahoo failed to update " + ", ".join(
+            f"{k} (prices up to {v:%Y-%m-%d})" for k, v in market.stale.items()) + ": the cache is used")
 
-    progress("limpiando y validando")
+    progress("cleaning and validating")
     fx, currency, fx_rates = _load_fx([*universe, settings.benchmark], data_start, as_of, warnings,
                                       warn_for=set(universe) | {settings.benchmark})
     clean = cleaning.align(market, settings.benchmark, fx=fx, currency=currency)
@@ -386,12 +386,12 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     longs = [t for t in settings.longs if t not in excluded]
     shorts = [t for t in settings.shorts if t not in excluded]
     if excluded:
-        warnings.append(f"excluidos por calidad de datos: {', '.join(excluded)}")
+        warnings.append(f"excluded for data quality: {', '.join(excluded)}")
     if not longs:
-        raise ValueError("tras excluir datos inservibles no queda ningun LONG")
+        raise ValueError("after excluding unusable data no LONG is left")
     if settings.shorts and not shorts:
-        raise ValueError("tras excluir datos inservibles no queda ningun SHORT: quita los SHORT para "
-                         "correr la canasta como solo LONG")
+        raise ValueError("after excluding unusable data no SHORT is left: remove the SHORTs to "
+                         "run the basket as long-only")
     tickers = longs + shorts
     # Los pares se deciden con los nombres que SOBREVIVEN a la calidad de datos.
     # Se descargan despues y se realinea: la cache del loader hace que la
@@ -406,8 +406,8 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         market = loader.load_ohlcv([*universe, *extra, settings.benchmark, *etfs], data_start, as_of)
         missing_extra = [k for k in extra if k in market.failures]
         if len(missing_extra) > len(extra) / 4:
-            warnings.append(f"Yahoo no devolvio {len(missing_extra)} de {len(extra)} pares de referencia "
-                            f"({', '.join(missing_extra[:8])}...): score y validacion con menos seccion cruzada")
+            warnings.append(f"Yahoo returned no data for {len(missing_extra)} of {len(extra)} reference peers "
+                            f"({', '.join(missing_extra[:8])}...): score and validation with a smaller cross-section")
         fx, currency, fx_rates = _load_fx([*universe, *extra, settings.benchmark], data_start, as_of, warnings,
                                           warn_for=set())
         clean = cleaning.align(market, settings.benchmark, fx=fx, currency=currency)
@@ -415,46 +415,46 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         extra = [t for t in extra if t not in bad_peers]
         peers = [t for t in peers if t not in bad_peers]
     if peers:
-        warnings.append(f"Quant Score contra {len(peers)} pares de referencia (scoring.reference_peers): "
-                        "la canasta es solo LONG o tiene menos nombres que scoring.min_cross_section")
+        warnings.append(f"Quant Score against {len(peers)} reference peers (scoring.reference_peers): "
+                        "the basket is long-only or has fewer names than scoring.min_cross_section")
     score_names = tickers + peers
     val_names = tickers + [t for t in extra if t not in tickers] if validate_score else []
     signs = pd.Series({**{t: 1.0 for t in longs}, **{t: -1.0 for t in shorts}})
 
-    progress("sectores (SEC)")
-    progress("WRDS: Fama-French, GICS, Compustat, IBES, interes corto")
+    progress("sectors (SEC)")
+    progress("WRDS: Fama-French, GICS, Compustat, IBES, short interest")
     wrds = wrds_data.load(list(dict.fromkeys(score_names + val_names)), data_start, as_of)
     if not wrds.available:
-        warnings.append(f"WRDS no disponible, se usa Yahoo + ETFs + SIC: {wrds.reason}")
+        warnings.append(f"WRDS unavailable, Yahoo + ETFs + SIC are used: {wrds.reason}")
     elif [t for t in wrds.unmatched if t in tickers]:
-        warnings.append(f"sin identificador en Compustat: {', '.join(t for t in wrds.unmatched if t in tickers)}")
+        warnings.append(f"no Compustat identifier: {', '.join(t for t in wrds.unmatched if t in tickers)}")
 
     sectors, sector_source = loader.load_sectors(tickers)
     for t, gics in wrds.sectors.items():
         if t in sectors:
             sectors[t], sector_source[t] = gics, "GICS (Compustat)"
 
-    progress("metricas por activo")
+    progress("per-asset metrics")
     parts_all = _per_asset(settings, clean, score_names, eval_start)
     parts = _restrict(parts_all, tickers + [clean.benchmark])
     r_eval = clean.returns.loc[clean.returns.index >= eval_start]
 
-    progress("correlacion y covarianza")
+    progress("correlation and covariance")
     corr_summary = correlation.correlation_summary(r_eval, longs, shorts)
     cov_estimates = covariance.estimate_all(r_eval[tickers], float(settings.get("portfolio.ewma_lambda", 0.94)))
 
-    progress("modelo de factores")
+    progress("factor model")
     if wrds.available and not wrds.factors.empty:
         fm = factor_model.fama_french_exposures(r_eval, tickers, wrds.factors)
         last_ff = wrds.factors.index.max()
         if (as_of - last_ff).days > 45:
-            warnings.append(f"factores Fama-French hasta {last_ff.date()}: los ultimos dias quedan fuera de la regresion")
+            warnings.append(f"Fama-French factors end on {last_ff.date()}: the last days are left out of the regression")
     else:
         fm = factor_model.factor_exposures(r_eval, tickers, settings.benchmark, proxies, settings.risk_free_rate)
     for name, reason in fm.unavailable.items():
-        warnings.append(f"factor {name} no disponible: {reason}")
+        warnings.append(f"factor {name} unavailable: {reason}")
 
-    progress("senales")
+    progress("signals")
     corr_all = corr_summary["pearson"] if not peers else r_eval[score_names].corr()
     features = _features(parts_all, corr_all, score_names)
     fundamentals = pd.DataFrame()
@@ -501,7 +501,7 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     lvs_rows: dict[str, dict] = {}
     spread: dict[str, float] = {}
     if shorts:
-        progress("largos frente a cortos")
+        progress("longs versus shorts")
         for label, col in (("return_1y", "ret_1y"), ("volatility", "vol_annual"), ("sharpe_1y", "sharpe_1y"),
                            ("momentum_12_1", "mom_12_1"), ("beta", "beta"), ("max_drawdown", "max_dd"),
                            ("skewness", "skewness"), ("kurtosis", "kurtosis"), ("avg_correlation", "avg_corr"),
@@ -513,21 +513,21 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     bench_nav = (1.0 + r_eval[settings.benchmark].fillna(0.0)).cumprod() * settings.initial_capital
 
-    progress("construccion de carteras (5 metodos, backtest walk-forward)")
+    progress("portfolio construction (5 methods, walk-forward backtest)")
     params = _params(settings)
     legs = [("LONG", longs, params.long_leg)] + ([("SHORT", shorts, params.short_leg)] if shorts else [])
     for side, names, leg in legs:
         if len(names) * params.max_position <= leg + 1e-9:
             warnings.append(
-                f"{side}: {len(names)} nombres x tope {params.max_position:.0%} = pata de {leg:.0%}. "
-                "El tope obliga a equiponderar: los metodos de construccion no pueden diferir en esta pata."
+                f"{side}: {len(names)} names x cap {params.max_position:.0%} = a {leg:.0%} leg. "
+                "The cap forces equal weights: the construction methods cannot differ on this leg."
             )
     portfolios = {m: _portfolio_block(settings, clean, signs, m, params, eval_start, bench_nav)
                   for m in construction.METHODS}
 
     ew = construction.equal_weight(signs, params)
     if shorts:
-        progress("beta neutral y sector neutral")
+        progress("beta neutral and sector neutral")
         betas_now = portfolios["equal_weight"].get("betas", pd.Series(1.0, index=tickers))
         bn, bn_note = neutral.beta_neutral_legs(ew, betas_now, params)
         beta_cmp = pd.DataFrame({"50/50 dollar neutral": neutral.describe(ew, betas_now),
@@ -551,18 +551,18 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     primary = portfolios[settings.construction]
     if primary.get("status") != "ok":
-        warnings.append(f"el metodo elegido ({settings.construction}) fallo: {primary.get('note')}; "
-                        "se usa equal_weight para estres y Monte Carlo")
+        warnings.append(f"the chosen method ({settings.construction}) failed: {primary.get('note')}; "
+                        "equal_weight is used for stress and Monte Carlo")
         primary = portfolios["equal_weight"]
 
     historical = None
     if hist_schedule is not None:
-        progress("backtest historico de senales (modo B)")
+        progress("historical signal backtest (mode B)")
         start = max(eval_start, pd.Timestamp(hist_schedule.first_date))
         res = bt.run(clean.returns, clean.benchmark, hist_schedule, backtest_config(settings), start=start, mode="B")
         historical = {"backtest": res, "summary": btm.summary(res, bench_nav)}
 
-    progress("estres")
+    progress("stress")
     w = primary["weights"]
     # Beta de cartera en el peor caso razonable: cada largo con el percentil 95
     # de su beta movil observada, cada corto con el percentil 5. Un corto con
@@ -629,7 +629,7 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     if validate_score:
         months = int(val_cfg.get("months", 36))
         horizon_v = int(val_cfg.get("horizon_d", 21))
-        progress(f"validacion del Quant Score ({months} meses, {len(val_names)} nombres)")
+        progress(f"Quant Score validation ({months} months, {len(val_names)} names)")
         # Las caracteristicas de cada fecha se calculan una vez: el segundo
         # horizonte solo vuelve a puntuar.
         memo: dict[pd.Timestamp, pd.DataFrame] = {}
@@ -658,17 +658,17 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
                                                               "ic_mean", "ic_t", "ic_hit", "spread_mean",
                                                               "spread_t")}
         if not sv.get("available"):
-            warnings.append(f"validacion del Quant Score no disponible: {sv.get('reason')}")
+            warnings.append(f"Quant Score validation unavailable: {sv.get('reason')}")
         elif score_validation.evidence(sv, 2.0) == "inverse":
-            warnings.append(f"el Quant Score ordeno AL REVES en {sv['months']} meses (IC {sv['ic_mean']:+.3f}, "
-                            f"t {sv['ic_t']:+.1f}): sus veredictos no son fiables en este universo")
+            warnings.append(f"the Quant Score ranked BACKWARDS over {sv['months']} months (IC {sv['ic_mean']:+.3f}, "
+                            f"t {sv['ic_t']:+.1f}): its verdicts are not reliable on this universe")
 
-    progress("fechas de resultados (Yahoo)")
+    progress("earnings dates (Yahoo)")
     result.earnings = loader.load_earnings_dates(tickers, as_of)
     if shorts:
         result.ex_dividend = loader.load_ex_dividend_dates(shorts + [t for t in longs if t not in shorts], as_of)
 
-    progress("valoracion DCF (SEC / Compustat)")
+    progress("DCF valuation (SEC / Compustat)")
     from .valuation.engine import run_valuations  # noqa: PLC0415
 
     # Tambien los excluidos con algo de historia (salidas a bolsa recientes): su
@@ -677,17 +677,17 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     result.valuation = run_valuations(result, wrds, fx_rates, as_of, tickers + recent)
     for t, v in result.valuation.items():
         if not v.get("available"):
-            warnings.append(f"DCF de {t} no disponible: {v.get('reason')}")
+            warnings.append(f"DCF for {t} unavailable: {v.get('reason')}")
 
     # El score validado del modelo multifactor (de disco, sin red).
     from .data import multifactor as mf_mod  # noqa: PLC0415
 
     result.multifactor = mf_mod.load(tickers, as_of, clean, sectors, wrds)
     if result.multifactor.get("available") and result.multifactor.get("stale"):
-        warnings.append(f"panel del multifactor del {result.multifactor['date']:%Y-%m-%d}: tiene mas de "
-                        f"{mf_mod.STALE_DAYS} dias, no cuenta como evidencia; correr python main.py panel")
+        warnings.append(f"multifactor panel of {result.multifactor['date']:%Y-%m-%d} is more than "
+                        f"{mf_mod.STALE_DAYS} days old and does not count as evidence; run python main.py panel")
 
-    progress("plan de operacion")
+    progress("trade plan")
     from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415
 
     result.trade_plan = build_plan(result, params_from_settings(settings))
@@ -697,6 +697,6 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
     if run_robustness:
         from .robustness import run_robustness as rr
 
-        progress("robustez")
+        progress("robustness")
         result.robustness = rr(result)
     return result

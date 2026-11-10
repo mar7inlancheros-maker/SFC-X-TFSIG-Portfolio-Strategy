@@ -120,13 +120,13 @@ def parse_positions(text: str) -> tuple[tuple[str, int], ...]:
         ticker, sep, qty = item.replace("=", ":").partition(":")
         ticker = ticker.strip().upper()
         if not sep or not ticker:
-            raise SettingsError(f"posicion '{item}' sin formato TICKER:ACCIONES (ej. AAPL:500, TSLA:-200)")
+            raise SettingsError(f"position '{item}' is not TICKER:SHARES (e.g. AAPL:500, TSLA:-200)")
         try:
             shares = int(qty.strip().replace("+", "").replace("_", ""))
         except ValueError:
-            raise SettingsError(f"'{qty.strip()}' no es un numero entero de acciones en '{item}'") from None
+            raise SettingsError(f"'{qty.strip()}' is not a whole number of shares in '{item}'") from None
         if ticker in out:
-            raise SettingsError(f"{ticker} aparece dos veces en las posiciones: deja una sola entrada")
+            raise SettingsError(f"{ticker} appears twice in the positions: keep a single entry")
         if shares:
             out[ticker] = shares
     return tuple(out.items())
@@ -139,33 +139,33 @@ def format_positions(positions: tuple[tuple[str, int], ...]) -> str:
 def load_yaml(path: Path | None = None) -> dict[str, Any]:
     path = Path(path) if path else DEFAULT_YAML
     if not path.exists():
-        raise SettingsError(f"no existe {path}")
+        raise SettingsError(f"{path} does not exist")
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
 
 def validate(s: EngineSettings) -> None:
     if not s.longs:
-        raise SettingsError("hace falta al menos un ticker LONG (sin SHORT, la canasta es solo LONG)")
+        raise SettingsError("at least one LONG ticker is needed (without SHORTs the basket is long-only)")
     overlap = set(s.longs) & set(s.shorts)
     if overlap:
-        raise SettingsError(f"tickers en LONG y SHORT a la vez: {sorted(overlap)}")
+        raise SettingsError(f"tickers in both LONG and SHORT: {sorted(overlap)}")
     if s.benchmark in s.tickers:
-        raise SettingsError(f"el benchmark {s.benchmark} no puede estar en la cartera")
+        raise SettingsError(f"the benchmark {s.benchmark} cannot be in the portfolio")
     if s.lookback not in LOOKBACK_YEARS:
-        raise SettingsError(f"periodo '{s.lookback}' no valido. Opciones: {list(LOOKBACK_YEARS)}")
+        raise SettingsError(f"lookback '{s.lookback}' is not valid. Options: {list(LOOKBACK_YEARS)}")
     if s.rebalance not in REBALANCES:
-        raise SettingsError(f"rebalanceo '{s.rebalance}' no valido. Opciones: {list(REBALANCES)}")
+        raise SettingsError(f"rebalance '{s.rebalance}' is not valid. Options: {list(REBALANCES)}")
     if s.construction not in CONSTRUCTIONS:
-        raise SettingsError(f"construccion '{s.construction}' no valida. Opciones: {list(CONSTRUCTIONS)}")
+        raise SettingsError(f"construction '{s.construction}' is not valid. Options: {list(CONSTRUCTIONS)}")
     if s.initial_capital <= 0:
-        raise SettingsError("el capital inicial debe ser positivo")
+        raise SettingsError("initial capital must be positive")
     if not 0 <= s.transaction_cost < 0.05:
-        raise SettingsError("coste de transaccion fuera de [0, 5%): revisa las unidades (0.0005 = 0.05%)")
+        raise SettingsError("transaction cost outside [0, 5%): check the units (0.0005 = 0.05%)")
     if not -0.05 < s.risk_free_rate < 0.25:
-        raise SettingsError("tasa libre de riesgo fuera de rango: revisa las unidades (0.04 = 4%)")
+        raise SettingsError("risk-free rate out of range: check the units (0.04 = 4%)")
     if not 0 <= s.borrow_cost < 0.5:
-        raise SettingsError("coste de prestamo fuera de rango: revisa las unidades (0.0025 = 0.25%)")
+        raise SettingsError("borrow cost out of range: check the units (0.0025 = 0.25%)")
 
     cap = float(s.get("portfolio.max_position", 0.2))
     # Con signos fijados, cada lado necesita sitio para su pata: la mitad de la
@@ -173,9 +173,9 @@ def validate(s: EngineSettings) -> None:
     for side, names, leg in _legs(s):
         if len(names) * cap < leg - 1e-9:
             raise SettingsError(
-                f"{side}: {len(names)} nombres x tope {cap:.0%} = {len(names) * cap:.0%} "
-                f"no alcanza para la pata ({leg:.0%}). "
-                "Sube portfolio.max_position en el YAML o anade nombres."
+                f"{side}: {len(names)} names x cap {cap:.0%} = {len(names) * cap:.0%} "
+                f"does not fill the leg ({leg:.0%}). "
+                "Raise portfolio.max_position in the YAML or add names."
             )
 
 
@@ -235,8 +235,8 @@ def build_settings(
         needed = leg / fewest
         raw = {**raw, "portfolio": {**port, "max_position": needed},
                "_notes": [*raw.get("_notes", []),
-                          f"tope por nombre subido de {cap:.0%} a {needed:.0%}: solo {fewest} "
-                          f"nombre(s) en una pata"]}
+                          f"per-name cap raised from {cap:.0%} to {needed:.0%}: only {fewest} "
+                          f"name(s) in a leg"]}
 
     settings = EngineSettings(longs=longs_t, shorts=shorts_t, raw=raw, **values)
     validate(settings)

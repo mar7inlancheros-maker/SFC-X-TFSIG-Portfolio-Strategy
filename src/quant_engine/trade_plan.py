@@ -345,22 +345,22 @@ def check_plan(plan: pd.DataFrame, orders: pd.DataFrame, p: PlanParams, capital:
     for t, r in plan.iterrows():
         prices = [r.get(k) for k in ("entry", "stop", "tp1", "tp2", "fx")]
         if not all(v is not None and np.isfinite(v) and v > 0 for v in prices):
-            errors.append(f"{t}: entrada, stop, objetivos o tipo de cambio no validos {prices}")
+            errors.append(f"{t}: invalid entry, stop, targets or exchange rate {prices}")
             continue
         side = 1 if r["stop"] < r["entry"] else -1
         expected = {"BUY": 1, "SELL SHORT": -1}.get(r["action"])
         if expected is not None and expected != side:
-            errors.append(f"{t}: {r['action']} con el stop del lado de un {'corto' if side < 0 else 'largo'}")
+            errors.append(f"{t}: {r['action']} with the stop on the side of a {'short' if side < 0 else 'long'}")
         if not side * r["entry"] < side * r["tp1"] < side * r["tp2"]:
-            errors.append(f"{t}: objetivos fuera de orden ({r['tp1']:.2f}, {r['tp2']:.2f})")
+            errors.append(f"{t}: targets out of order ({r['tp1']:.2f}, {r['tp2']:.2f})")
         unit = r["entry"] * r["fx"]
         if r["shares"] < 0 or r["shares"] * unit > r["notional"] + 1e-6 or \
                 (r["notional"] > 0 and r["notional"] - r["shares"] * unit >= unit + 1e-6):
-            errors.append(f"{t}: {r['shares']} acciones no cuadran con nocional {r['notional']:,.0f} "
-                          f"a {unit:,.4f} USD por accion")
+            errors.append(f"{t}: {r['shares']} shares do not match the notional {r['notional']:,.0f} "
+                          f"at {unit:,.4f} USD per share")
         risk = r["shares"] * abs(r["entry"] - r["stop"]) * r["fx"] / capital
         if abs(risk - r["risk_capital_pct"]) > 1e-9 or risk > p.max_risk_per_trade + 1e-9:
-            errors.append(f"{t}: riesgo al stop {risk:.4%} (tope {p.max_risk_per_trade:.2%})")
+            errors.append(f"{t}: risk at the stop {risk:.4%} (cap {p.max_risk_per_trade:.2%})")
     for t, o in orders.iterrows():
         if o.get("verdict") == "NOT ANALYZED":
             continue
@@ -368,14 +368,14 @@ def check_plan(plan: pd.DataFrame, orders: pd.DataFrame, p: PlanParams, capital:
         if o["signal"] == "HOLD":
             continue
         if o["signal"] != "NO TRADE" and int(o["qty"]) != abs(moved):
-            errors.append(f"{t}: orden de {int(o['qty'])} para pasar de {int(o['current'])} a {int(o['target'])}")
+            errors.append(f"{t}: order of {int(o['qty'])} to go from {int(o['current'])} to {int(o['target'])}")
     total = float(orders.get("risk_capital_pct", pd.Series(dtype=float)).fillna(0.0).sum())
     if abs(total - risk_at_stops) > 1e-9:
-        errors.append(f"riesgo total {risk_at_stops:.4%} no es la suma de las ordenes {total:.4%}")
+        errors.append(f"total risk {risk_at_stops:.4%} is not the sum of the orders {total:.4%}")
     if hedge:
         moved = math.copysign(hedge["shares"] * hedge["price"] / capital, hedge["beta_before"])
         if abs(hedge["beta_before"] - moved - hedge["beta_after"]) > 1e-9:
-            errors.append("la beta tras la cobertura no cuadra con las acciones del benchmark")
+            errors.append("the beta after the hedge does not match the benchmark shares")
     return errors
 
 

@@ -178,7 +178,7 @@ def load_fx(currencies, start: pd.Timestamp, end: pd.Timestamp) -> tuple[dict[st
         frame = market.ohlcv.get(fx_ticker(c))
         close = None if frame is None else frame["Close"].where(frame["Close"] > 0).dropna()
         if close is None or close.empty:
-            failures[c] = market.failures.get(fx_ticker(c), "sin datos")
+            failures[c] = market.failures.get(fx_ticker(c), "no data")
         else:
             rates[c] = close[~close.index.duplicated(keep="last")].sort_index()
     return rates, failures
@@ -215,7 +215,7 @@ def load_ohlcv(
         to_fetch.append(ticker)
 
     if to_fetch:
-        log.info("descargando %d tickers de Yahoo", len(to_fetch))
+        log.info("downloading %d tickers from Yahoo", len(to_fetch))
         downloaded = download_with_retry(to_fetch, start, end)
         for ticker in to_fetch:
             frame = downloaded.get(ticker)
@@ -260,7 +260,7 @@ def load_sectors(tickers: list[str] | tuple[str, ...]) -> tuple[dict[str, str], 
 
         listing = sec.listed_companies().drop_duplicates("ticker").set_index("ticker")["cik"]
     except Exception as exc:  # noqa: BLE001 -- se reporta, no se traga
-        reason = f"SEC no disponible: {type(exc).__name__}"
+        reason = f"SEC unavailable: {type(exc).__name__}"
         for t in tickers:
             sectors[t], source[t] = "Unknown", reason
         return sectors, source
@@ -268,14 +268,14 @@ def load_sectors(tickers: list[str] | tuple[str, ...]) -> tuple[dict[str, str], 
     for ticker in tickers:
         cik = listing.get(ticker)
         if cik is None or pd.isna(cik):
-            sectors[ticker], source[ticker] = "Unknown", "no figura en la lista de la SEC (ETF o extranjero)"
+            sectors[ticker], source[ticker] = "Unknown", "not in the SEC list (ETF or foreign)"
             continue
         try:
             profile = company_profile(int(cik))
             sectors[ticker] = sector_from_sic(profile.get("sic"))
             source[ticker] = f"SEC SIC {profile.get('sic')}"
         except Exception as exc:  # noqa: BLE001
-            sectors[ticker], source[ticker] = "Unknown", f"perfil SEC fallo: {type(exc).__name__}"
+            sectors[ticker], source[ticker] = "Unknown", f"SEC profile failed: {type(exc).__name__}"
     return sectors, source
 
 
@@ -337,7 +337,7 @@ def load_earnings_dates(tickers, today: pd.Timestamp, timeout: float = 20.0,
             try:
                 d = f.result()
             except Exception as exc:  # noqa: BLE001 -- sin fecha, la ficha lo dice
-                log.info("sin fecha de resultados para %s: %s", t, exc)
+                log.info("no earnings date for %s: %s", t, exc)
                 d = None
             known[t] = d.strftime("%Y-%m-%d") if d is not None and pd.notna(d) else None
             if d is not None and pd.notna(d):

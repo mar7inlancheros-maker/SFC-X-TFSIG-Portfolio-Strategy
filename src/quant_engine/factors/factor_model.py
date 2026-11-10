@@ -57,7 +57,7 @@ def build_factor_returns(
     for name, (long_etf, short_etf) in proxies.items():
         missing = [t for t in (long_etf, short_etf) if t not in returns.columns]
         if missing:
-            unavailable[name] = f"sin datos de {', '.join(missing)}"
+            unavailable[name] = f"no data for {', '.join(missing)}"
             continue
         spread = returns[long_etf] - returns[short_etf]
         if spread.notna().sum() < 252:

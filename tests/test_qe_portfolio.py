@@ -69,11 +69,11 @@ def test_max_sharpe_sin_solucion_se_declara_no_se_fuerza(market):
     mu[SIGNS > 0], mu[SIGNS < 0] = -0.001, 0.001
     res = C.build("max_sharpe", SIGNS, cov=cov, vol=vol, params=PARAMS, mu=mu)
     assert res.status == "failed"
-    assert "sin solucion" in res.note
+    assert "no solution" in res.note
 
 
 def test_tope_imposible_lanza_error_no_incumple_en_silencio():
-    with pytest.raises(ValueError, match="no cabe"):
+    with pytest.raises(ValueError, match="does not fit"):
         cap_leg(pd.Series(1.0, index=list("AB")), 1.0, 0.3)
 
 
@@ -203,7 +203,7 @@ def test_senales_historicas_desde_csv(tmp_path):
 def test_senal_desconocida_en_el_csv_falla(tmp_path):
     path = tmp_path / "bad.csv"
     pd.DataFrame({"date": ["2021-01-01"], "ticker": ["A"], "signal": ["MAYBE"]}).to_csv(path, index=False)
-    with pytest.raises(ValueError, match="no reconocidas"):
+    with pytest.raises(ValueError, match="unrecognized"):
         bt.csv_schedule(path)
 
 
@@ -269,11 +269,11 @@ def test_canasta_solo_long_se_opera_y_gana_con_su_largo():
     before = res.nav.loc[:jump_day].iloc[-2]
     # 50% en A, que sube un 10%: la cartera gana un 5%.
     assert res.nav.loc[jump_day] / before - 1 == pytest.approx(0.05, rel=1e-6)
-    assert not any("sin largos" in w for w in res.warnings)
+    assert not any("no longs" in w for w in res.warnings)
 
 
 def test_un_long_short_sin_cortos_no_se_opera():
     r = _flat()
     res = bt.run(r, "BENCH", bt.constant_schedule(pd.Series({"A": 1.0, "B": 1.0})), _cfg(),
                  start=r.index[80], mode="A")
-    assert any("sin largos y cortos a la vez" in w for w in res.warnings)
+    assert any("no longs and shorts at the same time" in w for w in res.warnings)

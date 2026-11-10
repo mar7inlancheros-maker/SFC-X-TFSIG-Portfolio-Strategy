@@ -110,7 +110,7 @@ def risk_parity(signs: pd.Series, cov: pd.DataFrame, params: ConstructionParams)
     if (x > params.max_position + 1e-9).any():
         # El tope rompe la igualdad exacta de contribuciones; se dice.
         x = cap_leg(x, params.gross, params.max_position)
-        note = "tope por nombre activo: contribuciones aproximadamente iguales, no exactas"
+        note = "per-name cap binding: contributions roughly equal, not exact"
     return x * signs, note
 
 
@@ -145,7 +145,7 @@ def min_variance(signs: pd.Series, cov: pd.DataFrame, params: ConstructionParams
                       _leg_constraints(w, signs, params, betas=betas))
     status = _solve(prob)
     if w.value is None:
-        return None, f"min_variance sin solucion ({status})"
+        return None, f"min_variance has no solution ({status})"
     return pd.Series(w.value, index=names), ""
 
 
@@ -181,11 +181,11 @@ def max_sharpe(signs: pd.Series, cov: pd.DataFrame, mu: pd.Series, params: Const
     status = _solve(prob)
     if y.value is None or kappa.value is None or kappa.value <= 1e-12:
         return None, (
-            "max_sharpe sin solucion: con los retornos esperados contraidos, ninguna "
-            f"cartera con estos signos tiene Sharpe ex-ante positivo ({status})"
+            "max_sharpe has no solution: with the shrunk expected returns, no "
+            f"portfolio with these signs has a positive ex-ante Sharpe ({status})"
         )
     return pd.Series(y.value / kappa.value, index=names), (
-        "depende de retornos esperados historicos contraidos: el menos robusto de los cinco"
+        "depends on shrunk historical expected returns: the least robust of the five"
     )
 
 
@@ -200,7 +200,7 @@ def build(
     betas: pd.Series | None = None,
 ) -> ConstructionResult:
     if method not in METHODS:
-        raise ValueError(f"metodo '{method}' desconocido. Opciones: {METHODS}")
+        raise ValueError(f"unknown method '{method}'. Options: {METHODS}")
     signs = signs.astype(float)
     note = ""
     if method == "equal_weight":
@@ -213,7 +213,7 @@ def build(
         w, note = min_variance(signs, cov, params, betas)
     else:
         if mu is None:
-            raise ValueError("max_sharpe necesita retornos esperados")
+            raise ValueError("max_sharpe needs expected returns")
         w, note = max_sharpe(signs, cov, mu, params, betas)
 
     if w is None:
@@ -224,7 +224,7 @@ def build(
     # escalando las patas (ver `neutral.beta_neutral_legs`).
     if params.beta_neutral and method in ("equal_weight", "inverse_vol", "risk_parity"):
         if betas is None:
-            raise ValueError("beta_neutral necesita betas")
+            raise ValueError("beta_neutral needs betas")
         from .neutral import beta_neutral_legs  # evita import circular
 
         w, beta_note = beta_neutral_legs(w, betas, params)

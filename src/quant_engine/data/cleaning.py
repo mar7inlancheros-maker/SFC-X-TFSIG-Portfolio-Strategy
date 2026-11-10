@@ -127,8 +127,8 @@ def align(market: MarketData, benchmark: str, *, max_ffill: int = 2,
     peniques). Los tickers que no estan se suponen ya en USD."""
     if benchmark not in market.ohlcv:
         raise ValueError(
-            f"no hay datos del benchmark {benchmark}: sin el no hay calendario ni beta. "
-            f"Motivo: {market.failures.get(benchmark, 'desconocido')}"
+            f"no data for the benchmark {benchmark}: without it there is no calendar and no beta. "
+            f"Reason: {market.failures.get(benchmark, 'unknown')}"
         )
 
     calendar = market.ohlcv[benchmark].index.drop_duplicates().sort_values()

@@ -95,7 +95,7 @@ def validate(features_at: Callable[[pd.Timestamp], pd.DataFrame], fwd: pd.DataFr
         block["date"] = d
         rows.append(block.reset_index(names="ticker"))
     if not rows:
-        return {"available": False, "reason": "sin fechas con datos suficientes"}
+        return {"available": False, "reason": "no dates with enough data"}
     panel = pd.concat(rows, ignore_index=True)
 
     # Con horizonte de un mes y fechas mensuales no hay solape; con mas, si.
@@ -103,7 +103,7 @@ def validate(features_at: Callable[[pd.Timestamp], pd.DataFrame], fwd: pd.DataFr
     ic = information_coefficient(panel, score_col="quant_score", min_names=min_names)
     if len(ic) < 6:
         return {"available": False,
-                "reason": f"solo {len(ic)} meses con {min_names} nombres o mas: hacen falta 6"}
+                "reason": f"only {len(ic)} months with {min_names} names or more: 6 are needed"}
     summary = ic_summary(ic, lags=lags)
 
     comps = {}

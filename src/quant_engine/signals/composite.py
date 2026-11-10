@@ -119,10 +119,10 @@ def normalized_weights(weights: dict[str, float]) -> dict[str, float]:
     active = {k: float(v) for k, v in weights.items() if float(v) > 0}
     total = sum(active.values())
     if total <= 0:
-        raise ValueError("todos los pesos del Quant Score son cero")
+        raise ValueError("all Quant Score weights are zero")
     unknown = set(active) - set(COMPONENTS)
     if unknown:
-        raise ValueError(f"componentes desconocidos en signal_weights: {sorted(unknown)}")
+        raise ValueError(f"unknown components in signal_weights: {sorted(unknown)}")
     return {k: v / total for k, v in active.items()}
 
 

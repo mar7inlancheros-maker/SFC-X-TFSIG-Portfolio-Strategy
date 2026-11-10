@@ -87,7 +87,7 @@ def split_long_short(tickers: tuple[str, ...], long_text: str) -> tuple[tuple[st
     longs = parse_tickers(long_text)
     unknown = [t for t in longs if t not in tickers]
     if unknown:
-        raise SettingsError(f"LONG que no estan en la lista de tickers: {unknown}")
+        raise SettingsError(f"LONG tickers not in the ticker list: {unknown}")
     return longs, tuple(t for t in tickers if t not in longs)
 
 
@@ -102,30 +102,30 @@ def ask_settings(previous: EngineSettings | None = None) -> EngineSettings:
     while True:
         try:
             prev_all = ",".join(previous.longs + previous.shorts) if previous else None
-            tickers = parse_tickers(_ask("Digite los tickers, separados por coma", prev_all))
+            tickers = parse_tickers(_ask("Enter the tickers, separated by commas", prev_all))
             if not tickers:
-                raise SettingsError("hace falta al menos 1 ticker")
+                raise SettingsError("at least 1 ticker is needed")
             half = (len(tickers) + 1) // 2
-            print(f"  (Enter = los primeros {half} LONG: {','.join(tickers[:half])}. "
-                  "Todos LONG = canasta solo LONG)")
-            longs, shorts = split_long_short(tickers, _ask("Cuales van LONG? El resto queda SHORT", ""))
-            print(f"  LONG:  {' '.join(longs)}\n  SHORT: {' '.join(shorts) if shorts else '(ninguno: solo LONG)'}")
-            print("  (TICKER:ACCIONES, negativo = corto. Ej: AAPL:500,TSLA:-200. Enter = ninguna)")
+            print(f"  (Enter = the first {half} LONG: {','.join(tickers[:half])}. "
+                  "All LONG = long-only basket)")
+            longs, shorts = split_long_short(tickers, _ask("Which ones go LONG? The rest go SHORT", ""))
+            print(f"  LONG:  {' '.join(longs)}\n  SHORT: {' '.join(shorts) if shorts else '(none: long-only)'}")
+            print("  (TICKER:SHARES, negative = short. E.g. AAPL:500,TSLA:-200. Enter = none)")
             prev_pos = format_positions(previous.positions) if previous else ""
-            positions = parse_positions(_ask("Posiciones actuales", prev_pos))
+            positions = parse_positions(_ask("Current positions", prev_pos))
             if positions:
-                print("  AHORA: " + "  ".join(f"{t} {q:+,}" for t, q in positions))
+                print("  NOW: " + "  ".join(f"{t} {q:+,}" for t, q in positions))
 
             options = {}
-            if _ask("Cambiar opciones avanzadas? (s/N)", "n").lower().startswith("s"):
+            if _ask("Change advanced options? (y/N)", "n").lower().startswith(("y", "s")):
                 options = dict(
                     benchmark=_ask("Benchmark", base.benchmark),
-                    lookback=_ask(f"Periodo {list(LOOKBACK_YEARS)}", base.lookback),
-                    risk_free_rate=parse_fraction(_ask("Tasa libre de riesgo", str(base.risk_free_rate))),
-                    rebalance=_ask(f"Rebalanceo {list(REBALANCES)}", base.rebalance),
-                    construction=_ask(f"Construccion {list(CONSTRUCTIONS)}", base.construction),
+                    lookback=_ask(f"Lookback {list(LOOKBACK_YEARS)}", base.lookback),
+                    risk_free_rate=parse_fraction(_ask("Risk-free rate", str(base.risk_free_rate))),
+                    rebalance=_ask(f"Rebalance {list(REBALANCES)}", base.rebalance),
+                    construction=_ask(f"Construction {list(CONSTRUCTIONS)}", base.construction),
                     initial_capital=float(_ask("Capital", f"{base.initial_capital:.0f}").replace(",", "")),
-                    transaction_cost=parse_fraction(_ask("Coste de transaccion", f"{base.transaction_cost:.2%}")),
+                    transaction_cost=parse_fraction(_ask("Transaction cost", f"{base.transaction_cost:.2%}")),
                 )
             elif previous is not None:
                 options = dict(benchmark=previous.benchmark, lookback=previous.lookback,
@@ -134,7 +134,7 @@ def ask_settings(previous: EngineSettings | None = None) -> EngineSettings:
                                transaction_cost=previous.transaction_cost)
             return build_settings(longs, shorts, positions=positions, **options)
         except (SettingsError, ValueError) as exc:
-            print(f"\n  ERROR: {exc}\n  Intenta de nuevo.\n")
+            print(f"\n  ERROR: {exc}\n  Try again.\n")
 
 
 # Ancho del reporte en disco: independiente de la terminal de quien lo corre.
@@ -284,23 +284,23 @@ def run_once(args) -> int:
 
 
 def add_parser(sub) -> None:
-    p = sub.add_parser("research", help="motor long/short sobre listas de research (sin preguntas)")
-    p.add_argument("--long", required=True, help="tickers LONG separados por comas")
-    p.add_argument("--short", default="", help="tickers SHORT separados por comas; sin ellos, canasta solo LONG")
+    p = sub.add_parser("research", help="long/short engine on research lists (no prompts)")
+    p.add_argument("--long", required=True, help="LONG tickers, comma-separated")
+    p.add_argument("--short", default="", help="SHORT tickers, comma-separated; without them, a long-only basket")
     p.add_argument("--benchmark")
     p.add_argument("--lookback", choices=list(LOOKBACK_YEARS))
     p.add_argument("--rebalance", choices=list(REBALANCES))
     p.add_argument("--construction", choices=list(CONSTRUCTIONS))
     p.add_argument("--capital")
-    p.add_argument("--tc", help="coste de transaccion: 0.0005 o 0.05%%")
-    p.add_argument("--rf", help="tasa libre de riesgo: 0.04 o 4%%")
-    p.add_argument("--positions", help="posiciones actuales: AAPL:500,TSLA:-200 (negativo = corto)")
-    p.add_argument("--signals", help="CSV date,ticker,signal para el modo B")
+    p.add_argument("--tc", help="transaction cost: 0.0005 or 0.05%%")
+    p.add_argument("--rf", help="risk-free rate: 0.04 or 4%%")
+    p.add_argument("--positions", help="current positions: AAPL:500,TSLA:-200 (negative = short)")
+    p.add_argument("--signals", help="CSV date,ticker,signal for mode B")
     p.add_argument("--no-robustness", action="store_true")
     p.add_argument("--no-charts", action="store_true")
-    p.add_argument("--full", action="store_true", help="imprime las 13 secciones, no solo el plan")
-    p.add_argument("--open", action="store_true", help="abre el informe del plan en el navegador")
-    p.add_argument("--width", type=int, default=160, help="ancho de la salida")
+    p.add_argument("--full", action="store_true", help="print all 13 sections, not only the plan")
+    p.add_argument("--open", action="store_true", help="open the trade plan report in the browser")
+    p.add_argument("--width", type=int, default=160, help="output width")
     p.set_defaults(func=run_once)
 
 

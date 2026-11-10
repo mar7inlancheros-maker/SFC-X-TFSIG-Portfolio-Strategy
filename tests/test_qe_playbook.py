@@ -104,10 +104,10 @@ def test_un_plan_correcto_pasa_la_verificacion():
 
 
 @pytest.mark.parametrize("breaks, needle", [
-    (lambda pl, o: pl.__setitem__("stop", [105.0, 52.0]), "lado"),           # stop de un largo por encima
-    (lambda pl, o: pl.__setitem__("shares", [2000, 2000]), "no cuadran"),     # acciones de mas
-    (lambda pl, o: pl.__setitem__("entry", [np.nan, 50.0]), "no validos"),
-    (lambda pl, o: o.__setitem__("qty", [999, 2000]), "orden de 999"),
+    (lambda pl, o: pl.__setitem__("stop", [105.0, 52.0]), "side of a"),           # stop de un largo por encima
+    (lambda pl, o: pl.__setitem__("shares", [2000, 2000]), "do not match"),     # acciones de mas
+    (lambda pl, o: pl.__setitem__("entry", [np.nan, 50.0]), "invalid"),
+    (lambda pl, o: o.__setitem__("qty", [999, 2000]), "order of 999"),
 ])
 def test_la_verificacion_caza_numeros_que_no_cuadran(breaks, needle):
     plan, orders = _good_plan()
@@ -125,9 +125,9 @@ def test_la_verificacion_caza_riesgo_por_encima_del_tope_y_cobertura_mal():
     plan["risk_capital_pct"] = plan["shares"] * (plan["entry"] - plan["stop"]).abs() * plan["fx"] / 1_000_000
     hedge = {"shares": 100, "price": 500.0, "beta_before": 0.2, "beta_after": 0.2}
     errors = tp.check_plan(plan, orders, tp.PlanParams(), 1_000_000, 0.0, hedge)
-    assert any("tope" in e for e in errors)
-    assert any("suma" in e for e in errors)
-    assert any("cobertura" in e for e in errors)
+    assert any("cap" in e for e in errors)
+    assert any("sum" in e for e in errors)
+    assert any("hedge" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------

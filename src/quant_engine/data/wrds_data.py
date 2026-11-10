@@ -446,7 +446,7 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
                           f"and datadate >= '{as_of - pd.DateOffset(years=9):%Y-%m-%d}' and datadate <= '{day}'",
                           f"funda_{day}")
             except Exception as exc:  # noqa: BLE001
-                log.warning("comp.funda no disponible para el DCF: %s", exc)
+                log.warning("comp.funda unavailable for the DCF: %s", exc)
         if len(ibtics):
             try:
                 where_s = (f"where ticker in ({_in_list(ibtics.unique())}) and measure='SAL' and fpi in ('1', '2') "
@@ -456,7 +456,7 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
                           f"select ticker, statpers, fpi, fpedats, meanest, numest, curcode "
                           f"from ibes.statsum_xepsint {where_s}", f"ibes_sales_{day}")
             except Exception as exc:  # noqa: BLE001
-                log.warning("consenso de ventas de IBES no disponible: %s", exc)
+                log.warning("IBES sales consensus unavailable: %s", exc)
 
         return WrdsData(
             available=True,
@@ -474,7 +474,7 @@ def load(tickers: list[str] | tuple[str, ...], start: pd.Timestamp, as_of: pd.Ti
             ibes_sales=sales,
         )
     except Exception as exc:  # noqa: BLE001
-        log.exception("fallo leyendo WRDS")
+        log.exception("reading WRDS failed")
         return WrdsData(available=False, reason=f"{type(exc).__name__}: {str(exc).splitlines()[0][:400]}")
     finally:
         conn_ctx.__exit__(None, None, None)

@@ -38,7 +38,7 @@ def beta_neutral_legs(weights: pd.Series, betas: pd.Series, params: Construction
     b_long = float((long_w * b[long_w.index]).sum() / long_w.sum())
     b_short = float((short_w * b[short_w.index]).sum() / short_w.sum())
     if b_long <= 0 or b_short <= 0:
-        return w, "beta media no positiva en una pata: no se puede neutralizar por escalado"
+        return w, "non-positive mean beta in a leg: it cannot be neutralized by scaling"
 
     long_total = params.gross * b_short / (b_long + b_short)
     short_total = params.gross - long_total
@@ -47,12 +47,12 @@ def beta_neutral_legs(weights: pd.Series, betas: pd.Series, params: Construction
         new_long = cap_leg(long_total * long_w / long_w.sum(), long_total, params.max_position)
         new_short = cap_leg(short_total * short_w / short_w.sum(), short_total, params.max_position)
     except ValueError as exc:
-        return w, f"beta neutral imposible con el tope por nombre: {exc}"
+        return w, f"beta neutral impossible with the per-name cap: {exc}"
     out = pd.Series(0.0, index=w.index)
     out[new_long.index] = new_long
     out[new_short.index] = -new_short
     if abs(portfolio_beta(out, betas)) > 1e-6:
-        note = "el tope por nombre deja beta residual"
+        note = "the per-name cap leaves residual beta"
     return out, note
 
 
@@ -75,7 +75,7 @@ def sector_neutral(signs: pd.Series, sectors: dict[str, str], params: Constructi
     prob = cp.Problem(cp.Minimize(objective), _leg_constraints(w, signs.astype(float), params))
     status = _solve(prob)
     if w.value is None:
-        return None, f"sector neutral sin solucion ({status})", []
+        return None, f"sector neutral has no solution ({status})", []
 
     one_sided = []
     for sector, group in signs.groupby(labels):
@@ -83,7 +83,7 @@ def sector_neutral(signs: pd.Series, sectors: dict[str, str], params: Constructi
             one_sided.append(sector)
     note = ""
     if one_sided:
-        note = f"sectores con nombres en una sola pata, no neutralizables: {', '.join(sorted(one_sided))}"
+        note = f"sectors with names in only one leg, cannot be neutralized: {', '.join(sorted(one_sided))}"
     return pd.Series(w.value, index=names).where(lambda s: s.abs() > 1e-10, 0.0), note, one_sided
 
 

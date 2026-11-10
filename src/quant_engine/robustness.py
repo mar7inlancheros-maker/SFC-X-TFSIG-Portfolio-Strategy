@@ -51,7 +51,7 @@ def run_robustness(result) -> dict[str, object]:
         start = result.as_of - pd.DateOffset(years=years)
         if start < clean.returns.index[0] + pd.DateOffset(years=1):
             rows.append({"dimension": "lookback", "variant": lb, "sharpe": None,
-                         "note": "fuera de los datos descargados"})
+                         "note": "outside the downloaded data"})
             continue
         record("lookback", lb, base, start)
 

@@ -91,13 +91,13 @@ def csv_schedule(path) -> SignalSchedule:
     df = pd.read_csv(path)
     missing = {"date", "ticker", "signal"} - set(df.columns)
     if missing:
-        raise ValueError(f"el CSV de senales necesita columnas date,ticker,signal (faltan {missing})")
+        raise ValueError(f"the signals CSV needs columns date,ticker,signal (missing {missing})")
     df["date"] = pd.to_datetime(df["date"])
     df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
     df["signal"] = df["signal"].astype(str).str.upper().str.strip()
     bad = set(df["signal"]) - {"LONG", "SHORT", "FLAT", "CLOSE", "BUY", "SELL"}
     if bad:
-        raise ValueError(f"senales no reconocidas: {sorted(bad)}")
+        raise ValueError(f"unrecognized signals: {sorted(bad)}")
     mapping = {"LONG": 1, "BUY": 1, "SHORT": -1, "SELL": -1, "FLAT": 0, "CLOSE": 0}
     df["sign"] = df["signal"].map(mapping)
     df = df.sort_values("date")
@@ -188,15 +188,15 @@ def run(
             # solamente; un long/short sin una de sus patas no es el libro pedido.
             long_only = cfg.params.short_leg <= 1e-12
             if signs is None or not _tradable(signs, long_only):
-                warnings.append(f"{d.date()}: sin largos" + ("" if long_only else " y cortos a la vez")
-                                + "; se mantiene la cartera")
+                warnings.append(f"{d.date()}: no longs" + ("" if long_only else " and shorts at the same time")
+                                + "; the portfolio is kept")
             else:
                 hist = returns.loc[:d]
                 names = [n for n in signs.index if n in returns.columns]
                 cov, vol, mu, betas, usable = _estimate(hist, names, benchmark, cfg)
                 dropped = sorted(set(names) - set(usable))
                 if dropped:
-                    warnings.append(f"{d.date()}: sin historia suficiente para estimar {dropped}")
+                    warnings.append(f"{d.date()}: not enough history to estimate {dropped}")
                 s = signs.reindex(usable).dropna()
                 if _tradable(s, long_only):
                     try:
@@ -240,7 +240,7 @@ def run(
         contrib_rows.append({"start": period_start_date, "end": sessions[-1],
                              **(pnl / period_start_nav).to_dict()})
     if missing_returns:
-        warnings.append(f"{missing_returns} retornos diarios faltantes se trataron como 0 en posiciones abiertas")
+        warnings.append(f"{missing_returns} missing daily returns were treated as 0 on open positions")
 
     nav = pd.Series(dict(nav_points)).sort_index()
     first_exec = min(exec_day) if exec_day else None
