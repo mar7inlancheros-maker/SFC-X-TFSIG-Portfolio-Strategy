@@ -109,8 +109,8 @@ def validate_policy(risk_cfg: Config) -> None:
         unknown = sorted(set(scenario.get("sectors", {})) - set(SECTORS))
         if unknown:
             raise ConfigError(
-                f"escenario '{scenario['name']}': sectores desconocidos {unknown}. "
-                f"Validos: {list(SECTORS)}"
+                f"scenario '{scenario['name']}': unknown sectors {unknown}. "
+                f"Valid: {list(SECTORS)}"
             )
 
 
@@ -123,7 +123,7 @@ def book_from_backtest(holdings: pd.DataFrame, close_wide: pd.DataFrame,
     hay, y entre rebalanceos lo que sube pesa mas.
     """
     if holdings.empty:
-        raise ValueError("el backtest no dejo posiciones: no hay cartera que medir")
+        raise ValueError("the backtest left no positions: there is no portfolio to measure")
     as_of = pd.Timestamp(nav.index[-1])
     last = holdings[holdings["date"] == holdings["date"].max()].set_index("ticker")
     visible = close_wide.loc[close_wide.index <= as_of].reindex(columns=last.index)
@@ -181,7 +181,7 @@ def _set_garch(result: RiskAnalysis, label: str, returns: pd.Series, risk_cfg: C
     try:
         fit, sim, table = _garch_block(label, returns, risk_cfg, confidences, seed)
     except ValueError as exc:
-        result.warnings.append(f"GARCH de la {label}: {exc}")
+        result.warnings.append(f"GARCH of the {label}: {exc}")
         return
     result.garch_fits[label] = fit
     result.garch_sims[label] = sim
@@ -205,15 +205,15 @@ def _set_book_history(result: RiskAnalysis, prices: pd.DataFrame, risk_cfg: Conf
             result.weights, result.ex_ante.betas, prices, result.benchmark
         )
     except ValueError as exc:
-        result.warnings.append(f"historia de la cartera: {exc}")
+        result.warnings.append(f"portfolio history: {exc}")
         return False
     sv_cfg = risk_cfg.section("stress.stressed_var")
     result.stressed = stress.stressed_var(
         backcast, float(sv_cfg["confidence"]), int(sv_cfg["window_d"]), proxied
     ) or None
     if result.stressed is None:
-        result.warnings.append("historia de precios insuficiente para el VaR estresado")
-    _set_garch(result, "cartera", backcast, risk_cfg, confidences, seed)
+        result.warnings.append("not enough price history for the stressed VaR")
+    _set_garch(result, "portfolio", backcast, risk_cfg, confidences, seed)
     return True
 
 
@@ -294,8 +294,8 @@ def analyze_book(
     )
     if coverage.get(benchmark, 0.0) == 0.0:
         raise ValueError(
-            f"sin precios de {benchmark} en la ventana de covarianza: anadelo a los "
-            "precios cargados antes de medir el riesgo"
+            f"no prices for {benchmark} in the covariance window: add it to the "
+            "loaded prices before measuring risk"
         )
     ex_ante = exposure.ex_ante_risk(
         weights, sectors, returns, benchmark,
@@ -319,14 +319,14 @@ def analyze_book(
         ).reindex(weights.index)
     else:
         adv = pd.Series(np.nan, index=weights.index)
-        warnings.append("sin volumen: no se mide la liquidez ni la capacidad")
+        warnings.append("no volume: liquidity and capacity are not measured")
     liq_table, liq_summary = exposure.liquidity(
         weights, nav, adv, participation=participation, max_days=max_days
     )
     if liq_summary.get("weight_without_adv", 0.0) > 0 and volume_wide is not None:
         warnings.append(
-            f"{liq_summary['weight_without_adv']:.1%} del NAV sin volumen medible: "
-            "su liquidez no entra en el limite"
+            f"{liq_summary['weight_without_adv']:.1%} of NAV without measurable volume: "
+            "its liquidity is not in the limit"
         )
 
     # -- VaR de la cartera actual ---------------------------------------------
@@ -353,8 +353,8 @@ def analyze_book(
     )
     if not hypothetical.empty and (hypothetical["missing_factors"] != "").any():
         warnings.append(
-            "escenarios con choque de factor sin scores de la cartera: el choque de "
-            "factor se trato como cero"
+            "scenarios with a factor shock but no portfolio scores: the factor shock "
+            "was treated as zero"
         )
     reverse = stress.reverse_stress(ex_ante.beta, conc.get("invested", 0.0),
                                     risk_cfg.get("stress.reverse.loss_thresholds"))
@@ -379,7 +379,7 @@ def analyze_book(
         reverse=reverse,
         measures={},
         limits=pd.DataFrame(),
-        status="SIN DATO",
+        status="NO DATA",
         warnings=warnings,
     )
 
@@ -408,29 +408,29 @@ def analyze_book(
                 # factorial aplica las exposiciones de HOY. Si las de hoy son
                 # mas extremas, el riesgo que viene es el factorial.
                 result.warnings.append(
-                    f"el modelo factorial ve {ratio - 1:.0%} mas volatilidad que Ledoit-Wolf "
-                    f"({result.factor_risk.total_vol:.1%} frente a {ex_ante.volatility:.1%}): las "
-                    "exposiciones de hoy son mas extremas que las del ano de la covarianza, y los "
-                    "VaR ex-ante basados en ella se quedan cortos"
+                    f"the factor model sees {ratio - 1:.0%} more volatility than Ledoit-Wolf "
+                    f"({result.factor_risk.total_vol:.1%} against {ex_ante.volatility:.1%}): today's "
+                    "exposures are more extreme than those of the covariance year, and the "
+                    "ex-ante VaRs based on it fall short"
                 )
             elif np.isfinite(ratio) and ratio < 1 / 1.25:
                 # El caso inverso tambien es una discrepancia de mas del 25%: las
                 # exposiciones de hoy son mas suaves que las del ano y los VaR
                 # ex-ante salen conservadores. No es alarma, pero hay que saberlo.
                 result.warnings.append(
-                    f"el modelo factorial ve {1 - ratio:.0%} menos volatilidad que Ledoit-Wolf "
-                    f"({result.factor_risk.total_vol:.1%} frente a {ex_ante.volatility:.1%}): las "
-                    "exposiciones de hoy son mas suaves que las del ano de la covarianza, y los "
-                    "VaR ex-ante basados en ella salen conservadores"
+                    f"the factor model sees {1 - ratio:.0%} less volatility than Ledoit-Wolf "
+                    f"({result.factor_risk.total_vol:.1%} against {ex_ante.volatility:.1%}): today's "
+                    "exposures are milder than those of the covariance year, and the ex-ante "
+                    "VaRs based on it come out conservative"
                 )
         except ValueError as exc:
-            result.warnings.append(f"modelo factorial: {exc}")
+            result.warnings.append(f"factor model: {exc}")
 
     # -- coste de liquidacion y capacidad ------------------------------------------
     liq_cfg = risk_cfg.section("liquidity")
     if cost_bps is None:
         cost_bps = 0.0
-        result.warnings.append("sin coste fijo por lado: el coste de liquidacion solo cuenta impacto")
+        result.warnings.append("no fixed cost per side: the liquidation cost counts impact only")
     daily_vol = pd.Series(np.sqrt(np.clip(np.diag(ex_ante.cov_daily.loc[weights.index, weights.index]), 0.0, None)),
                           index=weights.index)
     if adv.notna().any():
@@ -523,7 +523,7 @@ def analyze(
         recent_d=int(risk_cfg.get("var.backtest.recent_d")),
     )
     result.tail = var.tail_statistics(returns)
-    _set_garch(result, "estrategia", returns, risk_cfg, confidences, seed)
+    _set_garch(result, "strategy", returns, risk_cfg, confidences, seed)
 
     # -- bootstrap -----------------------------------------------------------------
     frame = returns.rename("strategy").to_frame()
@@ -554,7 +554,7 @@ def analyze(
         missing = result.historical[result.historical["status"] != "ok"]
         if len(missing):
             result.warnings.append(
-                f"{len(missing)} episodios historicos sin precios del benchmark: "
+                f"{len(missing)} historical episodes without benchmark prices: "
                 f"{', '.join(missing['scenario'])}"
             )
     # Si la historia larga no sirve (sin benchmark), se cae a la del panel: un

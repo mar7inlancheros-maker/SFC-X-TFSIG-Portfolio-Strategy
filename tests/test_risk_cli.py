@@ -51,15 +51,15 @@ def test_riesgo_escribe_reporte_y_tablas(entorno, capsys):
     assert cli.main(["riesgo", "--sin-red"]) == 0
     text = _report(entorno)
     text.encode("ascii")
-    for section in ("Semaforo de limites", "Modelo factorial", "Volatilidad condicional",
-                    "Backtest del VaR", "Monte Carlo", "VaR estresado", "Calibracion",
-                    "Capacidad", "Limitaciones"):
+    for section in ("Limit traffic light", "Factor model", "Conditional volatility",
+                    "VaR backtest", "Monte Carlo", "Stressed VaR", "Calibration",
+                    "Capacity", "Limitations"):
         assert section in text
     written = {p.name.split("_", 3)[-1] for p in entorno.glob("riesgo_*.csv")}
     for label in ("limites.csv", "contribuciones.csv", "var_condicional.csv",
                   "calibracion.csv", "capacidad.csv", "factores.csv"):
         assert label in written
-    assert "reporte de riesgo:" in capsys.readouterr().out
+    assert "risk report:" in capsys.readouterr().out
 
 
 def test_estricto_devuelve_3_con_un_limite_excedido(entorno, monkeypatch):
@@ -84,7 +84,7 @@ def test_con_red_usa_la_historia_larga_del_estres(entorno, estrategia, monkeypat
 
 def test_simulaciones_cambia_las_trayectorias_del_bootstrap(entorno):
     assert cli.main(["riesgo", "--sin-red", "--simulaciones", "600"]) == 0
-    assert "600 trayectorias" in _report(entorno)
+    assert "600 paths" in _report(entorno)
 
 
 def test_ordenes_lleva_el_control_de_riesgo_previo(entorno):
@@ -92,15 +92,15 @@ def test_ordenes_lleva_el_control_de_riesgo_previo(entorno):
     sheets = list(entorno.glob("ordenes_*.md"))
     assert len(sheets) == 1
     text = sheets[0].read_text(encoding="utf-8")
-    assert "Riesgo de la cartera objetivo" in text
-    assert "Mayor fuente de riesgo" in text
+    assert "Target portfolio risk" in text
+    assert "Largest source of risk" in text
     text.encode("ascii")
 
 
 def test_ordenes_sin_riesgo_lo_omite(entorno):
     assert cli.main(["ordenes", "--capital", "100000", "--sin-riesgo"]) == 0
     text = next(entorno.glob("ordenes_*.md")).read_text(encoding="utf-8")
-    assert "Riesgo de la cartera objetivo" not in text
+    assert "Target portfolio risk" not in text
 
 
 def test_politica_de_riesgo_invalida_sale_con_codigo_2(entorno, monkeypatch, capsys):
@@ -113,4 +113,4 @@ def test_politica_de_riesgo_invalida_sale_con_codigo_2(entorno, monkeypatch, cap
     with pytest.raises(SystemExit) as exit_info:
         cli.main(["riesgo", "--sin-red"])
     assert exit_info.value.code == 2
-    assert "politica de riesgo" in capsys.readouterr().err
+    assert "Risk policy" in capsys.readouterr().err

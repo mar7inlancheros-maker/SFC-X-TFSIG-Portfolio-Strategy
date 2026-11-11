@@ -43,9 +43,9 @@ def _metrics_for(cfg: Config, factor: str) -> dict[str, int]:
     missing = [n for n in names if n not in METRIC_DIRECTION]
     if missing:
         raise KeyError(
-            f"metricas sin direccion declarada en METRIC_DIRECTION: {missing}. "
-            "Sin direccion no se sabe si mas es mejor o peor, y el modelo "
-            "compraria exactamente lo contrario de lo que se pretende."
+            f"metrics without a declared direction in METRIC_DIRECTION: {missing}. "
+            "Without a direction there is no way to know if more is better or worse, "
+            "and the model would buy exactly the opposite of what is intended."
         )
     return {name: METRIC_DIRECTION[name] for name in names}
 

@@ -95,7 +95,7 @@ def ledoit_wolf(returns: pd.DataFrame) -> tuple[pd.DataFrame, float]:
     x = returns.to_numpy(dtype="float64")
     t, n = x.shape
     if t < 2 or n == 0:
-        raise ValueError("hacen falta al menos dos observaciones para una covarianza")
+        raise ValueError("at least two observations are needed for a covariance")
     x = x - x.mean(axis=0)
     sample = x.T @ x / t
     var = np.diag(sample).copy()
@@ -178,8 +178,8 @@ def ex_ante_risk(
     """
     if benchmark not in returns.columns:
         raise ValueError(
-            f"falta el benchmark {benchmark} en los retornos: sin el no hay beta "
-            "ni tracking error. Anadelo a los precios antes de medir el riesgo."
+            f"the benchmark {benchmark} is missing from the returns: without it there is no "
+            "beta or tracking error. Add it to the prices before measuring risk."
         )
     names = list(weights.index)
     cov, delta = ledoit_wolf(returns.reindex(columns=names + [benchmark]).fillna(0.0))
@@ -224,8 +224,8 @@ def ex_ante_risk(
         if len(short):
             listed = ", ".join(f"{t} ({c:.0%})" for t, c in short.sort_values().items())
             warnings.append(
-                f"historia incompleta en la ventana de covarianza: {listed}. Los dias sin "
-                "dato cuentan como retorno cero, lo que SUBESTIMA su volatilidad."
+                f"incomplete history in the covariance window: {listed}. Days without "
+                "data count as a zero return, which UNDERSTATES their volatility."
             )
 
     return ExAnteRisk(

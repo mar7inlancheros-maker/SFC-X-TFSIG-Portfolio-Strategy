@@ -74,8 +74,8 @@ def bootstrap_paths(
     data = returns.dropna().to_numpy(dtype=float).copy()
     if len(data) < mean_block * 2:
         raise ValueError(
-            f"{len(data)} dias de historia para bloques de {mean_block}: "
-            "hace falta al menos el doble de historia que la longitud del bloque"
+            f"{len(data)} days of history for blocks of {mean_block}: "
+            "at least twice the block length of history is needed"
         )
     data[:, 0] -= haircut_annual / TRADING_DAYS
 

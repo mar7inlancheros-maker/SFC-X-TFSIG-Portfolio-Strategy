@@ -62,7 +62,7 @@ def test_la_caja_reduce_el_riesgo_en_proporcion():
 
 def test_sin_benchmark_el_error_dice_que_hacer():
     rets = _retornos().drop(columns="SPY")
-    with pytest.raises(ValueError, match="Anadelo"):
+    with pytest.raises(ValueError, match="Add it to the"):
         exposure.ex_ante_risk(pd.Series({"T0": 1.0}), pd.Series({"T0": "Energy"}), rets, "SPY")
 
 
@@ -116,7 +116,7 @@ def test_la_beta_de_la_cartera_es_la_media_ponderada_de_las_betas():
 def test_ledoit_wolf_bordes():
     cov, delta = exposure.ledoit_wolf(_retornos()[["T0"]])
     assert delta == 0.0 and cov.shape == (1, 1)
-    with pytest.raises(ValueError, match="dos observaciones"):
+    with pytest.raises(ValueError, match="two observations"):
         exposure.ledoit_wolf(_retornos().iloc[:1])
 
 

@@ -43,7 +43,7 @@ def _load(config_path: str | None) -> Config:
     try:
         return load_config(config_path)
     except ConfigError as exc:
-        print(f"ERROR de configuracion: {exc}", file=sys.stderr)
+        print(f"Configuration ERROR: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
 
@@ -78,11 +78,11 @@ def _require_panel(cfg: Config, *, rebuild: bool, progress: bool = True) -> pd.D
             # un mes sin avisar. Con `calendar.end` vacio, falta un fin de mes
             # cerrado = panel viejo.
             if expected is not None and last < expected:
-                print(f"panel en cache desactualizado: ultima fecha {last.date()}, falta "
-                      f"{expected.date()}. Se reconstruye (baja solo lo que falta).", flush=True)
+                print(f"cached panel is out of date: last date {last.date()}, missing "
+                      f"{expected.date()}. Rebuilding (downloads only what is missing).", flush=True)
             else:
-                print(f"panel en cache: {len(cached):,} filas, "
-                      f"{cached['date'].nunique()} fechas (fingerprint {cfg.fingerprint})")
+                print(f"cached panel: {len(cached):,} rows, "
+                      f"{cached['date'].nunique()} dates (fingerprint {cfg.fingerprint})")
                 return cached
 
     raw = panel_mod.build_panel(cfg, progress=progress)
@@ -116,7 +116,7 @@ def _load_risk(path: str | None) -> Config:
         risk_mod.validate_policy(risk_cfg)
         return risk_cfg
     except ConfigError as exc:
-        print(f"ERROR en la politica de riesgo: {exc}", file=sys.stderr)
+        print(f"Risk policy ERROR: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
 
@@ -132,7 +132,7 @@ def _stress_prices(tickers: list[str], risk_cfg: Config) -> pd.DataFrame | None:
     try:
         long = prices_mod.get_prices(tickers, start, end, progress=False)
     except Exception as exc:  # noqa: BLE001 - la red no debe tumbar el reporte
-        print(f"  aviso: sin historia larga para el estres ({exc}); se usa la del panel")
+        print(f"  warning: no long history for the stress test ({exc}); the panel's is used")
         return None
     return prices_mod.to_wide(long, "close")
 
@@ -154,16 +154,16 @@ def cmd_universo(args: argparse.Namespace) -> int:
     universe = build_universe(cfg, with_profiles=not args.rapido)
     summary = summarize(universe)
 
-    print(f"\nUniverso estatico: {summary['n_names']:,} empresas")
-    print(f"Configuracion: {cfg.fingerprint}\n")
+    print(f"\nStatic universe: {summary['n_names']:,} companies")
+    print(f"Configuration: {cfg.fingerprint}\n")
     if not args.rapido:
-        print("Por pais:")
+        print("By country:")
         for country, count in summary["by_country"].items():
             print(f"  {country:<8} {count:>5}")
-        print("\nPor sector:")
+        print("\nBy sector:")
         for sector, count in sorted(summary["by_sector"].items(), key=lambda kv: -kv[1]):
             print(f"  {sector:<24} {count:>5}")
-    print(f"\nPrimeras 15:\n{universe.head(15).to_string(index=False)}")
+    print(f"\nFirst 15:\n{universe.head(15).to_string(index=False)}")
     return 0
 
 
@@ -171,18 +171,18 @@ def cmd_panel(args: argparse.Namespace) -> int:
     cfg = _load(args.config)
     scored = _require_panel(cfg, rebuild=True)
 
-    print(f"\nPanel: {len(scored):,} filas, {scored['date'].nunique()} fechas, "
+    print(f"\nPanel: {len(scored):,} rows, {scored['date'].nunique()} dates, "
           f"{scored['ticker'].nunique():,} tickers")
-    print(f"Rango: {scored['date'].min().date()} a {scored['date'].max().date()}")
+    print(f"Range: {scored['date'].min().date()} to {scored['date'].max().date()}")
     por_fecha = scored.groupby("date").size()
-    print(f"Nombres por fecha: min {por_fecha.min()}, mediana {int(por_fecha.median())}, "
+    print(f"Names per date: min {por_fecha.min()}, median {int(por_fecha.median())}, "
           f"max {por_fecha.max()}")
 
-    print("\nCobertura de metricas (fraccion del panel con dato):")
+    print("\nMetric coverage (share of the panel with data):")
     coverage = panel_mod.coverage_report(scored)
     print(coverage.to_string(index=False))
-    print("\nUna metrica con cobertura baja no mide lo que dice medir: mide "
-          "'empresas que reportan esa etiqueta'.")
+    print("\nA metric with low coverage does not measure what it claims: it measures "
+          "'companies that report that tag'.")
     return 0
 
 
@@ -191,14 +191,14 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     scored = _require_panel(cfg, rebuild=args.rebuild)
     close = _close_prices(scored, cfg)
 
-    print("\ncorriendo backtest...")
+    print("\nrunning backtest...")
     result = run_backtest(scored, close, cfg)
 
     bench = benchmark_nav(close, str(cfg.get("backtest.benchmark")), result.nav.index,
                           float(cfg.get("backtest.initial_capital")))
     perf = evaluate(result.nav, bench, risk_free=float(cfg.get("backtest.risk_free_rate")))
 
-    print("atribucion por nombre, sector y ano...")
+    print("attribution by name, sector and year...")
     contributions = attribution_mod.position_contributions(
         result.holdings, close, result.rebalances
     )
@@ -209,10 +209,10 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
     validation = decay_lag = decay_horizon = None
     if not args.sin_validacion:
-        print("validando (IC, quintiles, Fama-MacBeth, walk-forward)...")
+        print("validating (IC, quintiles, Fama-MacBeth, walk-forward)...")
         with_forward = panel_mod.add_forward_returns(scored, close)
         validation = validation_mod.full_report(with_forward, cfg)
-        print("midiendo el decaimiento de la senal...")
+        print("measuring signal decay...")
         decay_lag = validation_mod.ic_by_lag(scored, close)
         decay_horizon = validation_mod.ic_by_horizon(scored, close)
 
@@ -226,11 +226,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     chart = report_mod.save_charts(result, bench) if cfg.get("reporting.charts") else None
 
     print(text)
-    print(f"\nreporte: {path}")
+    print(f"\nreport: {path}")
     for label, artifact in artifacts.items():
         print(f"{label}: {artifact}")
     if chart:
-        print(f"grafico: {chart}")
+        print(f"chart: {chart}")
     return 0
 
 
@@ -247,13 +247,13 @@ def cmd_ordenes(args: argparse.Namespace) -> int:
     if nav is None:
         if current.empty:
             nav = float(cfg.get("backtest.initial_capital"))
-            print(f"sin posiciones previas: se usa el capital inicial {nav:,.0f}")
+            print(f"no previous positions: initial capital {nav:,.0f} is used")
         else:
             close, volume = _price_frames(scored, cfg)
             latest = close.ffill().iloc[-1]
             nav = float((current * latest.reindex(current.index)).sum())
-            print(f"valor de las posiciones actuales: {nav:,.2f} "
-                  "(pasa --capital para incluir la caja)")
+            print(f"value of the current positions: {nav:,.2f} "
+                  "(pass --capital to include cash)")
 
     target = build_portfolio(cross_section, cfg, held=set(current.index))
     orders = build_orders(target, current, nav, cfg)
@@ -278,9 +278,9 @@ def cmd_ordenes(args: argparse.Namespace) -> int:
 
     print(text)
     paths = save_orders(orders, text, last_date)
-    print(f"\nordenes: {paths['csv']}")
-    print(f"hoja: {paths['markdown']}")
-    print("\nTras ejecutar, actualiza data/positions.csv con las acciones reales.")
+    print(f"\norders: {paths['csv']}")
+    print(f"sheet: {paths['markdown']}")
+    print("\nAfter executing, update data/positions.csv with the actual shares.")
     return 0
 
 
@@ -294,7 +294,7 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
     scored = _require_panel(cfg, rebuild=args.rebuild)
     close, volume = _price_frames(scored, cfg)
 
-    print("\ncorriendo backtest para la historia de la estrategia...")
+    print("\nrunning the backtest for the strategy history...")
     result = run_backtest(scored, close, cfg)
     bench = benchmark_nav(close, benchmark, result.nav.index,
                           float(cfg.get("backtest.initial_capital")))
@@ -302,12 +302,12 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
     weights, sectors, nav, as_of = risk_mod.book_from_backtest(result.holdings, close, result.nav)
     stress_close = None
     if not args.sin_red:
-        print("precios largos para el estres historico...")
+        print("long price history for the historical stress test...")
         stress_close = _stress_prices(sorted(set(weights.index) | {benchmark}), risk_cfg)
 
     holding_scores, universe_scores = _scores(scored, scored["date"].max())
     years = max((result.nav.index[-1] - result.nav.index[0]).days / 365.25, 1e-9)
-    print("midiendo riesgo (VaR, GARCH, Monte Carlo, factores, estres, limites)...")
+    print("measuring risk (VaR, GARCH, Monte Carlo, factors, stress, limits)...")
     analysis = risk_mod.analyze(
         weights, sectors, nav, close, benchmark, risk_cfg,
         strategy_nav=result.nav, benchmark_nav=bench, as_of=as_of,
@@ -325,14 +325,14 @@ def cmd_riesgo(args: argparse.Namespace) -> int:
     chart = risk_report_mod.save_risk_charts(analysis) if cfg.get("reporting.charts") else None
 
     print(text)
-    print(f"\nreporte de riesgo: {path}")
+    print(f"\nrisk report: {path}")
     for label, artifact in artifacts.items():
         print(f"{label}: {artifact}")
     if chart:
-        print(f"graficos: {chart}")
+        print(f"charts: {chart}")
     # Codigo de salida propio si hay un limite excedido y se pidio: permite
     # encadenar el comando en un script que avise sin leer el reporte.
-    return 3 if args.estricto and analysis.status == "EXCEDIDO" else 0
+    return 3 if args.estricto and analysis.status == "BREACHED" else 0
 
 
 def cmd_wrds(args: argparse.Namespace) -> int:
@@ -341,20 +341,20 @@ def cmd_wrds(args: argparse.Namespace) -> int:
 
     if args.setup:
         path = wrds.setup_pgpass()
-        print(f"contrasena guardada en {path}")
-        print("a partir de ahora ninguna corrida la vuelve a pedir")
+        print(f"password saved in {path}")
+        print("from now on no run will ask for it again")
     libraries = wrds.list_libraries()
-    print(f"conexion OK: {len(libraries)} bibliotecas en la suscripcion")
+    print(f"connection OK: {len(libraries)} libraries in the subscription")
     key = [lib for lib in ("crsp", "crsp_a_stock", "comp", "comp_na_daily_all", "ff", "ibes", "optionm")
            if lib in libraries]
-    print("clave para el modelo: " + (", ".join(key) if key else "ninguna de las esperadas"))
-    print("todas: " + ", ".join(libraries))
+    print("key for the model: " + (", ".join(key) if key else "none of the expected ones"))
+    print("all: " + ", ".join(libraries))
     return 0
 
 
 def cmd_limpiar(args: argparse.Namespace) -> int:
     removed = cache.clear(args.prefijo or "")
-    print(f"{removed} ficheros borrados de {CACHE_DIR}")
+    print(f"{removed} files deleted from {CACHE_DIR}")
     return 0
 
 
@@ -366,53 +366,53 @@ def cmd_limpiar(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sfc-tfsig",
-        description="Modelo multifactor long-only US+Canada (SFC x TFSIG)",
+        description="Long-only multifactor model, US + Canada (SFC x TFSIG)",
     )
-    parser.add_argument("--config", help="ruta de un TOML alternativo")
-    parser.add_argument("--riesgo-config", help="ruta de una politica de riesgo alternativa")
+    parser.add_argument("--config", help="path to an alternative TOML")
+    parser.add_argument("--riesgo-config", help="path to an alternative risk policy")
     # Sin subcomando, `python main.py` abre el motor long/short interactivo
     # (`quant_engine`). Los subcomandos del modelo multifactor no cambian.
     sub = parser.add_subparsers(dest="comando", required=False)
 
-    p_universo = sub.add_parser("universo", help="construye y describe el universo")
+    p_universo = sub.add_parser("universo", help="build and describe the universe")
     p_universo.add_argument("--rapido", action="store_true",
-                            help="omite los perfiles de EDGAR (sin sector ni pais)")
+                            help="skip EDGAR profiles (no sector or country)")
     p_universo.set_defaults(func=cmd_universo)
 
-    p_panel = sub.add_parser("panel", help="descarga datos y ensambla el panel")
+    p_panel = sub.add_parser("panel", help="download data and assemble the panel")
     p_panel.set_defaults(func=cmd_panel)
 
-    p_backtest = sub.add_parser("backtest", help="corre la estrategia y escribe el reporte")
-    p_backtest.add_argument("--rebuild", action="store_true", help="reconstruye el panel")
+    p_backtest = sub.add_parser("backtest", help="run the strategy and write the report")
+    p_backtest.add_argument("--rebuild", action="store_true", help="rebuild the panel")
     p_backtest.add_argument("--sin-validacion", action="store_true",
-                            help="omite los contrastes estadisticos (mas rapido)")
+                            help="skip the statistical tests (faster)")
     p_backtest.set_defaults(func=cmd_backtest)
 
-    p_ordenes = sub.add_parser("ordenes", help="genera el rebalanceo del mes")
-    p_ordenes.add_argument("--rebuild", action="store_true", help="reconstruye el panel")
+    p_ordenes = sub.add_parser("ordenes", help="generate the month's rebalance")
+    p_ordenes.add_argument("--rebuild", action="store_true", help="rebuild the panel")
     p_ordenes.add_argument("--capital", type=float,
-                           help="valor total de la cuenta, incluida la caja")
+                           help="total account value, cash included")
     p_ordenes.add_argument("--sin-riesgo", action="store_true",
-                           help="omite la comprobacion de riesgo de la cartera objetivo")
+                           help="skip the risk check of the target portfolio")
     p_ordenes.set_defaults(func=cmd_ordenes)
 
-    p_riesgo = sub.add_parser("riesgo", help="VaR, Monte Carlo, estres y limites")
-    p_riesgo.add_argument("--rebuild", action="store_true", help="reconstruye el panel")
+    p_riesgo = sub.add_parser("riesgo", help="VaR, Monte Carlo, stress and limits")
+    p_riesgo.add_argument("--rebuild", action="store_true", help="rebuild the panel")
     p_riesgo.add_argument("--simulaciones", type=int,
-                          help="trayectorias del bootstrap (por defecto, las del TOML)")
+                          help="bootstrap paths (default: the TOML's)")
     p_riesgo.add_argument("--sin-red", action="store_true",
-                          help="no descarga historia larga; el estres usa los precios del panel")
+                          help="no long history download; the stress test uses the panel prices")
     p_riesgo.add_argument("--estricto", action="store_true",
-                          help="sale con codigo 3 si algun limite esta EXCEDIDO")
+                          help="exit with code 3 if any limit is BREACHED")
     p_riesgo.set_defaults(func=cmd_riesgo)
 
-    p_limpiar = sub.add_parser("limpiar", help="borra la cache de datos")
-    p_limpiar.add_argument("--prefijo", help="borra solo lo que empiece por este prefijo")
+    p_limpiar = sub.add_parser("limpiar", help="delete the data cache")
+    p_limpiar.add_argument("--prefijo", help="delete only what starts with this prefix")
     p_limpiar.set_defaults(func=cmd_limpiar)
 
-    p_wrds = sub.add_parser("wrds", help="configura o comprueba el acceso a WRDS")
+    p_wrds = sub.add_parser("wrds", help="set up or check WRDS access")
     p_wrds.add_argument("--setup", action="store_true",
-                        help="pide la contrasena una vez y la guarda (pgpass)")
+                        help="ask for the password once and save it (pgpass)")
     p_wrds.set_defaults(func=cmd_wrds)
 
     from quant_engine.app import add_parser as add_research_parser
@@ -436,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
                 return interactive()
             return args.func(args)
     except KeyboardInterrupt:
-        print("\ninterrumpido", file=sys.stderr)
+        print("\ninterrupted", file=sys.stderr)
         return 130
     except (ConfigError, RuntimeError, ValueError) as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)

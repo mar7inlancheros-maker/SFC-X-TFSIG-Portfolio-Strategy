@@ -83,11 +83,11 @@ def user_agent() -> str:
         agent = _read_env_file(ROOT / ".env").get("SEC_EDGAR_USER_AGENT", "").strip()
     if not agent or "@" not in agent:
         raise SECError(
-            "falta SEC_EDGAR_USER_AGENT con un correo real.\n"
-            "  1. copia .env.example a .env\n"
-            "  2. pon: SEC_EDGAR_USER_AGENT=Tu Nombre tu@correo.com\n"
-            "La SEC responde 403 a quien no se identifica, y bloquea por IP a "
-            "quien insiste con un agente generico."
+            "SEC_EDGAR_USER_AGENT with a real email is missing.\n"
+            "  1. copy .env.example to .env\n"
+            "  2. set: SEC_EDGAR_USER_AGENT=Your Name you@email.com\n"
+            "The SEC answers 403 to anyone who does not identify themselves, and blocks "
+            "by IP anyone who insists with a generic agent."
         )
     return agent
 
@@ -119,19 +119,19 @@ def _get_json(session: requests.Session, url: str) -> Any:
                 return None  # la empresa no tiene XBRL; no es un error de red
             if response.status_code == 403:
                 raise SECError(
-                    f"403 de la SEC para {url}. Revisa SEC_EDGAR_USER_AGENT; "
-                    "si es correcto, la IP puede estar limitada temporalmente."
+                    f"403 from the SEC for {url}. Check SEC_EDGAR_USER_AGENT; "
+                    "if it is right, the IP may be temporarily rate-limited."
                 )
             if response.status_code == 429:
                 time.sleep(2.0 * (attempt + 1))
-                last_error = SECError("429: demasiadas peticiones")
+                last_error = SECError("429: too many requests")
                 continue
             response.raise_for_status()
             return response.json()
         except (requests.RequestException, ValueError) as exc:
             last_error = exc
             time.sleep(1.0 * (attempt + 1))
-    raise SECError(f"no se pudo descargar {url}: {last_error}")
+    raise SECError(f"could not download {url}: {last_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +675,7 @@ def listed_companies(max_age_days: float = 7) -> pd.DataFrame:
     session = _session()
     payload = _get_json(session, SEC_TICKERS_URL)
     if not payload:
-        raise SECError("la SEC devolvio una lista de tickers vacia")
+        raise SECError("the SEC returned an empty ticker list")
 
     fields = [f.lower() for f in payload["fields"]]
     df = pd.DataFrame(payload["data"], columns=fields)
@@ -795,13 +795,13 @@ def derive_missing_observations(ciks: Sequence[int], *, workers: int | None = No
     if len(pending) < 50 or n <= 1:
         return 0
     if progress:
-        print(f"  observaciones: recalculando {len(pending)} empresas en {n} procesos (sin red)...", flush=True)
+        print(f"  observations: recomputing {len(pending)} companies in {n} processes (no network)...", flush=True)
     done = 0
     with ProcessPoolExecutor(max_workers=n, initializer=_init_worker, initargs=(str(cache.CACHE_DIR),)) as pool:
         for i, ok in enumerate(pool.map(_derive_cached, pending, chunksize=8), start=1):
             done += bool(ok)
             if progress and (i % 250 == 0 or i == len(pending)):
-                print(f"  observaciones: {i}/{len(pending)}", flush=True)
+                print(f"  observations: {i}/{len(pending)}", flush=True)
     return done
 
 
@@ -836,7 +836,7 @@ def download_fundamentals(
                         f"Ultimo: {exc}"
                     ) from exc
             if progress and (i % 25 == 0 or i == len(ciks)):
-                print(f"  fundamentales: {i}/{len(ciks)} empresas", flush=True)
+                print(f"  fundamentals: {i}/{len(ciks)} companies", flush=True)
     finally:
         session.close()
 

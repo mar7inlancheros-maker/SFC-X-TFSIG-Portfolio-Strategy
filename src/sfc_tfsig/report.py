@@ -29,58 +29,58 @@ from .metrics import Performance, yearly_returns
 from .paths import REPORT_DIR
 
 _LIMITATIONS = """\
-## Limitaciones declaradas
+## Declared limitations
 
-Estas no son advertencias de cortesia: cada una desplaza el resultado en una
-direccion conocida, y el comite deberia descontarlas antes de decidir nada.
+These are not courtesy caveats: each one moves the result in a known
+direction, and the committee should discount them before deciding anything.
 
-1. **Sesgo de supervivencia.** El universo se construye con las cotizadas que
-   existen HOY. Las que quebraron o fueron excluidas no estan. Esto INFLA el
-   retorno historico; la magnitud tipica en renta variable estadounidense es de
-   1 a 2 puntos de CAGR al ano. No se corrige sin datos de pago.
+1. **Survivorship bias.** The universe is built from the companies listed
+   TODAY. Those that went bankrupt or were delisted are missing. This INFLATES
+   the historical return; the typical size in US equities is 1 to 2 points of
+   CAGR a year. It cannot be corrected without paid data.
 
-2. **Cobertura canadiense parcial.** Los fundamentales salen del XBRL de la SEC,
-   que cubre a los emisores canadienses inscritos (40-F / 20-F / 10-K) y no a
-   los exclusivos de TSX. El tramo canadiense del universo es, por tanto, el de
-   las grandes cotizadas con presencia en EE.UU.
+2. **Partial Canadian coverage.** Fundamentals come from SEC XBRL, which covers
+   Canadian issuers registered with the SEC (40-F / 20-F / 10-K) and not
+   TSX-only ones. The Canadian part of the universe is therefore the large
+   companies with a US listing.
 
-3. **Clasificacion sectorial por SIC.** El SIC es de 1987 y no distingue bien el
-   software moderno ni el comercio electronico. La neutralizacion sectorial
-   hereda ese ruido.
+3. **Sector classification by SIC.** SIC dates from 1987 and does not separate
+   modern software or e-commerce well. Sector neutralization inherits that
+   noise.
 
-4. **Sin impacto de mercado.** Los costes modelados son comision, spread y
-   slippage fijos. A escala de capital simulado son razonables; a escala
-   institucional no lo serian.
+4. **No market impact.** Modeled costs are fixed commission, spread and
+   slippage. At the simulated capital they are reasonable; at institutional
+   scale they would not be.
 
-5. **Fundamentales como primera publicacion.** Se usa el dato tal como se
-   presento, sin reexpresiones posteriores. Es lo correcto para evitar
-   look-ahead, y significa que algunos datos historicos son los "equivocados"
-   -- los mismos que tenia el mercado ese dia.
+5. **Fundamentals as first published.** Data is used as originally filed,
+   without later restatements. That is the right way to avoid look-ahead, and
+   it means some historical figures are the "wrong" ones -- the same ones the
+   market had that day.
 """
 
 
 def _fmt_pct(value: float, decimals: int = 2) -> str:
     if value is None or pd.isna(value):
-        return "n/d"
+        return "n/a"
     return f"{value * 100:.{decimals}f}%"
 
 
 def _fmt_num(value: float, decimals: int = 2) -> str:
     if value is None or pd.isna(value):
-        return "n/d"
+        return "n/a"
     return f"{value:.{decimals}f}"
 
 
 def _fmt_money(value: float) -> str:
     if value is None or pd.isna(value):
-        return "n/d"
+        return "n/a"
     return f"{value:,.0f}"
 
 
 def _table(df: pd.DataFrame, floatfmt: str = "{:.4f}") -> str:
     """Tabla Markdown sin dependencias externas."""
     if df is None or len(df) == 0:
-        return "_(sin datos)_\n"
+        return "_(no data)_\n"
     frame = df.copy()
     for column in frame.columns:
         if pd.api.types.is_float_dtype(frame[column]):
@@ -98,32 +98,32 @@ def _table(df: pd.DataFrame, floatfmt: str = "{:.4f}") -> str:
 def performance_section(perf: Performance, cfg: Config) -> str:
     benchmark = cfg.get("backtest.benchmark")
     rows = [
-        ("Periodo", f"{perf.start.date()} a {perf.end.date()} ({perf.years:.1f} anos)"),
-        ("Retorno total", _fmt_pct(perf.total_return)),
+        ("Period", f"{perf.start.date()} to {perf.end.date()} ({perf.years:.1f} years)"),
+        ("Total return", _fmt_pct(perf.total_return)),
         ("CAGR", _fmt_pct(perf.cagr)),
         (f"CAGR {benchmark}", _fmt_pct(perf.benchmark_cagr)),
-        ("Exceso anual", _fmt_pct(perf.excess_cagr)),
-        ("Volatilidad", _fmt_pct(perf.volatility)),
+        ("Annual excess", _fmt_pct(perf.excess_cagr)),
+        ("Volatility", _fmt_pct(perf.volatility)),
         ("Sharpe", _fmt_num(perf.sharpe)),
         ("Sortino", _fmt_num(perf.sortino)),
-        ("Maximo drawdown", _fmt_pct(perf.max_drawdown)),
-        (f"Maximo drawdown {benchmark}", _fmt_pct(perf.benchmark_max_drawdown)),
-        ("Dias bajo el agua", str(perf.underwater_days) if perf.underwater_days else "n/d"),
+        ("Max drawdown", _fmt_pct(perf.max_drawdown)),
+        (f"Max drawdown {benchmark}", _fmt_pct(perf.benchmark_max_drawdown)),
+        ("Days underwater", str(perf.underwater_days) if perf.underwater_days else "n/a"),
         ("Calmar", _fmt_num(perf.calmar)),
-        ("Meses positivos", _fmt_pct(perf.hit_rate_monthly)),
+        ("Positive months", _fmt_pct(perf.hit_rate_monthly)),
         ("Beta", _fmt_num(perf.beta)),
-        ("Alfa anual", _fmt_pct(perf.alpha)),
+        ("Annual alpha", _fmt_pct(perf.alpha)),
         ("Tracking error", _fmt_pct(perf.tracking_error)),
         ("Information ratio", _fmt_num(perf.information_ratio)),
     ]
-    lines = ["## Rendimiento", "", "| Metrica | Valor |", "|---|---|"]
+    lines = ["## Performance", "", "| Metric | Value |", "|---|---|"]
     lines += [f"| {label} | {value} |" for label, value in rows]
     return "\n".join(lines) + "\n"
 
 
 def costs_section(result: BacktestResult, perf: Performance) -> str:
     if result.rebalances.empty:
-        return "## Costes y rotacion\n\n_(sin rebalanceos)_\n"
+        return "## Costs and turnover\n\n_(no rebalances)_\n"
     rebalances = result.rebalances
     total_cost = result.total_costs
     initial = float(rebalances["nav"].iloc[0])
@@ -142,22 +142,22 @@ def costs_section(result: BacktestResult, perf: Performance) -> str:
         if perf.years else float("nan")
     )
     lines = [
-        "## Costes y rotacion",
+        "## Costs and turnover",
         "",
-        "| Metrica | Valor |",
+        "| Metric | Value |",
         "|---|---|",
-        f"| Rebalanceos | {len(rebalances)} ({_fmt_num(per_year, 1)} por ano) |",
-        f"| Rotacion media por rebalanceo | {_fmt_pct(result.average_turnover)} |",
-        f"| Rotacion anualizada | {_fmt_pct(annual_turnover)} |",
-        f"| Arrastre anual de costes (puntos de NAV) | {_fmt_pct(annual_cost)} |",
-        f"| Coste total | {_fmt_money(total_cost)} |",
-        f"| Coste sobre capital inicial | {_fmt_pct(total_cost / initial if initial else float('nan'))} |",
-        f"| Coste medio por rebalanceo (bps de NAV) | {_fmt_num(rebalances['cost_bps_of_nav'].mean(), 1)} |",
-        f"| Posiciones medias | {_fmt_num(rebalances['n_positions'].mean(), 1)} |",
+        f"| Rebalances | {len(rebalances)} ({_fmt_num(per_year, 1)} per year) |",
+        f"| Average turnover per rebalance | {_fmt_pct(result.average_turnover)} |",
+        f"| Annualized turnover | {_fmt_pct(annual_turnover)} |",
+        f"| Annual cost drag (NAV points) | {_fmt_pct(annual_cost)} |",
+        f"| Total cost | {_fmt_money(total_cost)} |",
+        f"| Cost over initial capital | {_fmt_pct(total_cost / initial if initial else float('nan'))} |",
+        f"| Average cost per rebalance (bps of NAV) | {_fmt_num(rebalances['cost_bps_of_nav'].mean(), 1)} |",
+        f"| Average positions | {_fmt_num(rebalances['n_positions'].mean(), 1)} |",
         "",
-        "El coste no es un detalle contable: con la rotacion de arriba, una",
-        "diferencia de 10 bps por operacion cambia el CAGR de forma visible.",
-        "Si la estrategia solo funciona con costes optimistas, no funciona.",
+        "Cost is not an accounting detail: with the turnover above, a difference",
+        "of 10 bps per trade changes the CAGR visibly. If the strategy only",
+        "works with optimistic costs, it does not work.",
         "",
     ]
     return "\n".join(lines) + "\n"
@@ -165,7 +165,7 @@ def costs_section(result: BacktestResult, perf: Performance) -> str:
 
 def holdings_section(result: BacktestResult, top: int = 40) -> str:
     if result.holdings.empty:
-        return "## Cartera actual\n\n_(sin posiciones)_\n"
+        return "## Current portfolio\n\n_(no positions)_\n"
     last_date = result.holdings["date"].max()
     current = result.holdings[result.holdings["date"] == last_date].copy()
     current = current.sort_values("weight", ascending=False).head(top)
@@ -173,7 +173,7 @@ def holdings_section(result: BacktestResult, top: int = 40) -> str:
     current["price"] = current["price"].map(lambda v: f"{v:,.2f}")
     current["score"] = current["score"].map(lambda v: _fmt_num(v))
     columns = ["ticker", "sector", "weight", "price", "score"]
-    lines = [f"## Cartera al {pd.Timestamp(last_date).date()}", "",
+    lines = [f"## Portfolio as of {pd.Timestamp(last_date).date()}", "",
              "| " + " | ".join(columns) + " |",
              "|" + "|".join(["---"] * len(columns)) + "|"]
     for _, row in current.iterrows():
@@ -183,7 +183,7 @@ def holdings_section(result: BacktestResult, top: int = 40) -> str:
         result.holdings[result.holdings["date"] == last_date]
         .groupby("sector")["weight"].sum().sort_values(ascending=False)
     )
-    lines += ["", "### Exposicion sectorial", "", "| Sector | Peso |", "|---|---|"]
+    lines += ["", "### Sector exposure", "", "| Sector | Weight |", "|---|---|"]
     lines += [f"| {sector} | {_fmt_pct(weight)} |" for sector, weight in sector_weights.items()]
     return "\n".join(lines) + "\n"
 
@@ -191,47 +191,47 @@ def holdings_section(result: BacktestResult, top: int = 40) -> str:
 def validation_section(validation: Mapping[str, object]) -> str:
     if not validation:
         return ""
-    lines = ["## Validacion estadistica", ""]
+    lines = ["## Statistical validation", ""]
 
     ic = validation.get("ic_summary") or {}
     if ic:
         lines += [
-            "### Coeficiente de informacion (IC de rangos, mensual)",
+            "### Information coefficient (rank IC, monthly)",
             "",
-            "| Metrica | Valor |",
+            "| Metric | Value |",
             "|---|---|",
-            f"| IC medio | {_fmt_num(ic.get('mean'), 4)} |",
+            f"| Mean IC | {_fmt_num(ic.get('mean'), 4)} |",
             f"| t (Newey-West) | {_fmt_num(ic.get('t_stat'))} |",
-            f"| valor p | {_fmt_num(ic.get('p_value'), 4)} |",
-            f"| Meses con IC positivo | {_fmt_pct(ic.get('hit_rate'))} |",
-            f"| Meses evaluados | {ic.get('n', 'n/d')} |",
+            f"| p-value | {_fmt_num(ic.get('p_value'), 4)} |",
+            f"| Months with positive IC | {_fmt_pct(ic.get('hit_rate'))} |",
+            f"| Months evaluated | {ic.get('n', 'n/a')} |",
             "",
-            "Referencia: un factor util en renta variable da un IC medio de 0.02",
-            "a 0.05. Por encima de 0.10 lo primero que hay que buscar es una fuga",
-            "de datos futuros, no una explicacion economica.",
+            "Reference: a useful equity factor has a mean IC of 0.02 to 0.05.",
+            "Above 0.10, the first thing to look for is a leak of future data,",
+            "not an economic explanation.",
             "",
         ]
 
     means = validation.get("quantile_means")
     if means is not None and len(means):
-        lines += ["### Retorno medio mensual por quintil (Q1 = mejor score)", "",
-                  "| Quintil | Retorno medio |", "|---|---|"]
+        lines += ["### Average monthly return by quintile (Q1 = best score)", "",
+                  "| Quintile | Average return |", "|---|---|"]
         for label, value in means.items():
             lines.append(f"| {label} | {_fmt_pct(value)} |")
         spread = validation.get("spread_test") or {}
         lines += [
             "",
-            f"Spread Q1-Q5: {_fmt_pct(spread.get('mean'))} mensual, "
+            f"Spread Q1-Q5: {_fmt_pct(spread.get('mean'))} monthly, "
             f"t = {_fmt_num(spread.get('t_stat'))}, p = {_fmt_num(spread.get('p_value'), 4)}.",
-            f"Monotonicidad: {_fmt_num(validation.get('monotonicity'))} "
-            "(-1.00 seria orden perfecto de Q1 a Q5).",
+            f"Monotonicity: {_fmt_num(validation.get('monotonicity'))} "
+            "(-1.00 would be a perfect order from Q1 to Q5).",
             "",
         ]
 
     fm = validation.get("fama_macbeth")
     if isinstance(fm, pd.DataFrame) and not fm.empty:
-        lines += ["### Fama-MacBeth por factor (errores Newey-West)", "",
-                  "| Factor | Coef. medio | t | p |", "|---|---|---|---|"]
+        lines += ["### Fama-MacBeth by factor (Newey-West errors)", "",
+                  "| Factor | Mean coef. | t | p |", "|---|---|---|---|"]
         for term, row in fm.iterrows():
             lines.append(
                 f"| {term} | {_fmt_num(row['mean'], 5)} | {_fmt_num(row['t_stat'])} | "
@@ -241,8 +241,8 @@ def validation_section(validation: Mapping[str, object]) -> str:
 
     wf = validation.get("walk_forward")
     if isinstance(wf, pd.DataFrame) and not wf.empty:
-        lines += ["### Walk-forward: IC dentro y fuera de muestra", "",
-                  "| Ventana | IC entrenamiento | IC prueba | Meses |", "|---|---|---|---|"]
+        lines += ["### Walk-forward: in-sample and out-of-sample IC", "",
+                  "| Window | Train IC | Test IC | Months |", "|---|---|---|---|"]
         for _, row in wf.iterrows():
             lines.append(
                 f"| {row['window']} | {_fmt_num(row['train_ic'], 4)} | "
@@ -250,9 +250,9 @@ def validation_section(validation: Mapping[str, object]) -> str:
             )
         lines += [
             "",
-            "La columna que importa es la de prueba. Si el IC de entrenamiento",
-            "es alto y el de prueba ronda cero, el modelo memoriza en vez de",
-            "predecir, y el backtest completo no es evidencia de nada.",
+            "The column that matters is the test one. If the train IC is high and",
+            "the test IC is near zero, the model memorizes instead of predicting,",
+            "and the full backtest is evidence of nothing.",
             "",
         ]
     return "\n".join(lines) + "\n"
@@ -271,30 +271,30 @@ def attribution_section(contributions: pd.DataFrame, yearly_excess: pd.DataFrame
 
     summary = attr.concentration_summary(contributions)
     lines = [
-        "## Atribucion",
+        "## Attribution",
         "",
-        "### Amplitud en toda la muestra",
+        "### Breadth over the whole sample",
         "",
-        "| Metrica | Valor |",
+        "| Metric | Value |",
         "|---|---|",
-        f"| Nombres tenidos alguna vez | {summary['n_names_ever_held']} |",
-        f"| Nombres con contribucion positiva | {_fmt_pct(summary['pct_names_positive'])} |",
-        f"| Peso de los 5 mejores en el bruto | {_fmt_pct(summary['top5_share'])} |",
-        f"| Peso de los 10 mejores en el bruto | {_fmt_pct(summary['top10_share'])} |",
-        f"| Nombres necesarios para la mitad | {_fmt_num(summary['names_for_half'], 0)} |",
-        f"| Bruto sin los 5 mejores | {_fmt_pct(summary['total_without_top5'])} "
-        f"de {_fmt_pct(summary['total_gross_contribution'])} |",
+        f"| Names ever held | {summary['n_names_ever_held']} |",
+        f"| Names with a positive contribution | {_fmt_pct(summary['pct_names_positive'])} |",
+        f"| Share of the gross from the top 5 | {_fmt_pct(summary['top5_share'])} |",
+        f"| Share of the gross from the top 10 | {_fmt_pct(summary['top10_share'])} |",
+        f"| Names needed for half | {_fmt_num(summary['names_for_half'], 0)} |",
+        f"| Gross without the top 5 | {_fmt_pct(summary['total_without_top5'])} "
+        f"of {_fmt_pct(summary['total_gross_contribution'])} |",
         "",
-        "Si quitar los cinco mejores nombres de toda la historia hace desaparecer",
-        "el resultado, el modelo no tiene un proceso: tuvo cinco aciertos.",
+        "If removing the five best names of the whole history makes the result",
+        "disappear, the model has no process: it had five hits.",
         "",
     ]
 
     if yearly_excess is not None and not yearly_excess.empty:
         lines += [
-            "### Exceso anual y su amplitud",
+            "### Annual excess and its breadth",
             "",
-            "| Ano | Estrategia | Benchmark | Exceso | Top-5 del bruto | Nombres para la mitad |",
+            "| Year | Strategy | Benchmark | Excess | Top-5 share of gross | Names for half |",
             "|---|---|---|---|---|---|",
         ]
         for year, row in yearly_excess.iterrows():
@@ -306,19 +306,19 @@ def attribution_section(contributions: pd.DataFrame, yearly_excess: pd.DataFrame
         excess = yearly_excess["excess"].dropna()
         lines += [
             "",
-            f"Anos con exceso positivo: {int((excess > 0).sum())} de {len(excess)}. "
-            f"Exceso mediano: {_fmt_pct(excess.median())}.",
+            f"Years with positive excess: {int((excess > 0).sum())} of {len(excess)}. "
+            f"Median excess: {_fmt_pct(excess.median())}.",
             "",
-            "Una media positiva con mediana negativa es la firma de un resultado",
-            "que depende de pocos anos. Un ano de gran exceso con top-5 alto y",
-            "pocos nombres para la mitad no se puede prometer que se repita.",
+            "A positive mean with a negative median is the signature of a result",
+            "that depends on a few years. A year of large excess with a high top-5",
+            "share and few names for half cannot be promised to repeat.",
             "",
         ]
 
     best = attr.top_names(contributions, n=8)
     if not best.empty:
-        lines += ["### Mejores y peores nombres, toda la muestra", "",
-                  "| Ticker | Sector | Contribucion | Periodos | Peso medio |",
+        lines += ["### Best and worst names, whole sample", "",
+                  "| Ticker | Sector | Contribution | Periods | Average weight |",
                   "|---|---|---|---|---|"]
         for ticker, row in best.iterrows():
             lines.append(
@@ -337,12 +337,12 @@ def decay_section(by_lag: pd.DataFrame | None, by_horizon: pd.DataFrame | None) 
     if (by_lag is None or by_lag.empty) and (by_horizon is None or by_horizon.empty):
         return ""
 
-    lines = ["## Decaimiento de la senal", ""]
+    lines = ["## Signal decay", ""]
     if by_lag is not None and not by_lag.empty:
         lines += [
-            "### IC con la senal retrasada k meses (retorno del mes siguiente)",
+            "### IC with the signal lagged k months (next month's return)",
             "",
-            "| Retraso | IC medio | t | p | Frente a fresca |",
+            "| Lag | Mean IC | t | p | Versus fresh |",
             "|---|---|---|---|---|",
         ]
         for lag, row in by_lag.iterrows():
@@ -352,22 +352,22 @@ def decay_section(by_lag: pd.DataFrame | None, by_horizon: pd.DataFrame | None) 
             )
         lines += [
             "",
-            "Senal conservada segun la frecuencia de rebalanceo:",
+            "Signal kept by rebalance frequency:",
             "",
-            f"- Mensual: {_fmt_pct(rebalance_signal_cost(by_lag, 1))}",
-            f"- Bimestral: {_fmt_pct(rebalance_signal_cost(by_lag, 2))}",
-            f"- Trimestral: {_fmt_pct(rebalance_signal_cost(by_lag, 3))}",
+            f"- Monthly: {_fmt_pct(rebalance_signal_cost(by_lag, 1))}",
+            f"- Every two months: {_fmt_pct(rebalance_signal_cost(by_lag, 2))}",
+            f"- Quarterly: {_fmt_pct(rebalance_signal_cost(by_lag, 3))}",
             "",
-            "Rebalancear menos ahorra coste solo si la senal sigue viva. Si el",
-            "trimestral conserva casi toda la senal, la rotacion mensual es",
-            "peaje sin contrapartida.",
+            "Rebalancing less saves cost only if the signal is still alive. If",
+            "quarterly keeps almost all the signal, monthly turnover is a toll",
+            "with nothing in return.",
             "",
         ]
     if by_horizon is not None and not by_horizon.empty:
         lines += [
-            "### IC por horizonte del retorno",
+            "### IC by return horizon",
             "",
-            "| Horizonte (meses) | IC medio | t (Newey-West, rezagos >= h) | IC por mes |",
+            "| Horizon (months) | Mean IC | t (Newey-West, lags >= h) | IC per month |",
             "|---|---|---|---|",
         ]
         for h, row in by_horizon.iterrows():
@@ -399,19 +399,19 @@ def build_report(
     header = [
         f"# {title}",
         "",
-        f"- Generado: {generated}",
-        f"- Configuracion: `{cfg.source.name if cfg.source else 'en memoria'}` "
+        f"- Generated: {generated}",
+        f"- Configuration: `{cfg.source.name if cfg.source else 'in memory'}` "
         f"(fingerprint `{cfg.fingerprint}`)",
-        f"- Universo: {cfg.get('universe.exchanges')} | "
-        f"rebalanceo {cfg.get('calendar.rebalance')} | "
-        f"{cfg.get('portfolio.n_positions')} posiciones | "
-        f"ponderacion `{cfg.get('portfolio.weighting')}`",
-        f"- Pesos de factores: {cfg.factor_weights}",
-        f"- Costes: {cfg.total_cost_bps:.0f} bps por lado",
+        f"- Universe: {cfg.get('universe.exchanges')} | "
+        f"rebalance {cfg.get('calendar.rebalance')} | "
+        f"{cfg.get('portfolio.n_positions')} positions | "
+        f"weighting `{cfg.get('portfolio.weighting')}`",
+        f"- Factor weights: {cfg.factor_weights}",
+        f"- Costs: {cfg.total_cost_bps:.0f} bps per side",
         "",
-        "> Dos resultados con el mismo fingerprint son comparables. Con",
-        "> fingerprint distinto, no lo son: ha cambiado alguna decision de",
-        "> inversion entre una corrida y otra.",
+        "> Two results with the same fingerprint are comparable. With a",
+        "> different fingerprint they are not: some investment decision",
+        "> changed between one run and the other.",
         "",
     ]
 
@@ -419,17 +419,17 @@ def build_report(
 
     if universe_summary:
         sections.append(
-            "## Universo\n\n"
-            f"- Nombres en la ultima fecha: {universe_summary.get('n_names', 'n/d')}\n"
-            f"- Sectores representados: {universe_summary.get('n_sectors', 'n/d')}\n"
-            f"- Por pais: {universe_summary.get('by_country', {})}\n"
+            "## Universe\n\n"
+            f"- Names on the last date: {universe_summary.get('n_names', 'n/a')}\n"
+            f"- Sectors represented: {universe_summary.get('n_sectors', 'n/a')}\n"
+            f"- By country: {universe_summary.get('by_country', {})}\n"
         )
 
     sections.append(performance_section(perf, cfg))
 
     annual = yearly_returns(result.nav, benchmark_nav)
     if not annual.empty:
-        sections.append("## Retorno ano a ano\n\n" + _table(annual, "{:.2%}"))
+        sections.append("## Year by year return\n\n" + _table(annual, "{:.2%}"))
 
     sections.append(costs_section(result, perf))
     sections.append(holdings_section(result))
@@ -446,9 +446,9 @@ def build_report(
     if result.warnings:
         unique = list(dict.fromkeys(result.warnings))[:20]
         sections.append(
-            "## Avisos del motor\n\n"
+            "## Engine warnings\n\n"
             + "\n".join(f"- {w}" for w in unique)
-            + ("\n\n_(mostrando los primeros 20)_\n" if len(result.warnings) > 20 else "\n")
+            + ("\n\n_(showing the first 20)_\n" if len(result.warnings) > 20 else "\n")
         )
 
     sections.append(_LIMITATIONS)
@@ -502,18 +502,18 @@ def save_charts(result: BacktestResult, benchmark_nav: pd.Series | None = None,
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    path = REPORT_DIR / f"{name}_{stamp}_curva.png"
+    path = REPORT_DIR / f"{name}_{stamp}_curve.png"
 
     fig, (ax_nav, ax_dd) = plt.subplots(
         2, 1, figsize=(11, 7), sharex=True, gridspec_kw={"height_ratios": [2, 1]}
     )
-    ax_nav.plot(result.nav.index, result.nav.to_numpy(), label="Estrategia", linewidth=1.4)
+    ax_nav.plot(result.nav.index, result.nav.to_numpy(), label="Strategy", linewidth=1.4)
     if benchmark_nav is not None and len(benchmark_nav):
         aligned = benchmark_nav.reindex(result.nav.index).ffill()
         ax_nav.plot(aligned.index, aligned.to_numpy(), label="Benchmark",
                     linewidth=1.1, alpha=0.75)
     ax_nav.set_yscale("log")
-    ax_nav.set_ylabel("NAV (escala log)")
+    ax_nav.set_ylabel("NAV (log scale)")
     ax_nav.legend(loc="upper left")
     ax_nav.grid(alpha=0.3)
 
@@ -522,7 +522,7 @@ def save_charts(result: BacktestResult, benchmark_nav: pd.Series | None = None,
     ax_dd.set_ylabel("Drawdown (%)")
     ax_dd.grid(alpha=0.3)
 
-    fig.suptitle("Curva de capital y drawdown")
+    fig.suptitle("Equity curve and drawdown")
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)

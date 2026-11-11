@@ -143,8 +143,8 @@ MUTANTS: tuple[Mutant, ...] = (
        '"variance_share": x.to_numpy() * fx / total_var if total_var > 0',
        '"variance_share": x.to_numpy() * fx / factor_var if total_var > 0', "factor_model"),
     _m("Riesgo especifico olvidado en la descomposicion", "factor_model.py",
-       'groups["especifico"] = specific_var / total_var if total_var > 0',
-       'groups["especifico"] = 0.0 if total_var > 0', "factor_model"),
+       'groups["specific"] = specific_var / total_var if total_var > 0',
+       'groups["specific"] = 0.0 if total_var > 0', "factor_model"),
 
     # -- history.py ------------------------------------------------------------
     _m("Calibracion con precios futuros", "history.py",
@@ -167,7 +167,7 @@ MUTANTS: tuple[Mutant, ...] = (
     _m("Limite en el borde cuenta como excedido", "limits.py",
        "if value > limit:", "if value >= limit:", "limits"),
     _m("Limite minimo sin zona de alerta", "limits.py",
-       'return "ALERTA" if value < limit / warn else "OK"', 'return "OK"', "limits"),
+       'return "WARNING" if value < limit / warn else "OK"', 'return "OK"', "limits"),
 
     # -- analysis.py -------------------------------------------------------------
     _m("Limite de VaR medido con la normal", "analysis.py",

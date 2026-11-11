@@ -87,11 +87,11 @@ def historical_stress(
         base = {"scenario": name, "start": start.date(), "end": end.date()}
 
         if benchmark not in close_wide.columns:
-            rows.append({**base, "status": f"sin precios de {benchmark}"})
+            rows.append({**base, "status": f"no prices for {benchmark}"})
             continue
         market = float(window_returns(close_wide[[benchmark]], start, end).iloc[0])
         if not np.isfinite(market):
-            rows.append({**base, "status": f"sin precios de {benchmark} en el episodio"})
+            rows.append({**base, "status": f"no prices for {benchmark} in the episode"})
             continue
 
         observed = window_returns(close_wide.reindex(columns=names), start, end).reindex(names)
@@ -242,7 +242,7 @@ def book_backcast(
     volatilidad. `peso_aproximado` dice cuanto, dia a dia.
     """
     if benchmark not in close_wide.columns:
-        raise ValueError(f"sin precios de {benchmark}: no se puede reconstruir la historia de la cartera")
+        raise ValueError(f"no prices for {benchmark}: the portfolio history cannot be rebuilt")
     w = weights.astype(float)
     prices = close_wide.reindex(columns=list(w.index) + [benchmark])
     returns = prices.pct_change(fill_method=None).iloc[1:]

@@ -161,7 +161,7 @@ def test_estres_historico_sin_columna_del_benchmark():
         pd.Series({"AAA": 1.0}), pd.Series({"AAA": 1.0}), _precios().drop(columns="SPY"), "SPY",
         [{"name": "caida", "start": "2020-02-03", "end": "2020-02-28"}],
     )
-    assert summary.iloc[0]["status"] == "sin precios de SPY"
+    assert summary.iloc[0]["status"] == "no prices for SPY"
     assert detail.empty
 
 

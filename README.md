@@ -244,7 +244,7 @@ Qué calcula, y por qué cada pieza:
   que el impacto de rebalancear, que el backtest no cobra, llega al 1% anual.
 - **Tiempo bajo el agua** en el Monte Carlo: la racha más larga por debajo del
   máximo, mediana y p95, a 1, 3 y 5 años.
-- **Semáforo de límites**: OK, ALERTA (80% del límite) o EXCEDIDO. Un límite
+- **Semáforo de límites**: OK, WARNING (80% del límite) o BREACHED. Un límite
   excedido no toca la cartera: se escala al comité, que actúa o lo acepta por
   escrito.
 

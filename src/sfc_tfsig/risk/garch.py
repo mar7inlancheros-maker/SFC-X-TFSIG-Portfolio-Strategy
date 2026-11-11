@@ -97,8 +97,8 @@ def fit_garch(returns: pd.Series) -> GarchFit:
     r = returns.dropna().astype(float)
     if len(r) < _MIN_OBS:
         raise ValueError(
-            f"{len(r)} retornos para un GARCH: hacen falta al menos {_MIN_OBS} "
-            "(un ano) para separar la persistencia del ruido"
+            f"{len(r)} returns for a GARCH: at least {_MIN_OBS} are needed "
+            "(one year) to separate persistence from noise"
         )
     mu = float(r.mean())
     eps = r.to_numpy() - mu
@@ -164,7 +164,7 @@ def simulate_filtered(fit: GarchFit, horizons_d, *, n_paths: int, seed: int) -> 
     rng = np.random.default_rng(seed)
     z = fit.residuals[np.isfinite(fit.residuals)]
     if len(z) == 0:
-        raise ValueError("sin residuos estandarizados: el ajuste GARCH no dejo datos")
+        raise ValueError("no standardized residuals: the GARCH fit left no data")
     variance = np.full(n_paths, fit.sigma_next ** 2)
     log_wealth = np.zeros(n_paths)
     peak = np.zeros(n_paths)

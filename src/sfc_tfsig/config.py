@@ -59,7 +59,7 @@ class Config:
         for part in dotted.split("."):
             if not isinstance(node, Mapping) or part not in node:
                 if default is _MISSING:
-                    raise ConfigError(f"falta la clave '{dotted}' en la configuracion")
+                    raise ConfigError(f"missing key '{dotted}' in the configuration")
                 return default
             node = node[part]
         return node
@@ -67,7 +67,7 @@ class Config:
     def section(self, name: str) -> Mapping[str, Any]:
         node = self.get(name)
         if not isinstance(node, Mapping):
-            raise ConfigError(f"'{name}' no es una seccion")
+            raise ConfigError(f"'{name}' is not a section")
         return node
 
     def __getitem__(self, dotted: str) -> Any:
@@ -136,7 +136,7 @@ _WEIGHTING_SCHEMES = ("equal", "score_tilt", "inverse_vol")
 
 def _need(node: Mapping[str, Any], key: str, where: str) -> Any:
     if key not in node:
-        raise ConfigError(f"falta '{key}' en [{where}]")
+        raise ConfigError(f"missing '{key}' in [{where}]")
     return node[key]
 
 
@@ -144,9 +144,9 @@ def _positive(value: Any, name: str) -> float:
     try:
         num = float(value)
     except (TypeError, ValueError):
-        raise ConfigError(f"'{name}' debe ser numerico, llego {value!r}") from None
+        raise ConfigError(f"'{name}' must be numeric, got {value!r}") from None
     if num <= 0:
-        raise ConfigError(f"'{name}' debe ser > 0, llego {num}")
+        raise ConfigError(f"'{name}' must be > 0, got {num}")
     return num
 
 
@@ -154,10 +154,10 @@ def _fraction(value: Any, name: str, *, allow_zero: bool = True) -> float:
     try:
         num = float(value)
     except (TypeError, ValueError):
-        raise ConfigError(f"'{name}' debe ser numerico, llego {value!r}") from None
+        raise ConfigError(f"'{name}' must be numeric, got {value!r}") from None
     lo = 0.0 if allow_zero else 1e-12
     if not lo <= num <= 1.0:
-        raise ConfigError(f"'{name}' debe estar en [0, 1], llego {num}")
+        raise ConfigError(f"'{name}' must be in [0, 1], got {num}")
     return num
 
 
@@ -165,32 +165,32 @@ def validate(data: Mapping[str, Any]) -> None:
     """Lanza `ConfigError` con un mensaje accionable, o no hace nada."""
     for section in _REQUIRED_SECTIONS:
         if section not in data:
-            raise ConfigError(f"falta la seccion [{section}] en la configuracion")
+            raise ConfigError(f"missing section [{section}] in the configuration")
 
     # -- universo ---------------------------------------------------------
     uni = data["universe"]
     exchanges = _need(uni, "exchanges", "universe")
     if not isinstance(exchanges, list) or not exchanges:
-        raise ConfigError("[universe].exchanges debe ser una lista no vacia")
+        raise ConfigError("[universe].exchanges must be a non-empty list")
     _positive(_need(uni, "min_price", "universe"), "universe.min_price")
     _positive(_need(uni, "min_dollar_volume", "universe"), "universe.min_dollar_volume")
     _positive(_need(uni, "min_market_cap", "universe"), "universe.min_market_cap")
     if int(_need(uni, "min_history_months", "universe")) < 13:
         raise ConfigError(
-            "[universe].min_history_months < 13: no alcanza para momentum 12-1, "
-            "el factor saldria vacio en vez de fallar"
+            "[universe].min_history_months < 13: not enough for momentum 12-1, "
+            "the factor would come out empty instead of failing"
         )
     if int(_need(uni, "max_names", "universe")) < 50:
-        raise ConfigError("[universe].max_names < 50: el panel no da para seccion cruzada")
+        raise ConfigError("[universe].max_names < 50: the panel is too small for a cross-section")
 
     # -- calendario -------------------------------------------------------
     cal = data["calendar"]
     if _need(cal, "rebalance", "calendar") not in ("M", "Q"):
-        raise ConfigError("[calendar].rebalance debe ser 'M' o 'Q'")
+        raise ConfigError("[calendar].rebalance must be 'M' or 'Q'")
     if int(_need(cal, "execution_lag_d", "calendar")) < 0:
         raise ConfigError(
-            "[calendar].execution_lag_d negativo: ejecutar ANTES de la senal es "
-            "look-ahead puro"
+            "[calendar].execution_lag_d negative: executing BEFORE the signal is "
+            "pure look-ahead"
         )
 
     # -- factores ---------------------------------------------------------
@@ -199,54 +199,54 @@ def validate(data: Mapping[str, Any]) -> None:
     unknown = set(weights) - set(_KNOWN_FACTORS)
     if unknown:
         raise ConfigError(
-            f"factores desconocidos en [factors.weights]: {sorted(unknown)}. "
-            f"Conocidos: {list(_KNOWN_FACTORS)}"
+            f"unknown factors in [factors.weights]: {sorted(unknown)}. "
+            f"Known: {list(_KNOWN_FACTORS)}"
         )
     for name, weight in weights.items():
         if float(weight) < 0:
             raise ConfigError(
-                f"[factors.weights].{name} negativo ({weight}): para invertir un "
-                "factor se cambia la metrica, no el peso"
+                f"[factors.weights].{name} negative ({weight}): to invert a "
+                "factor, change the metric, not the weight"
             )
     if sum(float(w) for w in weights.values()) <= 0:
-        raise ConfigError("todos los pesos de factores son cero: no hay modelo")
+        raise ConfigError("all factor weights are zero: there is no model")
 
     proc = _need(fac, "processing", "factors")
     _fraction(_need(proc, "winsorize_pct", "factors.processing"), "winsorize_pct")
     if float(proc["winsorize_pct"]) >= 0.5:
-        raise ConfigError("winsorize_pct >= 0.5 recortaria toda la distribucion")
+        raise ConfigError("winsorize_pct >= 0.5 would clip the whole distribution")
     _fraction(_need(proc, "min_coverage", "factors.processing"), "min_coverage")
     if int(_need(proc, "min_sector_names", "factors.processing")) < 2:
-        raise ConfigError("min_sector_names < 2: no se puede estandarizar con un solo nombre")
+        raise ConfigError("min_sector_names < 2: a single name cannot be standardized")
 
     mom = _need(fac, "momentum", "factors")
     if int(mom["lookback_m"]) <= int(mom["skip_m"]):
-        raise ConfigError("[factors.momentum]: lookback_m debe ser mayor que skip_m")
+        raise ConfigError("[factors.momentum]: lookback_m must be greater than skip_m")
     if int(_need(fac["lowvol"], "lookback_d", "factors.lowvol")) < 60:
-        raise ConfigError("[factors.lowvol].lookback_d < 60: la vol seria ruido")
+        raise ConfigError("[factors.lowvol].lookback_d < 60: the vol would be noise")
 
     # -- cartera ----------------------------------------------------------
     pf = data["portfolio"]
     n = int(_need(pf, "n_positions", "portfolio"))
     if n < 10:
         raise ConfigError(
-            f"[portfolio].n_positions = {n}: con menos de 10 nombres el riesgo "
-            "idiosincratico domina y el backtest deja de medir los factores"
+            f"[portfolio].n_positions = {n}: with fewer than 10 names idiosyncratic "
+            "risk dominates and the backtest stops measuring the factors"
         )
     scheme = _need(pf, "weighting", "portfolio")
     if scheme not in _WEIGHTING_SCHEMES:
-        raise ConfigError(f"[portfolio].weighting debe ser uno de {list(_WEIGHTING_SCHEMES)}")
+        raise ConfigError(f"[portfolio].weighting must be one of {list(_WEIGHTING_SCHEMES)}")
     max_w = _fraction(_need(pf, "max_weight", "portfolio"), "max_weight", allow_zero=False)
     min_w = _fraction(_need(pf, "min_weight", "portfolio"), "min_weight")
     if min_w >= max_w:
-        raise ConfigError("[portfolio]: min_weight debe ser menor que max_weight")
+        raise ConfigError("[portfolio]: min_weight must be less than max_weight")
     if max_w * n < 1.0:
         raise ConfigError(
             f"[portfolio]: max_weight ({max_w}) x n_positions ({n}) = {max_w * n:.2f} < 1. "
-            "Los topes impiden invertir el 100% del capital"
+            "The caps prevent investing 100% of capital"
         )
     if int(_need(pf, "buffer_rank", "portfolio")) < n:
-        raise ConfigError("[portfolio].buffer_rank debe ser >= n_positions")
+        raise ConfigError("[portfolio].buffer_rank must be >= n_positions")
     _fraction(_need(pf, "max_sector_w", "portfolio"), "max_sector_w", allow_zero=False)
     _fraction(_need(pf, "cash_buffer", "portfolio"), "cash_buffer")
 
@@ -254,23 +254,23 @@ def validate(data: Mapping[str, Any]) -> None:
     for key in ("commission_bps", "spread_bps", "slippage_bps"):
         value = float(_need(data["costs"], key, "costs"))
         if value < 0:
-            raise ConfigError(f"[costs].{key} negativo: un coste no paga dividendos")
+            raise ConfigError(f"[costs].{key} negative: a cost does not pay dividends")
 
     # -- backtest ---------------------------------------------------------
     bt = data["backtest"]
     _positive(_need(bt, "initial_capital", "backtest"), "backtest.initial_capital")
     if not str(_need(bt, "benchmark", "backtest")).strip():
-        raise ConfigError("[backtest].benchmark vacio: sin referencia no hay alfa que medir")
+        raise ConfigError("[backtest].benchmark empty: without a reference there is no alpha to measure")
 
     # -- validacion -------------------------------------------------------
     val = data["validation"]
     if _positive(_need(val, "train_years", "validation"), "train_years") < 2:
-        raise ConfigError("[validation].train_years < 2: ventana demasiado corta para calibrar")
+        raise ConfigError("[validation].train_years < 2: window too short to calibrate")
     _positive(_need(val, "test_years", "validation"), "test_years")
     if int(_need(val, "n_quantiles", "validation")) < 3:
-        raise ConfigError("[validation].n_quantiles < 3: no hay spread que mirar")
+        raise ConfigError("[validation].n_quantiles < 3: there is no spread to look at")
     if int(_need(val, "newey_west_lag", "validation")) < 0:
-        raise ConfigError("[validation].newey_west_lag no puede ser negativo")
+        raise ConfigError("[validation].newey_west_lag cannot be negative")
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +289,8 @@ def load_config(path: str | Path | None = None) -> Config:
     cfg_path = Path(path) if path is not None else DEFAULT_CONFIG
     if not cfg_path.exists():
         raise ConfigError(
-            f"no existe {cfg_path}. El repo trae 'config/strategy.toml'; "
-            "si lo renombraste, pasa la ruta con --config"
+            f"{cfg_path} does not exist. The repo ships 'config/strategy.toml'; "
+            "if you renamed it, pass the path with --config"
         )
     with cfg_path.open("rb") as fh:
         data = tomllib.load(fh)
@@ -322,28 +322,28 @@ def _confidence(value: Any, name: str) -> float:
     try:
         num = float(value)
     except (TypeError, ValueError):
-        raise ConfigError(f"'{name}' debe ser numerico, llego {value!r}") from None
+        raise ConfigError(f"'{name}' must be numeric, got {value!r}") from None
     if not 0.5 < num < 1.0:
         raise ConfigError(
-            f"'{name}' = {num}: un nivel de confianza va entre 0.5 y 1 (0.99, no 99)"
+            f"'{name}' = {num}: a confidence level is between 0.5 and 1 (0.99, not 99)"
         )
     return num
 
 
 def _positive_ints(value: Any, name: str) -> list[int]:
     if not isinstance(value, list) or not value:
-        raise ConfigError(f"'{name}' debe ser una lista no vacia de enteros positivos")
+        raise ConfigError(f"'{name}' must be a non-empty list of positive integers")
     out = []
     for item in value:
         if not isinstance(item, int) or item <= 0:
-            raise ConfigError(f"'{name}' contiene {item!r}: solo enteros positivos")
+            raise ConfigError(f"'{name}' contains {item!r}: positive integers only")
         out.append(int(item))
     return out
 
 
 def _fractions(value: Any, name: str) -> list[float]:
     if not isinstance(value, list) or not value:
-        raise ConfigError(f"'{name}' debe ser una lista no vacia de fracciones")
+        raise ConfigError(f"'{name}' must be a non-empty list of fractions")
     return [_fraction(v, name, allow_zero=False) for v in value]
 
 
@@ -352,7 +352,7 @@ def _iso_date(value: Any, name: str) -> str:
     try:
         date.fromisoformat(text)
     except ValueError:
-        raise ConfigError(f"'{name}' = {value!r}: debe ser una fecha AAAA-MM-DD") from None
+        raise ConfigError(f"'{name}' = {value!r}: it must be a YYYY-MM-DD date") from None
     return text
 
 
@@ -365,27 +365,27 @@ def validate_risk(data: Mapping[str, Any]) -> None:
     """
     for section in _RISK_SECTIONS:
         if section not in data:
-            raise ConfigError(f"falta la seccion [{section}] en la politica de riesgo")
+            raise ConfigError(f"missing section [{section}] in the risk policy")
 
     var = data["var"]
     confidences = _need(var, "confidence", "var")
     if not isinstance(confidences, list) or not confidences:
-        raise ConfigError("[var].confidence debe ser una lista, por ejemplo [0.95, 0.99]")
+        raise ConfigError("[var].confidence must be a list, for example [0.95, 0.99]")
     for c in confidences:
         _confidence(c, "var.confidence")
     _positive_ints(_need(var, "horizons_d", "var"), "var.horizons_d")
     lam = float(_need(var, "ewma_lambda", "var"))
     if not 0.0 < lam < 1.0:
-        raise ConfigError(f"[var].ewma_lambda = {lam}: debe estar en (0, 1); 0.94 es RiskMetrics")
+        raise ConfigError(f"[var].ewma_lambda = {lam}: it must be in (0, 1); 0.94 is RiskMetrics")
     bt = _need(var, "backtest", "var")
     _confidence(_need(bt, "confidence", "var.backtest"), "var.backtest.confidence")
     if int(_need(bt, "window_d", "var.backtest")) < 60:
-        raise ConfigError("[var.backtest].window_d < 60: el cuantil de la cola seria ruido")
+        raise ConfigError("[var.backtest].window_d < 60: the tail quantile would be noise")
     if int(_need(bt, "recent_d", "var.backtest")) < 50:
-        raise ConfigError("[var.backtest].recent_d < 50: el semaforo necesita al menos 50 sesiones")
+        raise ConfigError("[var.backtest].recent_d < 50: the traffic light needs at least 50 sessions")
     garch = _need(var, "garch", "var")
     if int(_need(garch, "n_paths", "var.garch")) < 1000:
-        raise ConfigError("[var.garch].n_paths < 1000: el ES al 99% saldria de 10 trayectorias")
+        raise ConfigError("[var.garch].n_paths < 1000: the 99% ES would come from 10 paths")
     _positive_ints(_need(garch, "horizons_d", "var.garch"), "var.garch.horizons_d")
 
     mc = data["montecarlo"]
@@ -393,55 +393,55 @@ def validate_risk(data: Mapping[str, Any]) -> None:
     boot = _need(mc, "bootstrap", "montecarlo")
     if int(_need(boot, "n_paths", "montecarlo.bootstrap")) < 500:
         raise ConfigError(
-            "[montecarlo.bootstrap].n_paths < 500: los percentiles de cola no se estabilizan"
+            "[montecarlo.bootstrap].n_paths < 500: the tail percentiles do not stabilize"
         )
     years = _need(boot, "horizons_y", "montecarlo.bootstrap")
     if not isinstance(years, list) or not years or any(float(y) <= 0 for y in years):
-        raise ConfigError("[montecarlo.bootstrap].horizons_y debe ser una lista de anos positivos")
+        raise ConfigError("[montecarlo.bootstrap].horizons_y must be a list of positive years")
     if int(_need(boot, "mean_block_d", "montecarlo.bootstrap")) < 1:
-        raise ConfigError("[montecarlo.bootstrap].mean_block_d debe ser >= 1")
+        raise ConfigError("[montecarlo.bootstrap].mean_block_d must be >= 1")
     haircut = float(_need(boot, "return_haircut", "montecarlo.bootstrap"))
     if not 0.0 <= haircut <= 0.20:
         raise ConfigError(
-            f"[montecarlo.bootstrap].return_haircut = {haircut}: es un descuento ANUAL "
-            "entre 0 y 0.20 (0.02 son dos puntos de CAGR)"
+            f"[montecarlo.bootstrap].return_haircut = {haircut}: it is an ANNUAL haircut "
+            "between 0 and 0.20 (0.02 is two points of CAGR)"
         )
     _fractions(_need(boot, "drawdown_thresholds", "montecarlo.bootstrap"),
                "montecarlo.bootstrap.drawdown_thresholds")
     par = _need(mc, "parametric", "montecarlo")
     if int(_need(par, "n_sims", "montecarlo.parametric")) < 1000:
         raise ConfigError(
-            "[montecarlo.parametric].n_sims < 1000: el ES al 99% saldria de 10 escenarios"
+            "[montecarlo.parametric].n_sims < 1000: the 99% ES would come from 10 scenarios"
         )
     _positive_ints(_need(par, "horizons_d", "montecarlo.parametric"),
                    "montecarlo.parametric.horizons_d")
     if float(_need(par, "t_dof", "montecarlo.parametric")) <= 2:
         raise ConfigError(
-            "[montecarlo.parametric].t_dof <= 2: la t de Student no tiene varianza "
-            "finita y no se puede igualar a la covarianza estimada"
+            "[montecarlo.parametric].t_dof <= 2: the Student t has no finite variance "
+            "and cannot be matched to the estimated covariance"
         )
 
     exp = data["exposure"]
     if int(_need(exp, "cov_window_d", "exposure")) < 60:
         raise ConfigError(
-            "[exposure].cov_window_d < 60: covarianza de 30 nombres con apenas mas datos que nombres"
+            "[exposure].cov_window_d < 60: a covariance of 30 names with barely more data than names"
         )
     _fraction(_need(exp, "min_coverage", "exposure"), "exposure.min_coverage")
     if int(_need(exp, "adv_window_d", "exposure")) < 5:
-        raise ConfigError("[exposure].adv_window_d < 5: la mediana del volumen seria de un dia raro")
+        raise ConfigError("[exposure].adv_window_d < 5: the median volume would come from one odd day")
     _fraction(_need(exp, "participation", "exposure"), "exposure.participation", allow_zero=False)
 
     if int(_need(data["factor_model"], "window_d", "factor_model")) < 120:
         raise ConfigError(
-            "[factor_model].window_d < 120: la covarianza de los factores y la varianza "
-            "especifica necesitan al menos medio ano de regresiones diarias"
+            "[factor_model].window_d < 120: the factor covariance and the specific "
+            "variance need at least half a year of daily regressions"
         )
 
     hist = data["history"]
     if int(_need(hist, "rolling_window_d", "history")) < 20:
-        raise ConfigError("[history].rolling_window_d < 20: el riesgo movil seria ruido diario")
+        raise ConfigError("[history].rolling_window_d < 20: rolling risk would be daily noise")
     if int(_need(hist, "calibration_window_d", "history")) < 60:
-        raise ConfigError("[history].calibration_window_d < 60: prevision con menos de un trimestre")
+        raise ConfigError("[history].calibration_window_d < 60: a forecast with less than a quarter")
 
     liq = data["liquidity"]
     _positive(_need(liq, "impact_coef", "liquidity"), "liquidity.impact_coef")
@@ -449,11 +449,11 @@ def validate_risk(data: Mapping[str, Any]) -> None:
     for key in ("stress_vol_mult", "stress_cost_mult"):
         if float(_need(liq, key, "liquidity")) < 1.0:
             raise ConfigError(
-                f"[liquidity].{key} < 1: un escenario de crisis no puede abaratar la salida"
+                f"[liquidity].{key} < 1: a crisis scenario cannot make exiting cheaper"
             )
     navs = _need(liq, "capacity_navs", "liquidity")
     if not isinstance(navs, list) or not navs or any(float(v) <= 0 for v in navs):
-        raise ConfigError("[liquidity].capacity_navs debe ser una lista de NAV positivos")
+        raise ConfigError("[liquidity].capacity_navs must be a list of positive NAVs")
     _fraction(_need(liq, "capacity_budget", "liquidity"), "liquidity.capacity_budget", allow_zero=False)
 
     st = data["stress"]
@@ -461,12 +461,12 @@ def validate_risk(data: Mapping[str, Any]) -> None:
     sv = _need(st, "stressed_var", "stress")
     _confidence(_need(sv, "confidence", "stress.stressed_var"), "stress.stressed_var.confidence")
     if int(_need(sv, "window_d", "stress.stressed_var")) < 60:
-        raise ConfigError("[stress.stressed_var].window_d < 60: el cuantil de la cola seria ruido")
+        raise ConfigError("[stress.stressed_var].window_d < 60: the tail quantile would be noise")
     for i, sc in enumerate(st.get("covariance", []), start=1):
         where = f"stress.covariance #{i}"
         _need(sc, "name", where)
         if float(sc.get("vol_mult", 1.0)) <= 0:
-            raise ConfigError(f"[{where}] '{sc['name']}': vol_mult debe ser positivo")
+            raise ConfigError(f"[{where}] '{sc['name']}': vol_mult must be positive")
         _fraction(sc.get("corr_blend", 0.0), f"{where}.corr_blend")
     for i, sc in enumerate(st.get("historical", []), start=1):
         where = f"stress.historical #{i}"
@@ -475,18 +475,18 @@ def validate_risk(data: Mapping[str, Any]) -> None:
         start = _iso_date(sc["start"], f"{where}.start")
         end = _iso_date(sc["end"], f"{where}.end")
         if start >= end:
-            raise ConfigError(f"[{where}] '{sc['name']}': start debe ser anterior a end")
+            raise ConfigError(f"[{where}] '{sc['name']}': start must be before end")
     for i, sc in enumerate(st.get("hypothetical", []), start=1):
         where = f"stress.hypothetical #{i}"
         _need(sc, "name", where)
         market = float(_need(sc, "market", where))
         if market <= -1.0:
-            raise ConfigError(f"[{where}] '{sc['name']}': market <= -100% no es un escenario")
+            raise ConfigError(f"[{where}] '{sc['name']}': market <= -100% is not a scenario")
         unknown = set(sc.get("factors", {})) - set(_KNOWN_FACTORS)
         if unknown:
             raise ConfigError(
-                f"[{where}] '{sc['name']}': factores desconocidos {sorted(unknown)}. "
-                f"Conocidos: {list(_KNOWN_FACTORS)}"
+                f"[{where}] '{sc['name']}': unknown factors {sorted(unknown)}. "
+                f"Known: {list(_KNOWN_FACTORS)}"
             )
     _fractions(_need(_need(st, "reverse", "stress"), "loss_thresholds", "stress.reverse"),
                "stress.reverse.loss_thresholds")
@@ -494,14 +494,14 @@ def validate_risk(data: Mapping[str, Any]) -> None:
     limits = data["limits"]
     warn = float(_need(limits, "warning_fraction", "limits"))
     if not 0.0 < warn < 1.0:
-        raise ConfigError(f"[limits].warning_fraction = {warn}: debe estar en (0, 1)")
+        raise ConfigError(f"[limits].warning_fraction = {warn}: it must be in (0, 1)")
     for key, value in limits.items():
         try:
             num = float(value)
         except (TypeError, ValueError):
-            raise ConfigError(f"[limits].{key} debe ser numerico, llego {value!r}") from None
+            raise ConfigError(f"[limits].{key} must be numeric, got {value!r}") from None
         if num <= 0:
-            raise ConfigError(f"[limits].{key} = {num}: un limite debe ser positivo")
+            raise ConfigError(f"[limits].{key} = {num}: a limit must be positive")
 
 
 def load_risk_config(path: str | Path | None = None) -> Config:
@@ -509,8 +509,8 @@ def load_risk_config(path: str | Path | None = None) -> Config:
     cfg_path = Path(path) if path is not None else RISK_CONFIG
     if not cfg_path.exists():
         raise ConfigError(
-            f"no existe {cfg_path}. El repo trae 'config/risk.toml'; si lo "
-            "renombraste, pasa la ruta con --riesgo-config"
+            f"{cfg_path} does not exist. The repo ships 'config/risk.toml'; if you "
+            "renamed it, pass the path with --riesgo-config"
         )
     with cfg_path.open("rb") as fh:
         data = tomllib.load(fh)

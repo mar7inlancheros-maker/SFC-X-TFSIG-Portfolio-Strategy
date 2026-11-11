@@ -37,7 +37,7 @@ def _completo(m, risk_cfg):
 
 def test_el_analisis_completo_rellena_todas_las_piezas(mercado, risk_cfg):
     a = _completo(mercado, risk_cfg)
-    assert a.status in ("OK", "ALERTA", "EXCEDIDO")
+    assert a.status in ("OK", "WARNING", "BREACHED")
     assert a.ex_ante.volatility > 0
     assert set(a.strategy_var["method"]) == {"historico", "normal", "cornish_fisher", "fhs"}
     assert len(a.var_backtest) == 3
@@ -46,7 +46,7 @@ def test_el_analisis_completo_rellena_todas_las_piezas(mercado, risk_cfg):
     assert len(a.historical) == len(risk_cfg.get("stress.historical"))
     # Todos los limites del TOML aparecen, y el drawdown ya tiene dato.
     assert set(a.limits["limit"]) == set(risk_cfg.section("limits")) - {"warning_fraction"}
-    assert a.limits.set_index("limit").loc["max_current_drawdown", "status"] != "SIN DATO"
+    assert a.limits.set_index("limit").loc["max_current_drawdown", "status"] != "NO DATA"
 
 
 def test_la_contribucion_al_riesgo_suma_la_volatilidad(mercado, risk_cfg):
@@ -67,9 +67,9 @@ def test_la_comprobacion_previa_no_necesita_historia(mercado, risk_cfg):
     a = analysis.analyze_book(m["weights"], m["sectors"], 100_000.0, m["close"], "SPY",
                               risk_cfg, as_of=m["close"].index[-1], volume_wide=m["volume"])
     assert a.var_backtest is None and a.bootstrap is None
-    assert a.limits.set_index("limit").loc["max_current_drawdown", "status"] == "SIN DATO"
+    assert a.limits.set_index("limit").loc["max_current_drawdown", "status"] == "NO DATA"
     text = risk_report.render_pre_trade(a)
-    assert "Riesgo de la cartera objetivo" in text
+    assert "Target portfolio risk" in text
     text.encode("ascii")
 
 
@@ -79,9 +79,9 @@ def test_el_reporte_es_ascii_y_trae_las_secciones(mercado, risk_cfg):
     text = risk_report.build_risk_report(a, cfg, risk_cfg)
     # La consola de Windows redirigida usa cp1252: nada fuera de ASCII.
     text.encode("ascii")
-    for section in ("Semaforo de limites", "riesgo ex-ante", "VaR y Expected Shortfall",
-                    "Backtest del VaR", "Monte Carlo", "Pruebas de estres",
-                    "Liquidez y capacidad", "Limitaciones"):
+    for section in ("Limit traffic light", "ex-ante risk", "VaR and Expected Shortfall",
+                    "VaR backtest", "Monte Carlo", "Stress tests",
+                    "Liquidity and capacity", "Limitations"):
         assert section in text
     assert risk_cfg.fingerprint in text and cfg.fingerprint in text
 
@@ -151,8 +151,8 @@ def test_el_analisis_ampliado_rellena_garch_factores_estres_y_calibracion(mercad
         volume_wide=m["volume"], factor_scores=m["scores"], panel=_panel(m),
         holdings=holdings, cost_bps=20.0, turnover=0.2, rebalances_per_year=12,
     )
-    assert set(a.garch_fits) == {"cartera", "estrategia"}
-    assert set(a.conditional_var["series"]) == {"cartera", "estrategia"}
+    assert set(a.garch_fits) == {"portfolio", "strategy"}
+    assert set(a.conditional_var["series"]) == {"portfolio", "strategy"}
     assert a.factor_risk is not None and a.factor_risk.total_vol > 0
     assert a.stressed and a.stressed["stressed_var"] >= a.stressed["current_var"]
     assert len(a.covariance_stress) == 1 + len(risk_cfg.get("stress.covariance"))
@@ -160,13 +160,13 @@ def test_el_analisis_ampliado_rellena_garch_factores_estres_y_calibracion(mercad
     assert a.capacity is not None and np.isfinite(a.capacity_nav)
     assert a.liquidation.loc["crisis", "cost"] > a.liquidation.loc["normal", "cost"]
     checks = a.limits.set_index("limit")
-    assert checks.loc["max_stressed_var_99_1d", "status"] != "SIN DATO"
-    assert checks.loc["max_liquidation_cost", "status"] != "SIN DATO"
+    assert checks.loc["max_stressed_var_99_1d", "status"] != "NO DATA"
+    assert checks.loc["max_liquidation_cost", "status"] != "NO DATA"
 
     text = risk_report.build_risk_report(a, config_from_dict(BASE_CONFIG), risk_cfg)
     text.encode("ascii")
-    for section in ("Modelo factorial", "Volatilidad condicional", "VaR estresado",
-                    "Choques de volatilidad", "Calibracion", "Capacidad"):
+    for section in ("Factor model", "Conditional volatility", "Stressed VaR",
+                    "Volatility and correlation shocks", "Calibration", "Capacity"):
         assert section in text
 
 
@@ -193,23 +193,23 @@ def test_la_cartera_objetivo_se_convierte_en_pesos_y_sectores():
 
 
 def test_sin_posiciones_el_error_lo_dice():
-    with pytest.raises(ValueError, match="no dejo posiciones"):
+    with pytest.raises(ValueError, match="left no positions"):
         analysis.book_from_backtest(pd.DataFrame(), pd.DataFrame(), pd.Series([1.0]))
 
 
 def test_sin_precios_del_benchmark_el_error_dice_que_hacer(mercado, risk_cfg):
     close = mercado["close"].copy()
     close["SPY"] = np.nan
-    with pytest.raises(ValueError, match="anadelo"):
+    with pytest.raises(ValueError, match="add it to the"):
         _libro(mercado, risk_cfg, close=close)
 
 
 def test_sin_volumen_ni_coste_se_avisa_y_la_liquidez_queda_sin_dato(mercado, risk_cfg):
     a = _libro(mercado, risk_cfg)
-    assert any("sin volumen" in w for w in a.warnings)
-    assert any("sin coste fijo" in w for w in a.warnings)
+    assert any("no volume" in w for w in a.warnings)
+    assert any("no fixed cost" in w for w in a.warnings)
     assert a.liquidation is None
-    assert a.limits.set_index("limit").loc["max_liquidation_days", "status"] == "SIN DATO"
+    assert a.limits.set_index("limit").loc["max_liquidation_days", "status"] == "NO DATA"
 
 
 def test_un_peso_cero_no_entra_en_el_analisis(mercado, risk_cfg):
@@ -226,9 +226,9 @@ def test_con_historia_corta_garch_y_var_estresado_avisan_sin_romper(mercado, ris
     a = analysis.analyze_book(mercado["weights"], mercado["sectors"], 100_000.0, short, "SPY",
                               risk_cfg, as_of=short.index[-1])
     assert any("GARCH" in w for w in a.warnings)
-    assert any("VaR estresado" in w for w in a.warnings)
-    assert a.stressed is None and "cartera" not in a.garch_fits
-    assert a.limits.set_index("limit").loc["max_stressed_var_99_1d", "status"] == "SIN DATO"
+    assert any("stressed VaR" in w for w in a.warnings)
+    assert a.stressed is None and "portfolio" not in a.garch_fits
+    assert a.limits.set_index("limit").loc["max_stressed_var_99_1d", "status"] == "NO DATA"
 
 
 def test_la_historia_larga_del_estres_sustituye_a_la_del_panel(mercado, risk_cfg):
@@ -255,8 +255,8 @@ def test_la_historia_larga_del_estres_sustituye_a_la_del_panel(mercado, risk_cfg
     assert with_long.stressed["history_start"] < base.stressed["history_start"]
     assert with_long.stressed["window_start"] < m["close"].index[0]
     assert with_long.stressed["stressed_var"] > 2 * base.stressed["stressed_var"]
-    assert (with_long.conditional_var["series"] == "cartera").sum() == (
-        base.conditional_var["series"] == "cartera").sum()
+    assert (with_long.conditional_var["series"] == "portfolio").sum() == (
+        base.conditional_var["series"] == "portfolio").sum()
 
 
 def test_si_el_modelo_factorial_ve_mas_riesgo_se_avisa(mercado, risk_cfg, monkeypatch):
@@ -265,8 +265,8 @@ def test_si_el_modelo_factorial_ve_mas_riesgo_se_avisa(mercado, risk_cfg, monkey
     def stub(weights, *args, **kwargs):
         return factor_model.FactorRisk(
             total_vol=1.0, factor_vol=1.0, specific_vol=0.0,
-            decomposition=pd.DataFrame({"variance_share": {"momentum": 1.0, "especifico": 0.0},
-                                        "vol_contribution": {"momentum": 1.0, "especifico": 0.0}}),
+            decomposition=pd.DataFrame({"variance_share": {"momentum": 1.0, "specific": 0.0},
+                                        "vol_contribution": {"momentum": 1.0, "specific": 0.0}}),
             factor_contributions=pd.DataFrame(), exposures=pd.Series(dtype=float),
             factor_vols=pd.Series(dtype=float), mean_r2=0.2, n_days=252,
             factor_cov=pd.DataFrame(), specific_var=pd.Series(dtype=float),
@@ -274,7 +274,7 @@ def test_si_el_modelo_factorial_ve_mas_riesgo_se_avisa(mercado, risk_cfg, monkey
 
     monkeypatch.setattr(analysis.factor_model, "factor_risk", stub)
     a = _libro(mercado, risk_cfg, panel=pd.DataFrame({"date": [mercado["close"].index[0]]}))
-    assert any("mas volatilidad que Ledoit-Wolf" in w for w in a.warnings)
+    assert any("more volatility than Ledoit-Wolf" in w for w in a.warnings)
 
 
 def test_si_el_modelo_factorial_ve_mucho_menos_riesgo_tambien_se_avisa(mercado, risk_cfg, monkeypatch):
@@ -284,8 +284,8 @@ def test_si_el_modelo_factorial_ve_mucho_menos_riesgo_tambien_se_avisa(mercado, 
     def stub(weights, *args, **kwargs):
         return factor_model.FactorRisk(
             total_vol=0.001, factor_vol=0.001, specific_vol=0.0,
-            decomposition=pd.DataFrame({"variance_share": {"momentum": 1.0, "especifico": 0.0},
-                                        "vol_contribution": {"momentum": 0.001, "especifico": 0.0}}),
+            decomposition=pd.DataFrame({"variance_share": {"momentum": 1.0, "specific": 0.0},
+                                        "vol_contribution": {"momentum": 0.001, "specific": 0.0}}),
             factor_contributions=pd.DataFrame(), exposures=pd.Series(dtype=float),
             factor_vols=pd.Series(dtype=float), mean_r2=0.2, n_days=252,
             factor_cov=pd.DataFrame(), specific_var=pd.Series(dtype=float),
@@ -293,7 +293,7 @@ def test_si_el_modelo_factorial_ve_mucho_menos_riesgo_tambien_se_avisa(mercado, 
 
     monkeypatch.setattr(analysis.factor_model, "factor_risk", stub)
     a = _libro(mercado, risk_cfg, panel=pd.DataFrame({"date": [mercado["close"].index[0]]}))
-    assert any("menos volatilidad que Ledoit-Wolf" in w for w in a.warnings)
+    assert any("less volatility than Ledoit-Wolf" in w for w in a.warnings)
 
 
 def test_historia_larga_sin_benchmark_cae_a_la_del_panel_sin_romper(mercado, risk_cfg):
@@ -305,9 +305,9 @@ def test_historia_larga_sin_benchmark_cae_a_la_del_panel_sin_romper(mercado, ris
         strategy_nav=m["nav"], benchmark_nav=m["bench"], as_of=m["close"].index[-1],
         volume_wide=m["volume"], factor_scores=m["scores"], stress_close=sin_spy,
     )
-    assert any(w.startswith("historia de la cartera:") for w in a.warnings)
+    assert any(w.startswith("portfolio history:") for w in a.warnings)
     assert a.stressed is not None                      # con la historia del panel
-    assert (a.conditional_var["series"] == "cartera").any()
+    assert (a.conditional_var["series"] == "portfolio").any()
 
 
 def test_si_el_modelo_factorial_falla_se_avisa_y_sigue(mercado, risk_cfg):
@@ -315,8 +315,8 @@ def test_si_el_modelo_factorial_falla_se_avisa_y_sigue(mercado, risk_cfg):
                            "ticker": ["T0"], "sector": ["Energy"]})
     a = _libro(mercado, risk_cfg, panel=future)
     assert a.factor_risk is None
-    assert any(w.startswith("modelo factorial:") for w in a.warnings)
-    assert a.status != "SIN DATO"
+    assert any(w.startswith("factor model:") for w in a.warnings)
+    assert a.status != "NO DATA"
 
 
 def test_el_drawdown_actual_es_una_perdida_positiva(mercado, risk_cfg):

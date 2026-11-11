@@ -110,8 +110,8 @@ def run_backtest(
         execution_date = _execution_date(sessions, pd.Timestamp(signal_date), lag)
         if execution_date is None:
             warnings.append(
-                f"{pd.Timestamp(signal_date).date()}: sin sesion posterior para ejecutar; "
-                "el ultimo rebalanceo del periodo se omite"
+                f"{pd.Timestamp(signal_date).date()}: no later session to execute on; "
+                "the last rebalance of the period is skipped"
             )
             break
 
@@ -138,15 +138,15 @@ def run_backtest(
         if missing.any():
             current_prices[missing] = last_price.reindex(current_prices.index)[missing]
             warnings.append(
-                f"{execution_date.date()}: sin precio para "
+                f"{execution_date.date()}: no price for "
                 f"{', '.join(map(str, current_prices.index[missing]))}; "
-                "se liquidan al ultimo precio conocido"
+                "they are liquidated at the last known price"
             )
         position_value = float((shares * current_prices).sum()) if len(shares) else 0.0
         nav_before = cash + position_value
 
         if nav_before <= 0:
-            warnings.append(f"{execution_date.date()}: capital agotado; se detiene el backtest")
+            warnings.append(f"{execution_date.date()}: capital exhausted; the backtest stops")
             break
 
         # -- cartera objetivo ---------------------------------------------
@@ -154,7 +154,7 @@ def run_backtest(
         held = set(shares.index[shares > 0])
         target = build_portfolio(cross_section, cfg, held=held)
         if target.empty:
-            warnings.append(f"{pd.Timestamp(signal_date).date()}: sin candidatos; se mantiene la cartera")
+            warnings.append(f"{pd.Timestamp(signal_date).date()}: no candidates; the portfolio is kept")
             previous_execution = execution_date
             continue
 
@@ -164,8 +164,8 @@ def run_backtest(
         dropped = set(target_weights.index) - set(tradable)
         if dropped:
             warnings.append(
-                f"{execution_date.date()}: sin precio de ejecucion para {sorted(dropped)}; "
-                "su peso queda en caja"
+                f"{execution_date.date()}: no execution price for {sorted(dropped)}; "
+                "their weight stays in cash"
             )
             target_weights = target_weights.loc[tradable]
             if target_weights.empty:
@@ -253,7 +253,7 @@ def run_backtest(
         previous_execution = execution_date
 
         if progress and (i % 12 == 0 or i == len(signal_dates)):
-            print(f"  backtest: {i}/{len(signal_dates)} rebalanceos, NAV {nav_after:,.0f}", flush=True)
+            print(f"  backtest: {i}/{len(signal_dates)} rebalances, NAV {nav_after:,.0f}", flush=True)
 
     # -- cola: valorar hasta el ultimo dia disponible ----------------------
     if previous_execution is not None and len(shares):
@@ -268,8 +268,8 @@ def run_backtest(
 
     if not nav_points:
         raise RuntimeError(
-            "el backtest no produjo ningun punto de NAV: revisa que el panel "
-            "tenga scores y que las fechas coincidan con sesiones de mercado"
+            "the backtest produced no NAV point: check that the panel has "
+            "scores and that the dates match market sessions"
         )
 
     nav = pd.Series(dict(nav_points)).sort_index()

@@ -66,6 +66,17 @@ equivocado.
   `cache.read_frame(x) or default`: el valor de verdad de un DataFrame es
   ambiguo y lanza `ValueError`. Ya pasó una vez en `prices.py`.
 
+- **Todo lo que sale del modelo va en inglés**: reportes (backtest, riesgo,
+  órdenes, plan long/short, HTML, PDF), avisos, mensajes de error, progreso y
+  ayuda de la CLI. Los comentarios y docstrings siguen en español: son para
+  quien programa. Los estados de los límites son `OK`, `WARNING`, `BREACHED` y
+  `NO DATA` (antes OK/ALERTA/EXCEDIDO/SIN DATO), y hay código que los compara:
+  cambiar uno es cambiarlo en `risk/limits.py`, `risk_report.py`, `cli.py`,
+  los tests y `tools/risk_mutants.py`. El lector de evidencia del multifactor
+  (`quant_engine.data.multifactor.evidence_from_report`) lee los dos idiomas,
+  porque los reportes oficiales anteriores a noviembre de 2026 están en
+  español. Los nombres de ficheros y comandos (`riesgo_*.md`, `main.py
+  ordenes`) no cambian: son identificadores.
 - **La consola de Windows usa cp1252 al redirigir.** Todo lo que se imprime va
   en ASCII y los puntos de entrada llaman a `enable_utf8_stdout()`. Los ficheros
   `.py` y `.toml` se escriben **sin tildes**; los `.md` sí las llevan. Al añadir

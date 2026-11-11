@@ -64,7 +64,7 @@ def test_el_resumen_trae_probabilidades_coherentes():
 
 def test_el_bootstrap_exige_historia_suficiente_para_el_bloque():
     r = _rets({"strategy": np.zeros(30)})
-    with pytest.raises(ValueError, match="el doble de historia"):
+    with pytest.raises(ValueError, match="twice the block length"):
         montecarlo.bootstrap_paths(r, [252], n_paths=100, mean_block=21, seed=1)
 
 

@@ -51,7 +51,7 @@ def _clean(returns: pd.Series | np.ndarray) -> np.ndarray:
 def _tail(confidence: float) -> float:
     if not 0.5 < confidence < 1.0:
         raise ValueError(
-            f"confianza {confidence}: debe estar entre 0.5 y 1 (0.99, no 99)"
+            f"confidence {confidence}: it must be between 0.5 and 1 (0.99, not 99)"
         )
     return 1.0 - confidence
 
@@ -278,7 +278,7 @@ def _chi2_sf(stat: float, df: int) -> float:
         return math.erfc(math.sqrt(stat / 2.0))
     if df == 2:
         return math.exp(-stat / 2.0)
-    raise ValueError("solo se usan 1 o 2 grados de libertad")
+    raise ValueError("only 1 or 2 degrees of freedom are used")
 
 
 def kupiec_pof(n_obs: int, n_exceptions: int, tail: float) -> tuple[float, float]:

@@ -107,12 +107,12 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
     identidad, mercado, fundamentales crudos, ratios y factores de precio.
     """
     if progress:
-        print("[1/6] universo estatico desde EDGAR...", flush=True)
+        print("[1/6] static universe from EDGAR...", flush=True)
     # Sin perfiles todavia: son una peticion por empresa y aun no sabemos
     # cuales sobreviven al filtro de liquidez.
     static = universe_mod.build_universe(cfg, with_profiles=False, progress=progress)
     if static.empty:
-        raise RuntimeError("el universo estatico salio vacio: revisa [universe].exchanges")
+        raise RuntimeError("the static universe came out empty: check [universe].exchanges")
 
     start = pd.Timestamp(cfg.get("calendar.start"))
     end_raw = str(cfg.get("calendar.end") or "").strip()
@@ -120,7 +120,7 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
     price_start = start - pd.DateOffset(months=_WARMUP_MONTHS)
 
     if progress:
-        print(f"[2/6] precios de {len(static)} tickers desde {price_start.date()}...", flush=True)
+        print(f"[2/6] prices for {len(static)} tickers from {price_start.date()}...", flush=True)
     long_prices = prices_mod.get_prices(
         static["ticker"], price_start, end, refresh=refresh, progress=progress
     )
@@ -141,27 +141,27 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
         static["ticker"].isin(close_wide.columns) & static["ticker"].isin(liquid)
     ].copy()
     if progress:
-        print(f"      {len(tradable)} con precio y liquidez suficiente en algun momento",
+        print(f"      {len(tradable)} with price and enough liquidity at some point",
               flush=True)
     if tradable.empty:
         raise RuntimeError(
-            "ningun ticker supera el filtro de liquidez. Revisa "
-            "[universe].min_dollar_volume o la cache de precios"
+            "no ticker passes the liquidity filter. Check "
+            "[universe].min_dollar_volume or the price cache"
         )
 
     if progress:
-        print(f"[3/6] perfiles (sector y pais) de {len(tradable)} empresas...", flush=True)
+        print(f"[3/6] profiles (sector and country) for {len(tradable)} companies...", flush=True)
     tradable = universe_mod.attach_profiles(tradable, cfg, progress=progress)
     if progress:
-        print(f"      {len(tradable)} tras excluir vehiculos de inversion y otros paises",
+        print(f"      {len(tradable)} after excluding investment vehicles and other countries",
               flush=True)
 
     if progress:
-        print("[4/6] fundamentales point-in-time (XBRL)...", flush=True)
+        print("[4/6] point-in-time fundamentals (XBRL)...", flush=True)
     observations = sec.download_fundamentals(tradable["cik"], progress=progress)
 
     if progress:
-        print("[5/6] factores de precio...", flush=True)
+        print("[5/6] price factors...", flush=True)
     momentum = prices_mod.momentum(
         close_wide,
         lookback_m=int(cfg.get("factors.momentum.lookback_m")),
@@ -173,7 +173,7 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
 
     dates = rebalance_dates(cfg, close_wide.index)
     if progress:
-        print(f"[6/6] ensamblando {len(dates)} fechas de rebalanceo...", flush=True)
+        print(f"[6/6] assembling {len(dates)} rebalance dates...", flush=True)
 
     # Primer cierre de cada ticker en la cache. Es informacion conocida en
     # cualquier fecha posterior, asi que usarla para medir la historia no mira
@@ -235,9 +235,9 @@ def build_panel(cfg: Config, *, progress: bool = True, refresh: bool = False) ->
 
     if not blocks:
         raise RuntimeError(
-            "el panel salio vacio. Causas tipicas: rango de fechas anterior al "
-            "XBRL de la SEC (2009), filtros de liquidez demasiado exigentes, o "
-            "cache de precios incompleta"
+            "the panel came out empty. Typical causes: a date range before SEC "
+            "XBRL (2009), liquidity filters that are too strict, or an "
+            "incomplete price cache"
         )
 
     panel = pd.concat(blocks, ignore_index=True)

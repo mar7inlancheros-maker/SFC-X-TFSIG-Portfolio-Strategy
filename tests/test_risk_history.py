@@ -59,7 +59,7 @@ def test_si_la_cartera_real_oscila_el_doble_el_modelo_subestima():
     holdings, nav = _backtest_equiponderado(rets, scale=2.0)
     _, summary = history.risk_model_calibration(holdings, close, nav)
     assert summary["bias_statistic"] > summary["ci_high"]
-    assert summary["verdict"] == "subestima el riesgo"
+    assert summary["verdict"] == "understates risk"
 
 
 def test_la_prevision_no_usa_precios_posteriores_al_rebalanceo():

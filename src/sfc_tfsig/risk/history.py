@@ -134,8 +134,8 @@ def risk_model_calibration(
         "mean_predicted_vol": float(table["predicted_vol_annual"].mean()),
         "mean_realized_vol": float(table["realized_vol_annual"].mean()),
         "share_beyond_2sd": float((z.sub(z.mean()).abs() > 2.0).mean()),
-        "verdict": ("subestima el riesgo" if bias > 1.0 + half_width
-                    else "exagera el riesgo" if bias < 1.0 - half_width
-                    else "bien calibrado"),
+        "verdict": ("understates risk" if bias > 1.0 + half_width
+                    else "overstates risk" if bias < 1.0 - half_width
+                    else "well calibrated"),
     }
     return table, summary

@@ -137,7 +137,7 @@ def _raw_weights(selection: pd.DataFrame, scheme: str, score_col: str) -> pd.Ser
         # nombres se lleven medio libro.
         return 0.5 * tilt + 0.5 * equal
 
-    raise ValueError(f"esquema de ponderacion desconocido: {scheme}")
+    raise ValueError(f"unknown weighting scheme: {scheme}")
 
 
 def apply_caps(

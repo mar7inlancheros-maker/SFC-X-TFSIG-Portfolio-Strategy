@@ -36,7 +36,7 @@ def load_positions(path: Path | None = None) -> pd.Series:
     df = pd.read_csv(path)
     missing = {"ticker", "shares"} - set(df.columns)
     if missing:
-        raise ValueError(f"{path} necesita las columnas ticker,shares (faltan {missing})")
+        raise ValueError(f"{path} needs the columns ticker,shares (missing {missing})")
     series = df.set_index(df["ticker"].astype(str).str.upper())["shares"].astype(float)
     return series[series != 0]
 
@@ -82,9 +82,9 @@ def build_orders(
     missing_price = prices.isna() & (held != 0)
     if missing_price.any():
         raise ValueError(
-            "faltan precios para posiciones que hay que vender: "
-            f"{sorted(universe[missing_price])}. Anade el precio manualmente o "
-            "amplia el universo antes de generar ordenes."
+            "prices are missing for positions that must be sold: "
+            f"{sorted(universe[missing_price])}. Add the price manually or "
+            "widen the universe before generating orders."
         )
 
     current_value = held * prices.fillna(0.0)
@@ -122,26 +122,26 @@ def render_orders(orders: pd.DataFrame, target: pd.DataFrame, nav: float,
                   cfg: Config, as_of: pd.Timestamp) -> str:
     """Hoja de ordenes legible, para llevar al comite."""
     lines = [
-        f"# Rebalanceo propuesto -- {pd.Timestamp(as_of).date()}",
+        f"# Proposed rebalance -- {pd.Timestamp(as_of).date()}",
         "",
-        f"- Configuracion: fingerprint `{cfg.fingerprint}`",
-        f"- Valor de la cuenta: {nav:,.2f} {cfg.get('meta.base_currency')}",
-        f"- Posiciones objetivo: {len(target)}",
-        f"- Ordenes: {len(orders)}",
-        f"- Rotacion: {orders.attrs.get('turnover', float('nan')) * 100:.1f}%",
-        f"- Coste estimado: {orders.attrs.get('estimated_cost', 0.0):,.2f} "
-        f"({cfg.total_cost_bps:.0f} bps por lado)",
+        f"- Configuration: fingerprint `{cfg.fingerprint}`",
+        f"- Account value: {nav:,.2f} {cfg.get('meta.base_currency')}",
+        f"- Target positions: {len(target)}",
+        f"- Orders: {len(orders)}",
+        f"- Turnover: {orders.attrs.get('turnover', float('nan')) * 100:.1f}%",
+        f"- Estimated cost: {orders.attrs.get('estimated_cost', 0.0):,.2f} "
+        f"({cfg.total_cost_bps:.0f} bps per side)",
         "",
-        "> Las ventas van primero: financian las compras del mismo dia en una",
-        "> cuenta sin margen.",
+        "> Sells go first: they fund the same day's buys in an account",
+        "> without margin.",
         "",
     ]
 
     if orders.empty:
-        lines.append("_Sin ordenes: la cartera ya esta en su objetivo._")
+        lines.append("_No orders: the portfolio is already at its target._")
         return "\n".join(lines)
 
-    lines += ["| # | Lado | Ticker | Acciones | Precio | Nocional | Peso actual | Peso objetivo |",
+    lines += ["| # | Side | Ticker | Shares | Price | Notional | Current weight | Target weight |",
               "|---|---|---|---|---|---|---|---|"]
     for i, (_, row) in enumerate(orders.iterrows(), start=1):
         lines.append(
@@ -150,12 +150,12 @@ def render_orders(orders: pd.DataFrame, target: pd.DataFrame, nav: float,
             f"{row['current_weight'] * 100:.2f}% | {row['target_weight'] * 100:.2f}% |"
         )
 
-    lines += ["", "## Cartera objetivo completa", "",
-              "| Ticker | Sector | Peso | Score |", "|---|---|---|---|"]
+    lines += ["", "## Full target portfolio", "",
+              "| Ticker | Sector | Weight | Score |", "|---|---|---|---|"]
     for _, row in target.sort_values("weight", ascending=False).iterrows():
         score = row.get("score_composite", float("nan"))
         lines.append(
-            f"| {row['ticker']} | {row.get('sector', 'n/d')} | "
+            f"| {row['ticker']} | {row.get('sector', 'n/a')} | "
             f"{row['weight'] * 100:.2f}% | "
             f"{'' if pd.isna(score) else f'{score:.2f}'} |"
         )

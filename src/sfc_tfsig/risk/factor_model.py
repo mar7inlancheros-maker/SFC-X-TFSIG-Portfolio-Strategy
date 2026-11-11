@@ -99,7 +99,7 @@ def estimate_factor_model(
     panel["date"] = pd.to_datetime(panel["date"])
     panel_dates = np.array(sorted(panel["date"].unique()), dtype="datetime64[ns]")
     if len(panel_dates) == 0:
-        raise ValueError("el panel no tiene fechas anteriores a la del analisis")
+        raise ValueError("the panel has no dates before the analysis date")
     sectors = sorted(panel["sector"].dropna().unique()) if "sector" in panel else ["Unknown"]
 
     prices = close_wide.loc[close_wide.index <= as_of].tail(window + 1)
@@ -137,8 +137,8 @@ def estimate_factor_model(
 
     if not factor_rows:
         raise ValueError(
-            "ningun dia con suficientes nombres para la regresion transversal: "
-            "revisa que los precios y el panel cubran la ventana del modelo"
+            "no day with enough names for the cross-sectional regression: "
+            "check that prices and the panel cover the model window"
         )
     factor_returns = pd.DataFrame(factor_rows).T.sort_index().fillna(0.0)
     residuals = pd.DataFrame(residual_rows).T.sort_index()
@@ -174,8 +174,8 @@ def factor_risk(
             if column in x_book.columns:
                 x_book.loc[ticker, column] = 1.0
         warnings.append(
-            f"sin exposiciones en el panel para {', '.join(map(str, missing))}: "
-            "se modelan con su sector y estilo neutro"
+            f"no exposures in the panel for {', '.join(map(str, missing))}: "
+            "they are modeled with their sector and a neutral style"
         )
     x_book = x_book.fillna(0.0)
 
@@ -195,8 +195,8 @@ def factor_risk(
     short = spec_book.isna()
     if short.any():
         warnings.append(
-            f"varianza especifica de la mediana del sector para {', '.join(map(str, spec_book.index[short]))} "
-            f"(menos de {_MIN_SPECIFIC_OBS} dias de residuos)"
+            f"specific variance from the sector median for {', '.join(map(str, spec_book.index[short]))} "
+            f"(fewer than {_MIN_SPECIFIC_OBS} days of residuals)"
         )
     spec_book = spec_book.fillna(fill)
     specific_var = float(np.sum(w.to_numpy() ** 2 * spec_book.to_numpy()))
@@ -208,10 +208,10 @@ def factor_risk(
         "variance_share": x.to_numpy() * fx / total_var if total_var > 0 else np.nan,
     }, index=x.index)
     is_sector = contrib.index.str.startswith("sector_")
-    groups = {"sectores (incluye mercado)": float(contrib.loc[is_sector, "variance_share"].sum())}
+    groups = {"sectors (incl. market)": float(contrib.loc[is_sector, "variance_share"].sum())}
     for factor in contrib.index[~is_sector]:
         groups[factor] = float(contrib.loc[factor, "variance_share"])
-    groups["especifico"] = specific_var / total_var if total_var > 0 else float("nan")
+    groups["specific"] = specific_var / total_var if total_var > 0 else float("nan")
     decomposition = pd.DataFrame({"variance_share": pd.Series(groups)})
     decomposition["vol_contribution"] = decomposition["variance_share"] * math.sqrt(total_var * TRADING_DAYS)
 

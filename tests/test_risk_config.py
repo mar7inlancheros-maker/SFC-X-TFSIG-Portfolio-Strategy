@@ -45,15 +45,15 @@ def test_su_fingerprint_no_toca_el_de_la_estrategia(data):
 
 
 @pytest.mark.parametrize("path, value, message", [
-    ("var.confidence", [99], "0.99, no 99"),
+    ("var.confidence", [99], "0.99, not 99"),
     ("var.ewma_lambda", 1.2, "RiskMetrics"),
-    ("var.garch.n_paths", 100, "trayectorias"),
-    ("montecarlo.parametric.t_dof", 2, "varianza"),
-    ("montecarlo.bootstrap.return_haircut", 2.0, "ANUAL"),
+    ("var.garch.n_paths", 100, "paths"),
+    ("montecarlo.parametric.t_dof", 2, "variance"),
+    ("montecarlo.bootstrap.return_haircut", 2.0, "ANNUAL"),
     ("exposure.participation", 0.0, "participation"),
-    ("liquidity.stress_vol_mult", 0.5, "abaratar"),
-    ("stress.history_start", "ayer", "AAAA-MM-DD"),
-    ("limits.max_beta", -1.0, "positivo"),
+    ("liquidity.stress_vol_mult", 0.5, "cheaper"),
+    ("stress.history_start", "ayer", "YYYY-MM-DD"),
+    ("limits.max_beta", -1.0, "positive"),
 ])
 def test_valores_imposibles_se_rechazan_con_mensaje(data, path, value, message):
     with pytest.raises(ConfigError, match=message):
@@ -64,7 +64,7 @@ def test_escenario_historico_con_fechas_al_reves(data):
     bad = copy.deepcopy(data)
     bad["stress"]["historical"][0]["start"], bad["stress"]["historical"][0]["end"] = (
         bad["stress"]["historical"][0]["end"], bad["stress"]["historical"][0]["start"])
-    with pytest.raises(ConfigError, match="anterior"):
+    with pytest.raises(ConfigError, match="before end"):
         risk_config_from_dict(bad)
 
 
@@ -92,7 +92,7 @@ def test_replace_valida_como_riesgo_y_no_como_estrategia():
 def test_escenario_historico_de_un_solo_dia_se_rechaza(data):
     bad = copy.deepcopy(data)
     bad["stress"]["historical"][0]["end"] = bad["stress"]["historical"][0]["start"]
-    with pytest.raises(ConfigError, match="anterior"):
+    with pytest.raises(ConfigError, match="before end"):
         risk_config_from_dict(bad)
 
 

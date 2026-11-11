@@ -260,11 +260,11 @@ def test_el_reporte_se_genera_entero_y_lleva_las_limitaciones(mercado, cfg_integ
     texto = report_mod.build_report(resultado, perf, cfg, benchmark_nav=indice,
                                     validation=informe)
 
-    for seccion in ("## Rendimiento", "## Costes y rotacion", "## Cartera al",
-                    "## Validacion estadistica", "## Limitaciones declaradas"):
+    for seccion in ("## Performance", "## Costs and turnover", "## Portfolio as of",
+                    "## Statistical validation", "## Declared limitations"):
         assert seccion in texto
     assert cfg.fingerprint in texto
-    assert "Sesgo de supervivencia" in texto
+    assert "Survivorship bias" in texto
     # El reporte va a fichero redirigido: tiene que ser ASCII puro.
     texto.encode("cp1252")
 
@@ -295,8 +295,8 @@ def test_el_reporte_incluye_atribucion_y_decaimiento(mercado, cfg_integracion):
         contributions=contribuciones, yearly_excess=exceso,
         decay_lag=por_retraso, decay_horizon=por_horizonte,
     )
-    for seccion in ("## Atribucion", "Nombres necesarios para la mitad",
-                    "Exceso mediano", "## Decaimiento de la senal", "Trimestral:"):
+    for seccion in ("## Attribution", "Names needed for half",
+                    "Median excess", "## Signal decay", "Quarterly:"):
         assert seccion in texto
     texto.encode("cp1252")
 
@@ -318,5 +318,5 @@ def test_las_ordenes_del_ultimo_mes_cuadran_con_la_cartera(mercado, cfg_integrac
     assert invertido == pytest.approx(esperado, rel=0.02)
 
     texto = render_orders(ordenes, objetivo, 200_000.0, cfg, ultima)
-    assert "Rebalanceo propuesto" in texto
+    assert "Proposed rebalance" in texto
     texto.encode("cp1252")

@@ -53,7 +53,7 @@ def test_ordenes_minusculas_se_descartan(cfg):
 def test_falta_de_precio_para_vender_es_un_error_explicito(cfg):
     target = _target({"AAA": 1.0}, {"AAA": 100.0})
     actuales = pd.Series({"FANTASMA": 100.0})
-    with pytest.raises(ValueError, match="faltan precios"):
+    with pytest.raises(ValueError, match="prices are missing"):
         build_orders(target, actuales, 100_000.0, cfg)
 
 

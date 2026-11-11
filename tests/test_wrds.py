@@ -230,8 +230,8 @@ def test_setup_usa_el_usuario_del_env_no_el_de_windows(monkeypatch, tmp_path):
 @pytest.mark.parametrize("server_msg,expected", [
     ("connection to server failed: timeout expired", "Duo"),
     ('FATAL:  PAM authentication failed for user "x"', "wrds --setup"),
-    ("could not translate host name", "no se pudo conectar"),
-    ("fe_sendauth: no password supplied", "pgpass no tiene una linea"),
+    ("could not translate host name", "could not connect"),
+    ("fe_sendauth: no password supplied", "pgpass has no line"),
 ])
 def test_probe_traduce_fallos_a_instrucciones(monkeypatch, server_msg, expected):
     import psycopg2

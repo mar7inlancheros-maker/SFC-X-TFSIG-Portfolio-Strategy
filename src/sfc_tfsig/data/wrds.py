@@ -42,11 +42,11 @@ from . import cache
 from .sec import _read_env_file
 
 SETUP_HELP = (
-    "Configuracion de WRDS, una vez por maquina:\n"
-    "  1. en .env (raiz del repo):  WRDS_USERNAME=tu_usuario\n"
-    "  2. instalar wrds (ver pyproject.toml, grupo wrds)\n"
-    "  3. python main.py wrds --setup   (pide la contrasena y la guarda; create_pgpass_file)\n"
-    "El paso 3 guarda la contrasena para que las corridas sin terminal no se cuelguen."
+    "WRDS setup, once per machine:\n"
+    "  1. in .env (repo root):  WRDS_USERNAME=your_user\n"
+    "  2. install wrds (see pyproject.toml, wrds group)\n"
+    "  3. python main.py wrds --setup   (asks for the password and saves it; create_pgpass_file)\n"
+    "Step 3 saves the password so runs without a terminal do not hang."
 )
 
 
@@ -92,7 +92,7 @@ def _import_wrds():
     try:
         import wrds  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(f"falta el paquete wrds.\n{SETUP_HELP}") from exc
+        raise RuntimeError(f"the wrds package is missing.\n{SETUP_HELP}") from exc
     return wrds
 
 
@@ -103,14 +103,14 @@ def get_connection():
     """
     username = _read_env_value("WRDS_USERNAME")
     if not username:
-        raise RuntimeError(f"WRDS_USERNAME no esta definido.\n{SETUP_HELP}")
+        raise RuntimeError(f"WRDS_USERNAME is not set.\n{SETUP_HELP}")
 
     # Sin contrasena guardada, wrds la pide por teclado. Con terminal, que la
     # pida; sin terminal, fallar ahora en vez de colgarse.
     if not _pgpass_path().exists() and not sys.stdin.isatty():
         raise RuntimeError(
-            f"no hay contrasena de WRDS guardada ({_pgpass_path()}) y el proceso no "
-            f"tiene terminal para pedirla.\n{SETUP_HELP}"
+            f"no saved WRDS password ({_pgpass_path()}) and the process has no "
+            f"terminal to ask for it.\n{SETUP_HELP}"
         )
 
     # El sondeo solo tiene sentido con contrasena guardada: sin ella, con
@@ -145,21 +145,21 @@ def _probe(username: str, timeout: int | None = None) -> None:
         low = msg.lower()
         if "timeout" in low:
             raise RuntimeError(
-                f"WRDS no respondio en {timeout}s (la red si llega). Suele ser una aprobacion Duo "
-                "pendiente en el celular del titular de la cuenta: aprobarla y volver a correr. "
-                "Para esperar mas, WRDS_CONNECT_TIMEOUT=90 en .env."
+                f"WRDS did not answer within {timeout}s (the network is reachable). It is usually a "
+                "pending Duo approval on the account holder's phone: approve it and run again. "
+                "To wait longer, set WRDS_CONNECT_TIMEOUT=90 in .env."
             ) from None
         if "no password supplied" in low:
             raise RuntimeError(
-                f"el pgpass no tiene una linea para {username} en {_HOST}. Crearla con: "
+                f"pgpass has no line for {username} at {_HOST}. Create it with: "
                 "python main.py wrds --setup"
             ) from None
         if "authentication" in low or "password" in low:
             raise RuntimeError(
-                f"WRDS rechazo la contrasena guardada para {username}. Si cambio, "
-                f"actualizarla con: python main.py wrds --setup"
+                f"WRDS rejected the saved password for {username}. If it changed, "
+                f"update it with: python main.py wrds --setup"
             ) from None
-        raise RuntimeError(f"no se pudo conectar a WRDS: {msg.splitlines()[0]}") from None
+        raise RuntimeError(f"could not connect to WRDS: {msg.splitlines()[0]}") from None
 
 
 @contextmanager
@@ -192,13 +192,13 @@ def setup_pgpass(password: str | None = None) -> Path:
 
     username = _read_env_value("WRDS_USERNAME")
     if not username:
-        raise RuntimeError(f"WRDS_USERNAME no esta definido.\n{SETUP_HELP}")
+        raise RuntimeError(f"WRDS_USERNAME is not set.\n{SETUP_HELP}")
     if password is None:
         # WRDS_PASSWORD en .env evita escribirla en la terminal. Tras crear el
         # pgpass conviene borrarla de .env: pgpass vive fuera del repo.
         password = _read_env_value("WRDS_PASSWORD")
     if not password:
-        password = getpass.getpass(f"Contrasena de WRDS para {username} (no se ve al escribir): ")
+        password = getpass.getpass(f"WRDS password for {username} (hidden while typing): ")
 
     wrds = _import_wrds()
     db = wrds.Connection(wrds_username=username, wrds_password=password)

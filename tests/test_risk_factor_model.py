@@ -89,13 +89,13 @@ def test_sin_capitalizacion_la_regresion_pondera_igual(mercado):
 
 def test_panel_sin_fechas_anteriores_da_error_con_mensaje(mercado):
     early = mercado["dates"][0] - pd.Timedelta(days=30)
-    with pytest.raises(ValueError, match="anteriores"):
+    with pytest.raises(ValueError, match="no dates before"):
         fm.estimate_factor_model(mercado["close"], mercado["panel"], early)
 
 
 def test_con_pocos_nombres_no_hay_regresion(mercado):
     panel = mercado["panel"][mercado["panel"]["ticker"].isin([f"T{i}" for i in range(20)])]
-    with pytest.raises(ValueError, match="suficientes nombres"):
+    with pytest.raises(ValueError, match="enough names"):
         fm.estimate_factor_model(mercado["close"], panel, mercado["dates"][-1])
 
 

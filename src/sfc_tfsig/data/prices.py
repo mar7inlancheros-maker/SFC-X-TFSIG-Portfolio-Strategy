@@ -70,7 +70,7 @@ def _import_yfinance():
         import yfinance as yf  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover
         raise PriceError(
-            "falta yfinance. Instala con: pip install yfinance"
+            "yfinance is missing. Install it with: pip install yfinance"
         ) from exc
     return yf
 
@@ -324,8 +324,8 @@ def get_prices(
             jobs = [([t for t in tickers if t not in recent_failures], s, e) for tickers, s, e in jobs]
             jobs = [job for job in jobs if job[0]]
             if progress:
-                print(f"  precios: {len(skipped)} tickers omitidos por fallo reciente "
-                      f"(se reintentan tras {_FAILURE_TTL_DAYS} dias)", flush=True)
+                print(f"  prices: {len(skipped)} tickers skipped after a recent failure "
+                      f"(retried after {_FAILURE_TTL_DAYS} days)", flush=True)
 
     if jobs:
         downloaded: list[pd.DataFrame] = []
@@ -337,8 +337,8 @@ def get_prices(
             pending: list[str] = []
             for i, batch in enumerate(batches, start=1):
                 if progress:
-                    print(f"  precios: {job_start.date()}..{job_end.date()} "
-                          f"lote {i}/{len(batches)} ({len(batch)} tickers)", flush=True)
+                    print(f"  prices: {job_start.date()}..{job_end.date()} "
+                          f"batch {i}/{len(batches)} ({len(batch)} tickers)", flush=True)
                 frame, errors = _download_batch(batch, job_start, job_end)
                 frame = _drop_unsettled(frame)
                 downloaded.append(frame)
@@ -352,8 +352,8 @@ def get_prices(
             # nunca. Tampoco cuenta como fallo de 7 dias: no es que no haya datos.
             if pending:
                 if progress:
-                    print(f"  precios: {len(pending)} tickers con error de Yahoo; "
-                          f"reintento en lotes de {_RETRY_BATCH}", flush=True)
+                    print(f"  prices: {len(pending)} tickers with a Yahoo error; "
+                          f"retrying in batches of {_RETRY_BATCH}", flush=True)
                 time.sleep(_RETRY_PAUSE_S)
                 still: list[str] = []
                 for i in range(0, len(pending), _RETRY_BATCH):
@@ -377,8 +377,8 @@ def get_prices(
         _record_failures(failures)
         cache.write_json(_LEDGER, ledger)
         if unresolved and progress:
-            print(f"  precios: {len(unresolved)} tickers siguen con error de Yahoo y se piden en la "
-                  f"proxima corrida: {', '.join(sorted(unresolved)[:15])}"
+            print(f"  prices: {len(unresolved)} tickers still have a Yahoo error and will be requested on the "
+                  f"next run: {', '.join(sorted(unresolved)[:15])}"
                   + (" ..." if len(unresolved) > 15 else ""), flush=True)
 
         new = pd.concat(downloaded, ignore_index=True) if downloaded else _empty_long()
@@ -393,8 +393,8 @@ def get_prices(
 
     if master.empty:
         raise PriceError(
-            "no se obtuvo ningun precio. Revisa la conexion y que los tickers "
-            "sean validos en Yahoo (los canadienses de TSX llevan sufijo .TO)"
+            "no price was obtained. Check the connection and that the tickers "
+            "are valid on Yahoo (Canadian TSX names carry the .TO suffix)"
         )
 
     mask = master["ticker"].isin(wanted) & master["date"].between(start, end)

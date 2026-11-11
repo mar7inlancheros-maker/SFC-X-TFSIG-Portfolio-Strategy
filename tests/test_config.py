@@ -65,20 +65,20 @@ def test_factor_desconocido_se_rechaza_con_los_conocidos_en_el_mensaje():
 
 
 def test_todos_los_pesos_a_cero_es_no_tener_modelo():
-    with pytest.raises(ConfigError, match="no hay modelo"):
+    with pytest.raises(ConfigError, match="there is no model"):
         config_from_dict(_con(**{
             "factors.weights": {"value": 0.0, "quality": 0.0, "momentum": 0.0, "lowvol": 0.0}
         }))
 
 
 def test_peso_negativo_se_rechaza():
-    with pytest.raises(ConfigError, match="negativo"):
+    with pytest.raises(ConfigError, match="negative"):
         config_from_dict(_con(**{"factors.weights": {"value": -1.0, "quality": 1.0}}))
 
 
 def test_topes_imposibles_se_detectan_antes_de_correr_nada():
     """max_weight x n_positions < 1 impide invertir el capital completo."""
-    with pytest.raises(ConfigError, match="impiden invertir"):
+    with pytest.raises(ConfigError, match="prevent investing"):
         config_from_dict(_con(**{"portfolio.max_weight": 0.03,
                                  "portfolio.n_positions": 20}))
 
@@ -104,12 +104,12 @@ def test_historia_insuficiente_para_momentum_se_rechaza():
 
 
 def test_coste_negativo_se_rechaza():
-    with pytest.raises(ConfigError, match="no paga dividendos"):
+    with pytest.raises(ConfigError, match="does not pay dividends"):
         config_from_dict(_con(**{"costs.spread_bps": -5.0}))
 
 
 def test_benchmark_vacio_se_rechaza():
-    with pytest.raises(ConfigError, match="sin referencia no hay alfa"):
+    with pytest.raises(ConfigError, match="no alpha to measure"):
         config_from_dict(_con(**{"backtest.benchmark": "  "}))
 
 

@@ -47,7 +47,7 @@ def test_con_colas_gordas_cornish_fisher_supera_a_la_normal_al_99():
 
 
 def test_la_confianza_se_escribe_como_fraccion():
-    with pytest.raises(ValueError, match="0.99, no 99"):
+    with pytest.raises(ValueError, match="0.99, not 99"):
         var.historical_var(_serie(np.zeros(100)), 99)
 
 
@@ -255,7 +255,7 @@ def test_sin_ninguna_excepcion_christoffersen_no_rechaza():
 
 
 def test_la_cola_chi_cuadrado_solo_admite_uno_o_dos_grados():
-    with pytest.raises(ValueError, match="1 o 2"):
+    with pytest.raises(ValueError, match="1 or 2"):
         var._chi2_sf(1.0, 3)
     assert np.isnan(var._chi2_sf(-1.0, 1))
 

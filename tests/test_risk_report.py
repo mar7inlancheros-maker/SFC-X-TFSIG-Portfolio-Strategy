@@ -45,8 +45,8 @@ def previo(politica):
 
 def test_formato_de_valores_que_faltan():
     for fn in (risk_report._pct, risk_report._num, risk_report._money):
-        assert fn(float("nan")) == "n/d"
-        assert fn(None) == "n/d"
+        assert fn(float("nan")) == "n/a"
+        assert fn(None) == "n/a"
     assert risk_report._pct(0.1234) == "12.34%"
     assert risk_report._money(1234567.8) == "1,234,568"
 
@@ -64,16 +64,16 @@ def test_sin_historia_las_secciones_de_historia_se_omiten(previo, politica):
     assert risk_report.history_section(previo) == ""
     assert risk_report.factor_section(previo) == ""
     text = risk_report.build_risk_report(previo, config_from_dict(BASE_CONFIG), politica)
-    assert "Backtest del VaR" not in text
-    assert "Semaforo de limites" in text
+    assert "VaR backtest" not in text
+    assert "Limit traffic light" in text
 
 
 def test_la_comprobacion_previa_en_verde_lo_dice(previo):
     green = previo.limits.assign(status="OK")
     view = analysis.RiskAnalysis(**{**previo.__dict__, "limits": green, "status": "OK"})
     text = risk_report.render_pre_trade(view)
-    assert "Todos los limites con dato en verde" in text
-    assert "| Limite |" not in text
+    assert "Every limit with data is green" in text
+    assert "| Limit |" not in text
 
 
 def test_se_escriben_reporte_y_tablas(completo, tmp_path, monkeypatch):
@@ -86,7 +86,7 @@ def test_se_escriben_reporte_y_tablas(completo, tmp_path, monkeypatch):
                   "montecarlo", "choques_covarianza", "var_condicional", "liquidez"):
         assert label in artifacts and artifacts[label].exists()
     limits = pd.read_csv(artifacts["limites"])
-    assert set(limits["status"]) <= {"OK", "ALERTA", "EXCEDIDO", "SIN DATO"}
+    assert set(limits["status"]) <= {"OK", "WARNING", "BREACHED", "NO DATA"}
     # Las tablas indexadas por fecha u horizonte conservan el indice.
     assert "horizon_d" in pd.read_csv(artifacts["montecarlo"]).columns
 
@@ -114,7 +114,7 @@ def test_el_grafico_aguanta_un_analisis_sin_historia(previo, tmp_path, monkeypat
 def test_el_valor_de_un_limite_respeta_su_unidad():
     assert risk_report._limit_value(0.25, "pct") == "25.00%"
     assert risk_report._limit_value(2.5, "days") == "2.50"
-    assert risk_report._limit_value(np.nan, "num") == "n/d"
+    assert risk_report._limit_value(np.nan, "num") == "n/a"
 
 
 def test_las_columnas_en_dolares_multiplican_por_el_nav():
@@ -126,7 +126,7 @@ def test_las_columnas_en_dolares_multiplican_por_el_nav():
 
 def test_un_limite_minimo_se_muestra_como_suelo(previo):
     text = risk_report.limits_section(previo)
-    line = next(l for l in text.splitlines() if l.startswith("| Numero efectivo de nombres"))
+    line = next(l for l in text.splitlines() if l.startswith("| Effective number of names"))
     assert ">= 15.00" in line
-    line = next(l for l in text.splitlines() if l.startswith("| Volatilidad ex-ante anual"))
+    line = next(l for l in text.splitlines() if l.startswith("| Annual ex-ante volatility"))
     assert "<= 25.00%" in line

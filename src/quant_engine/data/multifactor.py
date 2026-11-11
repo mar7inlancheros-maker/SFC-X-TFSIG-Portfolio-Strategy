@@ -26,17 +26,22 @@ EXTREME_QUINTILE = 0.20    # Q1 (>= 0,80 de percentil) o Q5 (<= 0,20)
 
 
 def evidence_from_report(text: str, name: str = "") -> dict | None:
-    """IC, su t y el spread de quintiles, leidos de un reporte de backtest."""
+    """IC, su t y el spread de quintiles, leidos de un reporte de backtest.
+
+    Lee los dos idiomas: los reportes se escriben en ingles desde noviembre de
+    2026, y el ultimo oficial anterior (30-oct) esta en espanol.
+    """
     def grab(pattern: str) -> float | None:
         m = re.search(pattern, text)
         return float(m.group(1)) if m else None
 
-    ic = grab(r"\| IC medio \| (-?[\d.]+) \|")
+    ic = grab(r"\| (?:IC medio|Mean IC) \| (-?[\d.]+) \|")
     t = grab(r"\| t \(Newey-West\) \| (-?[\d.]+) \|")
     if ic is None or t is None:
         return None
-    return {"ic": ic, "ic_t": t, "months": grab(r"\| Meses evaluados \| (\d+) \|"),
-            "spread": grab(r"Spread Q1-Q5: (-?[\d.]+)% mensual"), "spread_t": grab(r"mensual, t = (-?[\d.]+)"),
+    return {"ic": ic, "ic_t": t, "months": grab(r"\| (?:Meses evaluados|Months evaluated) \| (\d+) \|"),
+            "spread": grab(r"Spread Q1-Q5: (-?[\d.]+)% (?:mensual|monthly)"),
+            "spread_t": grab(r"(?:mensual|monthly), t = (-?[\d.]+)"),
             "report": name, "validated": t >= MIN_EVIDENCE_T}
 
 

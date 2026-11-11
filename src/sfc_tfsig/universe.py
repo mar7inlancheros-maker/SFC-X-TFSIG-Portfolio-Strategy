@@ -204,7 +204,7 @@ def company_profiles(ciks: Iterable[int], *, progress: bool = True) -> pd.DataFr
                 rows.append({"cik": cik, "name": None, "sic": None, "sic_description": None,
                              "entity_type": None, "state_or_country": "", "country": "Unknown"})
             if progress and (i % 100 == 0 or i == len(ciks)):
-                print(f"  perfiles: {i}/{len(ciks)} empresas", flush=True)
+                print(f"  profiles: {i}/{len(ciks)} companies", flush=True)
     finally:
         session.close()
     return pd.DataFrame(rows)

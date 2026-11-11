@@ -189,3 +189,19 @@ def test_la_ficha_cita_lo_que_hizo_la_regla_contra_el_q1():
 def test_el_quintil_extremo_es_el_20_por_ciento():
     assert mf.agreement(1, 0.85) == 1 and mf.agreement(-1, 0.15) == 1
     assert mf.agreement(1, 0.79) == 0 and mf.agreement(-1, 0.21) == 0
+
+
+def test_la_evidencia_se_lee_tambien_del_reporte_en_ingles():
+    english = """
+### Information coefficient (rank IC, monthly)
+| Metric | Value |
+|---|---|
+| Mean IC | 0.0270 |
+| t (Newey-West) | 3.50 |
+| p-value | 0.0005 |
+| Months evaluated | 177 |
+Spread Q1-Q5: 0.52% monthly, t = 2.10, p = 0.0360.
+"""
+    ev = mf.evidence_from_report(english, "backtest_20261201_0900.md")
+    assert ev["ic"] == 0.027 and ev["ic_t"] == 3.5 and ev["months"] == 177
+    assert ev["spread"] == 0.52 and ev["spread_t"] == 2.1 and ev["validated"]

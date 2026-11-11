@@ -66,7 +66,7 @@ def test_con_volatilidad_alta_hoy_la_prevision_sube():
 
 
 def test_historia_corta_se_rechaza_con_mensaje():
-    with pytest.raises(ValueError, match="al menos"):
+    with pytest.raises(ValueError, match="at least"):
         garch.fit_garch(pd.Series(np.zeros(100)))
 
 
