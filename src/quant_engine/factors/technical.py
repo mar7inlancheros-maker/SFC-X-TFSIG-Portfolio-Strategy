@@ -154,7 +154,12 @@ def describe(t: dict) -> list[str]:
     if not t.get("available"):
         return [f"Technical view unavailable: {t.get('reason')}"]
     strength = "strong" if t["adx"] >= 25 else "weak" if t["adx"] < 20 else "moderate"
-    lines = [f"Trend {t['trend']} ({strength}, ADX {t['adx']:.0f}, +DI {t['plus_di']:.0f} / -DI {t['minus_di']:.0f}); "
+    # Dos horizontes: la tendencia sale de las medias de 50 y 200 dias; ADX y DI,
+    # del movimiento de 14 dias. Juntos en una frase ("DOWN (strong, +DI > -DI)")
+    # parecian contradecirse cuando el rebote corto va contra la tendencia larga.
+    short_dir = "up" if t["plus_di"] > t["minus_di"] else "down"
+    lines = [f"Long-term trend {t['trend']} (50/200-day averages); 14-day direction {short_dir}, {strength} "
+             f"(ADX {t['adx']:.0f}, +DI {t['plus_di']:.0f} / -DI {t['minus_di']:.0f}); "
              f"price vs SMA50 {t['price'] / t['sma50'] - 1:+.1%}"
              + (f", vs SMA200 {t['price'] / t['sma200'] - 1:+.1%}" if np.isfinite(t["sma200"]) else "")
              + f". RSI {t['rsi']:.0f}, Bollinger %B {t['pct_b']:.2f}"

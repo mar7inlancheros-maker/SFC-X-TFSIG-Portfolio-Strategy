@@ -59,7 +59,7 @@ def test_lectura_de_una_subida_ordenada():
     t = _view(100 * np.exp(np.linspace(0, 0.6, 300)))
     assert t["trend"] == "UP" and t["stance"] == "BULLISH" and t["rsi"] > 70
     assert t["from_high"] == pytest.approx(0.0, abs=1e-9)
-    assert technical.describe(t)[0].startswith("Trend UP (strong")
+    assert technical.describe(t)[0].startswith("Long-term trend UP (50/200-day averages); 14-day direction up, strong")
 
 
 def test_consejos_de_entrada_segun_el_lado():
