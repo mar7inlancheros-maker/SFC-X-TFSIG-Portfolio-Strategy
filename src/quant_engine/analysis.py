@@ -34,6 +34,7 @@ from .factors import (
     volatility,
 )
 from .inference import correlation, covariance, tests
+from .inference import statistics as stats_mod
 from .portfolio import analytics as pa
 from .portfolio import construction, neutral
 from .portfolio.constraints import ConstructionParams
@@ -93,6 +94,8 @@ class AnalysisResult:
     ex_dividend: dict[str, pd.Timestamp] = field(default_factory=dict)
     valuation: dict[str, dict] = field(default_factory=dict)
     multifactor: dict[str, object] = field(default_factory=dict)
+    statistics: dict[str, dict] = field(default_factory=dict)          # ticker -> inference.statistics
+    basket_statistics: dict[str, float] = field(default_factory=dict)  # PSR y DSR de la canasta
 
 
 def _params(settings: EngineSettings, beta_neutral: bool = False) -> ConstructionParams:
@@ -687,6 +690,10 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
         warnings.append(f"multifactor panel of {result.multifactor['date']:%Y-%m-%d} is more than "
                         f"{mf_mod.STALE_DAYS} days old and does not count as evidence; run python main.py panel")
 
+    progress("statistics (random walk, normality, GARCH)")
+    eval_returns = clean.returns.loc[clean.returns.index >= eval_start]
+    result.statistics = {t: stats_mod.name_statistics(eval_returns[t]) for t in tickers}
+
     progress("trade plan")
     from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415
 
@@ -699,4 +706,24 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
         progress("robustness")
         result.robustness = rr(result)
+    result.basket_statistics = basket_statistics(result)
     return result
+
+
+def basket_statistics(result: AnalysisResult) -> dict[str, float]:
+    """PSR y DSR de la canasta con direcciones de research.
+
+    Las pruebas son las variantes de la robustez (costes, construcciones,
+    estimadores): el Sharpe de la principal se compara con el que N variantes
+    darian por suerte. Sin robustez, DSR = PSR contra 0.
+    """
+    bt_res = (result.primary or {}).get("backtest")
+    if bt_res is None or len(bt_res.returns.dropna()) < 60:
+        return {}
+    r = bt_res.returns.dropna()
+    table = (result.robustness or {}).get("table")
+    trials = (pd.to_numeric(table["sharpe"], errors="coerce").dropna() / np.sqrt(252)
+              if table is not None and "sharpe" in table else pd.Series(dtype=float))
+    if len(trials) < 2:
+        trials = pd.Series([r.mean() / r.std(ddof=1)])
+    return stats_mod.deflated_sharpe(r, trials)

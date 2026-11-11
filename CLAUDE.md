@@ -311,7 +311,9 @@ python tools/risk_mutation.py --list          # el catálogo
   atrás). La primera pasada dejó vivos 7 de 50 (entre ellos "un día que toca
   stop y objetivo cuenta como objetivo", "la t sin Newey-West", "impuestos
   negativos sobre pérdidas" y "fundamentales por fin de periodo y no por
-  publicación"); hoy están los 50 cazados. `tests/test_qe_tools.py` comprueba
+  publicación"); hoy están los 54 cazados, con los cuatro de la inferencia
+  (z del ratio de varianzas, PSR sin asimetría, bootstrap sin bloques, DSR sin
+  descontar variantes). `tests/test_qe_tools.py` comprueba
   que cada fragmento sigue existiendo.
 - **`tests/risk_helpers.py` tiene los datos sintéticos compartidos** (mercado,
   cartera, estrategia completa y política ligera). Las fixtures de cada fichero
@@ -580,6 +582,18 @@ Trampas:
   persistencia falsa (Spearman +0,35, t 3,7) que es solo la deriva del
   mercado contra los cortos. No volver a meter la t del nombre en la
   convicción ni bloquear por ella sin una prueba nueva que la sostenga.
+- **La estadística de cada nombre informa, no decide**
+  (`inference/statistics.py`): prueba de paseo aleatorio de Lo-MacKinlay con
+  z* robusto a heterocedasticidad (q = 5 y 21), Jarque-Bera, VaR/ES histórico
+  frente a normal y Cornish-Fisher, régimen GARCH(1,1) (el de
+  `sfc_tfsig.risk.garch`), intervalo bootstrap por bloques del E(R) de la
+  regla (bloque = horizonte: las entradas diarias se solapan; sin bloques el
+  intervalo sale falsamente estrecho) y, para la canasta, Sharpe
+  probabilístico y deflactado con las variantes de la robustez como pruebas.
+  Nada de esto mueve veredictos, convicción ni tamaño: meterlo en una regla
+  exige antes un estudio fuera de muestra como los de
+  `tools/qe_rule_studies.py`. La normal sale de `statistics.NormalDist`:
+  scipy no es dependencia.
 - **La t del backtest de la regla es de Newey-West** (`trade_plan.hac_t_stat`,
   retardo = la operación más larga). Las entradas diarias se solapan: con el
   error estándar ingenuo, 756 entradas parecerían 756 operaciones

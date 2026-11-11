@@ -71,6 +71,7 @@ import numpy as np
 import pandas as pd
 
 from .data import multifactor
+from .inference import statistics as stats_mod
 from .sessions import session_date
 from .portfolio import construction
 from .portfolio.constraints import ConstructionParams
@@ -849,7 +850,11 @@ def build_plan(result, p: PlanParams) -> dict[str, object]:
                                       time_stop=stop_day)
             st = trade_stats(sims[t])
             hold = holding_window(sims[t], q)
+        # Intervalo del E(R): bootstrap por bloques del horizonte, porque las
+        # entradas diarias se solapan hasta `horizon_d` sesiones.
+        ci = stats_mod.block_bootstrap_mean(sims[t]["r_mult"], block=p.horizon_d) if len(sims[t]) else {}
         rows[-1].update({
+            "bt_exp_r_lo": ci.get("lo"), "bt_exp_r_hi": ci.get("hi"), "bt_p_positive": ci.get("p_positive"),
             "time_stop_day": stop_day, "bt_exp_r_no_time_stop": plain_exp_r,
             "bt_trades": st.get("n", 0), "bt_win_rate": st.get("win_rate"), "bt_exp_r": st.get("exp_r"),
             "bt_t_stat": st.get("t_stat"),

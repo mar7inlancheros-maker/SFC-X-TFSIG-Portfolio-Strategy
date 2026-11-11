@@ -641,6 +641,12 @@ def expectations(console: Console, r: AnalysisResult) -> None:
                       f"Monte Carlo 1 year (neutral drift): median {pct(pf.get('mc_median_return'))}, 5%-95% "
                       f"{pct(pf.get('mc_p05_return'))} to {pct(pf.get('mc_p95_return'))}, P(loss) "
                       f"{pct(pf.get('mc_prob_loss'), 0)}, median max DD {pct(pf.get('mc_median_max_dd'))}.")
+        bs = getattr(r, "basket_statistics", None) or {}
+        if bs.get("psr") is not None and bs["psr"] == bs["psr"]:   # no NaN
+            console.print(f"Sharpe inference: probabilistic Sharpe {bs['psr']:.0%} (P(true Sharpe > 0) with this "
+                          f"sample's skew and kurtosis); deflated Sharpe {bs['dsr']:.0%} against the best of "
+                          f"{bs['trials']} variants by luck (Bailey and Lopez de Prado). Below 95%, the Sharpe is "
+                          "not distinguishable from luck.")
     console.print("All of this is a historical base rate: it carries each stock's past trend and knows "
                   "nothing about what comes next.")
 
@@ -833,6 +839,8 @@ def signal_cards(console: Console, r: AnalysisResult) -> None:
             console.print("  " + escape(line))
         for line in c.get("technical", []):
             console.print("  Technical: " + escape(line))
+        for line in c.get("statistics", []):
+            console.print("  Statistics: " + escape(line))
         for line in c.get("timing", []):
             console.print("  [bold]Timing:[/] " + escape(line))
         if c.get("valuation_vs_signal"):

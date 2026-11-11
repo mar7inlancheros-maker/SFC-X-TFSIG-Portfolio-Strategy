@@ -582,6 +582,22 @@ El DCF informa a la ficha de cada nombre: si respalda o contradice la señal.
 No cambia los veredictos ni el Quant Score: un factor de valor por DCF habría
 que validarlo antes.
 
+**Estadística de cada nombre.** La ficha trae un bloque *Statistics*:
+
+- prueba de paseo aleatorio (Lo y MacKinlay, 1988) a 5 y 21 sesiones, con el
+  z* robusto a heterocedasticidad: tendencia, reversión o ninguna huella;
+- normalidad de los retornos (Jarque-Bera) y VaR/ES a 1 día histórico,
+  normal y Cornish-Fisher: con colas gordas el normal se queda corto;
+- régimen de volatilidad GARCH(1,1): la de hoy frente a la de largo plazo,
+  con su persistencia y vida media;
+- intervalo del 90% del E(R) de la regla por bootstrap de bloques del
+  horizonte, y la fracción de remuestras con media positiva.
+
+La canasta añade el Sharpe probabilístico y el deflactado (Bailey y López de
+Prado): la probabilidad de que el Sharpe verdadero supere cero, y la de que
+supere al mejor que darían por suerte las variantes de la robustez. Todo
+esto informa; no mueve veredictos ni tamaño.
+
 **Niveles por lado.** Un corto lleva stop a 2 ATR y objetivos a 1R y 2R; un
 largo, 3 ATR y 2R / 4R. Hasta octubre de 2026 los dos usaban 2,5 ATR y
 1,5R / 3R. Se probaron 9 combinaciones por lado en los 50 pares; la mejor con

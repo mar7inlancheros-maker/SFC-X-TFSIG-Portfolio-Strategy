@@ -254,6 +254,8 @@ def _signal_cards(r: AnalysisResult, h2) -> list[str]:
                             if c.get("valuation_vs_signal") else "") + "</p>")
         if c.get("technical"):
             block.append("<p class='why'><b>Technical:</b> " + escape(_sentences(c["technical"])) + "</p>")
+        if c.get("statistics"):
+            block.append("<p class='why'><b>Statistics:</b> " + escape(_sentences(c["statistics"])) + "</p>")
         if c.get("timing"):
             block.append("<p class='why'><b>Timing:</b> " + escape(_sentences(c["timing"])) + "</p>")
         if c["data_flags"]:
@@ -422,6 +424,10 @@ def _expectations(r: AnalysisResult, tp: dict, plan: pd.DataFrame, p, h2) -> lis
                 (_pct(pf.get("mc_median_return")), "Monte Carlo 1y median"),
                 (f"{_pct(pf.get('mc_p05_return'))} / {_pct(pf.get('mc_p95_return'))}", "Monte Carlo 5% / 95%"),
                 (_pct(pf.get("mc_prob_loss"), 0), "Monte Carlo P(loss)")]
+        bs = getattr(r, "basket_statistics", None) or {}
+        if bs.get("psr") is not None and bs["psr"] == bs["psr"]:
+            kpis += [(_pct(bs["psr"], 0), "probabilistic Sharpe (P &gt; 0)"),
+                     (_pct(bs["dsr"], 0), f"deflated Sharpe ({bs['trials']} variants)")]
         out.append("<div class='kpis'>" + "".join(
             f"<div class='kpi'><div class='v'>{v}</div><div class='l'>{l}</div></div>" for v, l in kpis) + "</div>")
         equity = _equity_chart(r)

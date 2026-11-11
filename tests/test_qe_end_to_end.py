@@ -100,5 +100,6 @@ def test_los_ficheros_salen_completos(run):
     _, _, _, paths = run
     html = paths["trade_plan_html"].read_text(encoding="utf-8")
     assert "<h1>Trade Plan</h1>" in html and "Hard exit" in html
+    assert "<b>Statistics:</b>" in html and "Random-walk test" in html and "probabilistic Sharpe" in html
     orders = pd.read_csv(paths["orders"])
     assert {"open_date", "time_stop_date", "exit_date"} <= set(orders.columns)

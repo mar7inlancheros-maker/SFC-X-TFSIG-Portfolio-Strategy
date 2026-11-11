@@ -154,6 +154,17 @@ MUTANTS: tuple[Mutant, ...] = (
     _m("tipo de cambio rellenado con el dato siguiente", "data/cleaning.py",
        "full = rate.reindex(rate.index.union(calendar)).ffill()",
        "full = rate.reindex(rate.index.union(calendar)).bfill()", "fx"),
+    # -- inferencia (inference/statistics.py) ------------------------------------
+    _m("ratio de varianzas con el z homocedastico", "inference/statistics.py",
+       "theta = sum((2 * (q - j) / q) ** 2 * n * float((d2[j:] * d2[:-j]).sum()) / denom for j in range(1, q))",
+       "theta = 2 * (2 * q - 1) * (q - 1) / (3 * q) * 4", "statistics"),
+    _m("Sharpe probabilistico sin la asimetria", "inference/statistics.py",
+       "var = 1 - g3 * sr + (g4 - 1) / 4 * sr ** 2", "var = 1 + (g4 - 1) / 4 * sr ** 2", "statistics"),
+    _m("bootstrap sin bloques", "inference/statistics.py",
+       "idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)[:, :n]",
+       "idx = rng.integers(0, n, size=(n_boot, n))", "statistics"),
+    _m("Sharpe deflactado sin descontar las variantes", "inference/statistics.py",
+       '"dsr": probabilistic_sharpe(returns, sr_star)', '"dsr": probabilistic_sharpe(returns, 0.0)', "statistics"),
     # -- multifactor --------------------------------------------------------------
     _m("multifactor sube tambien a los cortos", "data/multifactor.py",
        "return 0 if (direction < 0 and agree > 0) else agree", "return agree", "multifactor"),

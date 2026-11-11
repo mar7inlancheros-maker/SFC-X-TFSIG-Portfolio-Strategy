@@ -443,6 +443,7 @@ def build_cards(result) -> dict[str, dict]:
         vol = result.clean.volume.get(t)
         tech = technical.technical_view(close_l, high_l, low_l, vol)
         card["technical"] = technical.describe(tech)
+        card["statistics"] = statistics_lines(t, row, getattr(result, "statistics", {}) or {})
         card["timing"] = technical.timing_advice(tech, side, float(row["entry"]), float(row["stop"]),
                                                  float(row["tp1"])) if side else []
         val = (getattr(result, "valuation", None) or {}).get(t)
@@ -664,6 +665,20 @@ def multifactor_line(t: str, row: pd.Series, mf: dict | None) -> str:
     stale = " (panel more than 45 days old: not used as evidence)" if mf.get("stale") else ""
     return (f"Multifactor model ({proof}): {info['percentile']:.0%} percentile of {mf['universe']:,} names on "
             f"{pd.Timestamp(mf['date']):%Y-%m-%d}, quintile Q{q} ({parts}); {verdict if side else 'no trade'}.{stale}")
+
+
+def statistics_lines(ticker: str, row: pd.Series, stats: dict) -> list[str]:
+    """Inferencia del nombre y el intervalo del E(R) de la regla, para la ficha."""
+    from .inference import statistics as stats_mod  # noqa: PLC0415
+
+    lines = stats_mod.describe(stats.get(ticker) or {})
+    lo, hi, pp = row.get("bt_exp_r_lo"), row.get("bt_exp_r_hi"), row.get("bt_p_positive")
+    if lo is not None and pd.notna(lo) and hi is not None and pd.notna(hi):
+        sign = ("positive" if lo > 0 else "negative" if hi < 0 else "not distinguishable from zero")
+        lines.append(f"Rule E(R) 90% block-bootstrap interval [{lo:+.2f}R, {hi:+.2f}R], {sign}; the mean is "
+                     f"positive in {pp:.0%} of resamples (blocks of the holding horizon, since daily entries "
+                     "overlap).")
+    return lines
 
 
 def card_size_note(card: dict, max_risk: float) -> str:
