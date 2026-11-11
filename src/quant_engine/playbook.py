@@ -677,7 +677,8 @@ def statistics_lines(ticker: str, row: pd.Series, stats: dict) -> list[str]:
         sign = ("positive" if lo > 0 else "negative" if hi < 0 else "not distinguishable from zero")
         lines.append(f"Rule E(R) 90% block-bootstrap interval [{lo:+.2f}R, {hi:+.2f}R], {sign}; the mean is "
                      f"positive in {pp:.0%} of resamples (blocks of the holding horizon, since daily entries "
-                     "overlap).")
+                     "overlap). This is the name's own history: on 50 large caps a name's past E(R) did not "
+                     "predict its next one, so it is not a signal by itself.")
     return lines
 
 
