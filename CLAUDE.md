@@ -311,9 +311,11 @@ python tools/risk_mutation.py --list          # el catálogo
   atrás). La primera pasada dejó vivos 7 de 50 (entre ellos "un día que toca
   stop y objetivo cuenta como objetivo", "la t sin Newey-West", "impuestos
   negativos sobre pérdidas" y "fundamentales por fin de periodo y no por
-  publicación"); hoy están los 54 cazados, con los cuatro de la inferencia
+  publicación"); hoy están los 60 cazados, con los de la inferencia
   (z del ratio de varianzas, PSR sin asimetría, bootstrap sin bloques, DSR sin
-  descontar variantes). `tests/test_qe_tools.py` comprueba
+  descontar variantes), Holm y BH sin su monotonía, el veredicto con el p
+  suelto, la pendiente de la SMA200 mirando al futuro y las condiciones
+  técnicas de entrada. `tests/test_qe_tools.py` comprueba
   que cada fragmento sigue existiendo.
 - **`tests/risk_helpers.py` tiene los datos sintéticos compartidos** (mercado,
   cartera, estrategia completa y política ligera). Las fixtures de cada fichero
@@ -594,6 +596,26 @@ Trampas:
   exige antes un estudio fuera de muestra como los de
   `tools/qe_rule_studies.py`. La normal sale de `statistics.NormalDist`:
   scipy no es dependencia.
+- **El veredicto del paseo aleatorio sale del q-valor de la canasta**
+  (`statistics.adjust_random_walk`, Benjamini-Hochberg sobre nombres x
+  horizontes). Con 50 nombres y dos horizontes, un p < 0,05 suelto marcaba
+  unos cinco nombres "con tendencia" por pura suerte. Holm es para decidir una
+  regla (estudios); BH, para leer muchos nombres a la vez. Informativo igual
+  que el resto de la estadistica.
+- **Los avisos técnicos de entrada están medidos y no mueven nada**
+  (`python tools/qe_rule_studies.py timing`: 870 nombres sin los 50 pares, 36
+  meses, 21.550 entradas por lado). Extendido, contra tendencia fuerte y a
+  favor de la tendencia larga, en los dos lados: ninguna afirmación movió el
+  E(R) de la regla (la mayor, t 1,3; Holm 1,00), comprar extendido salió
+  +0,07R *mejor* y contra tendencia fuerte el stop saltó menos, no más (51%
+  frente a 53%). Por eso la ficha dice la condición y la cifra
+  (`technical.TIMING_EVIDENCE`), no "espera un retroceso" ni "el stop es más
+  probable". Las condiciones salen de `technical.timing_flags` y los
+  indicadores de `technical.indicator_series`, los mismos para la ficha y el
+  estudio (hay un test que triplica los precios posteriores y exige que la
+  sesión anterior no cambie). No volver a escribir un consejo técnico sin
+  medirlo así; si cambia una condición o la regla, se vuelve a correr y se
+  actualiza la tabla.
 - **La t del backtest de la regla es de Newey-West** (`trade_plan.hac_t_stat`,
   retardo = la operación más larga). Las entradas diarias se solapan: con el
   error estándar ingenuo, 756 entradas parecerían 756 operaciones

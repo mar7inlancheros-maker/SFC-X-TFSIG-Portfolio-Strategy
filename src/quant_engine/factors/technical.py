@@ -13,10 +13,12 @@ indicador con su definicion exacta (los de Wilder, como en `momentum`):
   a cada lado) en los ultimos 6 meses; el mas cercano por debajo y por encima.
 - Volumen: media de 20 sesiones sobre la de 60.
 
-Los consejos son de ejecucion, no de direccion: "esperar un rebote antes de
-vender en corto un nombre sobrevendido" no cambia la senal, cambia el precio de
-entrada. No hay evidencia de que estos indicadores predigan por si solos en
-acciones grandes; por eso no entran en el score.
+Los avisos son de ejecucion, no de direccion, y no entran en el score. Los
+tres que afirmaban algo del resultado (extendido, contra una tendencia fuerte,
+a favor de la tendencia larga) se midieron con la regla del plan en nombres
+que no son los 50 pares (`tools/qe_rule_studies.py timing`): ninguno movio el
+E(R). La ficha da la condicion y la cifra medida (`TIMING_EVIDENCE`), no un
+consejo de esperar.
 """
 
 from __future__ import annotations
@@ -94,6 +96,57 @@ def nearest_levels(price: float, resistances: list[float], supports: list[float]
     return (max(below) if below else np.nan), (min(above) if above else np.nan)
 
 
+def indicator_series(close: pd.Series, high: pd.Series, low: pd.Series) -> pd.DataFrame:
+    """Los indicadores de los consejos de entrada, sesion a sesion.
+
+    Todo es causal (medias moviles y suavizados de Wilder): el valor de la
+    sesion `d` solo usa precios hasta `d`. `technical_view` toma la ultima fila
+    y `tools/qe_rule_studies.py timing` toma la de cada entrada: la ficha y el
+    estudio que la valida miden lo mismo.
+    """
+    c = close.dropna()
+    h = high.reindex(c.index).fillna(c)
+    lo = low.reindex(c.index).fillna(c)
+    sma50, sma200 = c.rolling(50).mean(), c.rolling(200).mean()
+    slope200 = sma200 / sma200.shift(20) - 1
+    up = (c > sma200) & (sma50 > sma200) & (slope200 > 0)
+    down = (c <= sma200) & (sma50 < sma200) & (slope200 < 0)
+    trend = pd.Series(np.where(up, "UP", np.where(down, "DOWN", "SIDEWAYS")), index=c.index)
+    mid, sd = c.rolling(20).mean(), c.rolling(20).std()
+    band = 4 * sd
+    pct_b = ((c - (mid - 2 * sd)) / band).where(band > 0)
+    di = directional(h, lo, c)
+    out = pd.DataFrame({"close": c, "sma50": sma50, "sma200": sma200, "sma200_slope": slope200, "trend": trend,
+                        "rsi": rsi(c), "pct_b": pct_b, "adx": di["adx"], "plus_di": di["plus_di"],
+                        "minus_di": di["minus_di"], "atr": di["atr"]})
+    flags = timing_flags(out)
+    for side, names in flags.items():
+        for name, value in names.items():
+            out[f"{'long' if side > 0 else 'short'}_{name}"] = value
+    return out
+
+
+STRONG_ADX = 25
+
+
+def timing_flags(t) -> dict[int, dict[str, object]]:
+    """Las condiciones de los consejos de entrada, por lado (+1 largo, -1 corto).
+
+    `t` es la lectura de una sesion (dict) o la tabla de `indicator_series`:
+    con escalares devuelve booleanos y con columnas, series. Una sola
+    definicion para la ficha y para el estudio que la valida.
+    """
+    strong = t["adx"] >= STRONG_ADX
+    return {
+        1: {"extended": (t["rsi"] > 70) | (t["pct_b"] > 1),
+            "against_trend": (t["trend"] == "DOWN") & strong & (t["minus_di"] > t["plus_di"]),
+            "with_trend": t["trend"] == "UP"},
+        -1: {"extended": (t["rsi"] < 30) | (t["pct_b"] < 0),
+             "against_trend": (t["trend"] == "UP") & strong & (t["plus_di"] > t["minus_di"]),
+             "with_trend": t["trend"] == "DOWN"},
+    }
+
+
 def technical_view(close: pd.Series, high: pd.Series, low: pd.Series, volume: pd.Series | None = None) -> dict:
     """Todos los indicadores de la ultima sesion, en la moneda en que cotiza."""
     c = close.dropna()
@@ -103,9 +156,9 @@ def technical_view(close: pd.Series, high: pd.Series, low: pd.Series, volume: pd
     lo = low.reindex(c.index).fillna(c)
     last = float(c.iloc[-1])
     sma = {w: float(c.rolling(w).mean().iloc[-1]) if len(c) >= w else np.nan for w in (20, 50, 200)}
-    sma200 = c.rolling(200).mean()
-    slope200 = float(sma200.iloc[-1] / sma200.iloc[-21] - 1) if len(sma200.dropna()) > 21 else np.nan
-    di = directional(h, lo, c).iloc[-1]
+    ind = indicator_series(c, h, lo).iloc[-1]
+    slope200 = float(ind["sma200_slope"])
+    di = ind
     m = macd(c)["hist"]
     cross = ""
     signs = np.sign(m.iloc[-6:].to_numpy())
@@ -116,7 +169,7 @@ def technical_view(close: pd.Series, high: pd.Series, low: pd.Series, volume: pd
                  f"{'today' if ago == 0 else f'{ago} session(s) ago'}")
     mid, sd = c.rolling(20).mean(), c.rolling(20).std()
     upper, lower = mid + 2 * sd, mid - 2 * sd
-    pct_b = float((last - lower.iloc[-1]) / (upper.iloc[-1] - lower.iloc[-1])) if sd.iloc[-1] > 0 else np.nan
+    pct_b = float(ind["pct_b"])
     width = ((upper - lower) / mid).dropna()
     width_pct = float((width.iloc[-252:] < width.iloc[-1]).mean()) if len(width) > 20 else np.nan
     year = c.iloc[-252:]
@@ -127,14 +180,8 @@ def technical_view(close: pd.Series, high: pd.Series, low: pd.Series, volume: pd
         v = volume.reindex(c.index).dropna()
         if len(v) >= 60 and v.iloc[-60:].mean() > 0:
             vol_ratio = float(v.iloc[-20:].mean() / v.iloc[-60:].mean())
-    above200 = np.isfinite(sma[200]) and last > sma[200]
-    if np.isfinite(sma[200]) and above200 and sma[50] > sma[200] and slope200 > 0:
-        trend = "UP"
-    elif np.isfinite(sma[200]) and not above200 and sma[50] < sma[200] and slope200 < 0:
-        trend = "DOWN"
-    else:
-        trend = "SIDEWAYS"
-    r = float(rsi(c).iloc[-1])
+    trend = str(ind["trend"])
+    r = float(ind["rsi"])
     score = {"UP": 1.0, "DOWN": -1.0, "SIDEWAYS": 0.0}[trend] + (0.5 if m.iloc[-1] > 0 else -0.5) + \
         (0.5 if r > 50 else -0.5)
     stance = "BULLISH" if score >= 1.5 else "BEARISH" if score <= -1.5 else "NEUTRAL"
@@ -177,22 +224,60 @@ def describe(t: dict) -> list[str]:
     return lines
 
 
+# `python tools/qe_rule_studies.py timing --end 2026-10-30`: la regla del plan
+# (niveles de cada lado, sin stop por tiempo) abierta la primera sesion tras
+# cada cierre de mes, jul-2023 a jun-2026, en los 600 nombres mas liquidos de
+# cada mes sin los 50 pares (870 distintos, 21.550 entradas por lado).
+# `diff` es la media mensual de E(R) con la condicion menos sin ella, t de
+# Newey-West (retardo 3) y p ajustado por Holm sobre las seis afirmaciones;
+# `stopped` es la fraccion de entradas que acaban en el stop (con, sin).
+# Si cambia la regla del plan o una condicion de `timing_flags`, se vuelve a
+# correr y se actualiza.
+TIMING_SAMPLE = "870 liquid names excluding the 50 reference pairs, 36 month-ends to Jun-2026"
+TIMING_EVIDENCE: dict[tuple[int, str], dict[str, object]] = {
+    (1, "extended"): {"diff": 0.070, "t": 1.31, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.53, 0.53)},
+    (1, "against_trend"): {"diff": -0.091, "t": -1.01, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                           "stopped": (0.51, 0.53)},
+    (1, "with_trend"): {"diff": 0.072, "t": 1.08, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.54, 0.52)},
+    (-1, "extended"): {"diff": -0.049, "t": -0.78, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.57, 0.53)},
+    (-1, "against_trend"): {"diff": -0.036, "t": -1.16, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                            "stopped": (0.51, 0.53)},
+    (-1, "with_trend"): {"diff": 0.008, "t": 0.19, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.55, 0.52)},
+}
+_VERDICT_TEXT = {
+    "SUPPORTED": "the measurement backs this condition",
+    "CONTRADICTED": "the measurement points the other way",
+    "NOT SUPPORTED": "no measurable effect on the rule's E(R), so it is no reason to wait or to skip",
+}
+
+
+def evidence_note(side: int, flag: str) -> str:
+    """Lo que se midio de una condicion de la ficha, en una frase."""
+    e = TIMING_EVIDENCE.get((side, flag))
+    if not e:
+        return ""
+    stopped = e.get("stopped")
+    stop_txt = f", stopped out {stopped[0]:.0%} vs {stopped[1]:.0%}" if stopped else ""
+    return (f" Measured ({TIMING_SAMPLE}): {e['diff']:+.2f}R vs other entries the same month, "
+            f"t {e['t']:+.1f}{stop_txt}; {_VERDICT_TEXT[str(e['verdict'])]}.")
+
+
 def timing_advice(t: dict, side: int, entry: float, stop: float, tp1: float) -> list[str]:
-    """Consejos de ejecucion para el lado que se va a operar (+1 largo, -1 corto)."""
+    """Avisos de ejecucion para el lado que se va a operar (+1 largo, -1 corto)."""
     if not t.get("available") or side == 0:
         return []
     out = []
     atr = t["atr"]
-    strong = t["adx"] >= 25
+    flag = timing_flags(t)[side]
     if side > 0:
-        if t["rsi"] > 70 or t["pct_b"] > 1:
-            out.append(f"Extended (RSI {t['rsi']:.0f}, %B {t['pct_b']:.2f}): buying here chases the move; a pullback "
-                       f"toward the SMA20 ({t['sma20']:,.2f}) gives a better entry and a smaller R.")
-        if t["trend"] == "DOWN" and strong and t["minus_di"] > t["plus_di"]:
-            out.append(f"Buying against a strong downtrend (ADX {t['adx']:.0f}): the stop is more likely to be hit; "
-                       f"consider waiting for a close back above the SMA50 ({t['sma50']:,.2f}).")
-        elif t["trend"] == "UP":
-            out.append("The trend supports the long.")
+        if flag["extended"]:
+            out.append(f"Extended (RSI {t['rsi']:.0f}, %B {t['pct_b']:.2f}): price stretched above its 20-day "
+                       f"band (SMA20 {t['sma20']:,.2f})." + evidence_note(1, "extended"))
+        if flag["against_trend"]:
+            out.append(f"Buying against a strong downtrend (ADX {t['adx']:.0f}, -DI {t['minus_di']:.0f} over "
+                       f"+DI {t['plus_di']:.0f})." + evidence_note(1, "against_trend"))
+        elif flag["with_trend"]:
+            out.append("Long-term trend UP, on the side of the long." + evidence_note(1, "with_trend"))
         sup = t["support"]
         if np.isfinite(sup) and stop < sup and sup - stop < 0.5 * atr:
             out.append(f"Stop {stop:,.2f} sits just under support {sup:,.2f}: good placement.")
@@ -203,14 +288,14 @@ def timing_advice(t: dict, side: int, entry: float, stop: float, tp1: float) -> 
         if np.isfinite(res) and entry < res < tp1:
             out.append(f"Resistance {res:,.2f} before TP1 {tp1:,.2f}: expect the move to stall there.")
     else:
-        if t["rsi"] < 30 or t["pct_b"] < 0:
-            out.append(f"Oversold (RSI {t['rsi']:.0f}, %B {t['pct_b']:.2f}): shorting here sells the low; a bounce "
-                       f"toward the SMA20 ({t['sma20']:,.2f}) gives a better entry and a smaller R.")
-        if t["trend"] == "UP" and strong and t["plus_di"] > t["minus_di"]:
-            out.append(f"Shorting into a strong uptrend (ADX {t['adx']:.0f}): the stop is more likely to be hit; "
-                       f"consider waiting for a close below the SMA50 ({t['sma50']:,.2f}).")
-        elif t["trend"] == "DOWN":
-            out.append("The trend supports the short.")
+        if flag["extended"]:
+            out.append(f"Oversold (RSI {t['rsi']:.0f}, %B {t['pct_b']:.2f}): price stretched below its 20-day "
+                       f"band (SMA20 {t['sma20']:,.2f})." + evidence_note(-1, "extended"))
+        if flag["against_trend"]:
+            out.append(f"Shorting into a strong uptrend (ADX {t['adx']:.0f}, +DI {t['plus_di']:.0f} over "
+                       f"-DI {t['minus_di']:.0f})." + evidence_note(-1, "against_trend"))
+        elif flag["with_trend"]:
+            out.append("Long-term trend DOWN, on the side of the short." + evidence_note(-1, "with_trend"))
         res = t["resistance"]
         if np.isfinite(res) and stop > res and stop - res < 0.5 * atr:
             out.append(f"Stop {stop:,.2f} sits just above resistance {res:,.2f}: good placement.")

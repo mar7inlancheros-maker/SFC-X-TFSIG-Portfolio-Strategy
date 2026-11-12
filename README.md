@@ -593,6 +593,11 @@ que validarlo antes.
 - intervalo del 90% del E(R) de la regla por bootstrap de bloques del
   horizonte, y la fracción de remuestras con media positiva.
 
+Con 50 nombres y dos horizontes son 100 pruebas de paseo aleatorio: un
+p < 0,05 suelto saldría unas cinco veces por pura suerte. El veredicto
+(tendencia, reversión) sale del q-valor de Benjamini-Hochberg sobre toda la
+canasta, y la ficha dice cuántas pruebas forman la familia.
+
 La canasta añade el Sharpe probabilístico y el deflactado (Bailey y López de
 Prado): la probabilidad de que el Sharpe verdadero supere cero, y la de que
 supere al mejor que darían por suerte las variantes de la robustez. Todo
@@ -680,12 +685,20 @@ tamaño: informa una decisión del analista y lo dice.
 - distancia a máximos y mínimos de 52 semanas, soportes y resistencias por
   pivotes confirmados, y volumen.
 
-De ahí salen consejos de ejecución:
-- comprar extendido: esperar un retroceso a la SMA20;
-- corto sobrevendido: esperar un rebote;
-- ir contra una tendencia fuerte;
+De ahí salen avisos de ejecución:
+- comprar extendido o vender en corto sobrevendido;
+- ir contra una tendencia fuerte, o a favor de la tendencia larga;
 - un stop justo encima de un soporte: un test lo saltaría;
 - una resistencia antes del TP1.
+
+Los tres primeros se midieron (`python tools/qe_rule_studies.py timing`,
+30-oct-2026): la regla del plan abierta tras cada cierre de mes en 870
+nombres líquidos que no son los 50 pares, 36 meses, 21.550 entradas por lado,
+con las mismas condiciones de la ficha. Ninguna de las seis afirmaciones
+movió el E(R) de la regla (la mejor, t 1,3; Holm 1,00), y comprar extendido
+salió algo *mejor*, no peor (+0,07R). Contra una tendencia fuerte, el stop
+no saltó más: 51% de las entradas frente al 53% del resto, en los dos lados. La ficha ya no dice "espera un
+retroceso" ni "el stop es más probable": dice la condición y lo que se midió.
 
 No cambian la dirección. Además, dos factores con evidencia académica entran
 con peso 0, validados en cada corrida: la proximidad al máximo de 52 semanas

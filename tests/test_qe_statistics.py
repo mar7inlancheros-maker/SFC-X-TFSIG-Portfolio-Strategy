@@ -101,3 +101,37 @@ def test_la_ficha_lo_dice_en_frases():
     text = " ".join(lines)
     assert "Random-walk test" in text and "Jarque-Bera" in text and "GARCH(1,1)" in text
     assert text.isascii()
+
+
+def test_holm_y_benjamini_hochberg_a_mano():
+    p = [0.01, 0.04, 0.03, float("nan"), 0.5]
+    # Holm: 4 x 0,01 = 0,04; 3 x 0,03 = 0,09; 2 x 0,04 = 0,08 -> 0,09 (monotono); 1 x 0,5.
+    np.testing.assert_allclose(st.holm(p), [0.04, 0.09, 0.09, np.nan, 0.5])
+    # BH: 0,01 x 4/1 = 0,04; 0,03 x 4/2 = 0,06; 0,04 x 4/3 = 0,0533; 0,5 -> minimo desde arriba.
+    np.testing.assert_allclose(st.benjamini_hochberg(p), [0.04, 0.0533333, 0.0533333, np.nan, 0.5], rtol=1e-5)
+    assert np.isnan(st.holm([np.nan])).all() and len(st.benjamini_hochberg([])) == 0
+    rng = np.random.default_rng(10)
+    u = rng.uniform(size=40)
+    assert (st.benjamini_hochberg(u) <= st.holm(u) + 1e-12).all()       # BH nunca es mas estricto
+
+
+def test_el_veredicto_de_la_canasta_usa_el_q_valor():
+    # 20 nombres de paseo aleatorio y uno con tendencia: con 40 pruebas, el p
+    # suelto marcaria alguno por suerte; el q-valor deja solo al de verdad.
+    stats = {f"N{i}": st.name_statistics(_ar1(0.0, n=1500, seed=100 + i)) for i in range(20)}
+    stats["TREND"] = st.name_statistics(_ar1(0.3, n=1500, seed=99))
+    st.adjust_random_walk(stats)
+    q = {t: min(v["q_value"] for v in s["random_walk"].values()) for t, s in stats.items()}
+    assert q["TREND"] < 0.001
+    assert all(v["family"] == 42 for s in stats.values() for v in s["random_walk"].values())
+    for t, s in stats.items():
+        for v in s["random_walk"].values():
+            assert v["q_value"] >= v["p"] - 1e-12
+    text = " ".join(st.describe(stats["TREND"]))
+    assert "trending" in text and "Benjamini-Hochberg" in text and "42 tests" in text
+    nulls = [v for t, s in stats.items() if t != "TREND" for v in s["random_walk"].values()]
+    assert sum(v["p"] < 0.05 for v in nulls) >= 1          # el p suelto marca alguno por suerte...
+    assert sum(v["q_value"] < 0.05 for v in nulls) == 0    # ...el q-valor, ninguno
+    fluke = next(t for t, s in stats.items() if t != "TREND" and min(v["p"] for v in s["random_walk"].values()) < 0.05)
+    assert "trending" not in " ".join(st.describe(stats[fluke]))
+    assert "mean-reverting" not in " ".join(st.describe(stats[fluke]))
