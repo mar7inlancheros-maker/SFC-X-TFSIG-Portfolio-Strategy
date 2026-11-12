@@ -180,6 +180,12 @@ MUTANTS: tuple[Mutant, ...] = (
     _m("sobreventa del corto con el umbral del largo", "factors/technical.py",
        '-1: {"extended": (t["rsi"] < 30) | (t["pct_b"] < 0),',
        '-1: {"extended": (t["rsi"] > 70) | (t["pct_b"] > 1),', "technical"),
+    _m("stop detras del nivel sin limite de distancia", "factors/technical.py",
+       "good = bool(np.isfinite(behind) and stop < behind and behind - stop < 0.5 * atr)",
+       "good = bool(np.isfinite(behind) and stop < behind)", "technical"),
+    _m("nivel antes del TP1 del corto con la desigualdad del largo", "factors/technical.py",
+       "before = bool(np.isfinite(front) and tp1 < front < entry)",
+       "before = bool(np.isfinite(front) and entry < front < tp1)", "technical"),
     # -- multifactor --------------------------------------------------------------
     _m("multifactor sube tambien a los cortos", "data/multifactor.py",
        "return 0 if (direction < 0 and agree > 0) else agree", "return agree", "multifactor"),

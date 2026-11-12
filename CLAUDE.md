@@ -311,11 +311,11 @@ python tools/risk_mutation.py --list          # el catálogo
   atrás). La primera pasada dejó vivos 7 de 50 (entre ellos "un día que toca
   stop y objetivo cuenta como objetivo", "la t sin Newey-West", "impuestos
   negativos sobre pérdidas" y "fundamentales por fin de periodo y no por
-  publicación"); hoy están los 60 cazados, con los de la inferencia
+  publicación"); hoy están los 62 cazados, con los de la inferencia
   (z del ratio de varianzas, PSR sin asimetría, bootstrap sin bloques, DSR sin
   descontar variantes), Holm y BH sin su monotonía, el veredicto con el p
   suelto, la pendiente de la SMA200 mirando al futuro y las condiciones
-  técnicas de entrada. `tests/test_qe_tools.py` comprueba
+  técnicas de entrada y de niveles. `tests/test_qe_tools.py` comprueba
   que cada fragmento sigue existiendo.
 - **`tests/risk_helpers.py` tiene los datos sintéticos compartidos** (mercado,
   cartera, estrategia completa y política ligera). Las fixtures de cada fichero
@@ -608,7 +608,10 @@ Trampas:
   favor de la tendencia larga, en los dos lados: ninguna afirmación movió el
   E(R) de la regla (la mayor, t 1,3; Holm 1,00), comprar extendido salió
   +0,07R *mejor* y contra tendencia fuerte el stop saltó menos, no más (51%
-  frente a 53%). Por eso la ficha dice la condición y la cifra
+  frente a 53%). Lo mismo con los niveles (`qe_rule_studies.py levels`,
+  `technical.level_flags`): stop detrás del nivel, nivel dentro del stop y
+  nivel antes del TP1, ninguno se sostiene; el de la resistencia antes del
+  TP1 salta en el 87% de los largos y la ficha lo dice. Por eso la ficha dice la condición y la cifra
   (`technical.TIMING_EVIDENCE`), no "espera un retroceso" ni "el stop es más
   probable". Las condiciones salen de `technical.timing_flags` y los
   indicadores de `technical.indicator_series`, los mismos para la ficha y el
