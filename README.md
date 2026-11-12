@@ -697,7 +697,15 @@ nombres líquidos que no son los 50 pares, 36 meses, 21.550 entradas por lado,
 con las mismas condiciones de la ficha. Ninguna de las seis afirmaciones
 movió el E(R) de la regla (la mejor, t 1,3; Holm 1,00), y comprar extendido
 salió algo *mejor*, no peor (+0,07R). Contra una tendencia fuerte, el stop
-no saltó más: 51% de las entradas frente al 53% del resto, en los dos lados. La ficha ya no dice "espera un
+no saltó más: 51% de las entradas frente al 53% del resto, en los dos lados.
+
+Los avisos de niveles también (`qe_rule_studies.py levels`, mismas entradas,
+pivotes con precios hasta la entrada): stop justo detrás del nivel, nivel
+dentro del stop y nivel antes del TP1. Ninguno movió el E(R) ni la tasa de
+stop. La resistencia antes del TP1 aparece en el 87% de las entradas largas
+(el TP1 está a 6 ATR): casi siempre hay un pivote en medio y el aviso no
+distingue nada. El único p suelto bajo va contra la ficha (cortos con soporte
+antes del TP1, +0,047R, t 2,5; Holm 0,07). La ficha ya no dice "espera un
 retroceso" ni "el stop es más probable": dice la condición y lo que se midió.
 
 No cambian la dirección. Además, dos factores con evidencia académica entran

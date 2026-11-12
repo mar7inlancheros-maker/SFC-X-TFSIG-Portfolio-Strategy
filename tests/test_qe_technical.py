@@ -69,7 +69,7 @@ def test_consejos_de_entrada_segun_el_lado():
     assert any(t.startswith("Long-term trend UP, on the side of the long") for t in long_tips)
     # Cada condicion medida cita lo que se midio y no aconseja esperar.
     flagged = [t for t in long_tips if t.startswith(("Extended", "Long-term trend"))]
-    assert len(flagged) == 2 and all("Measured (" in t and "no reason to wait" in t for t in flagged)
+    assert len(flagged) == 2 and all("Measured (" in t and "no reason to change the order" in t for t in flagged)
     assert all("smaller R" not in t and "more likely to be hit" not in t for t in long_tips)
     assert all(t.isascii() for t in long_tips)
     short_tips = technical.timing_advice(hot, -1, hot["price"], hot["price"] * 1.05, hot["price"] * 0.92)
@@ -83,10 +83,15 @@ def test_stop_y_soporte():
     t = {"available": True, "rsi": 50, "pct_b": 0.5, "trend": "SIDEWAYS", "adx": 15, "plus_di": 20,
          "minus_di": 20, "atr": 2.0, "sma20": 100, "sma50": 100, "support": 95.0, "resistance": 104.0}
     good = technical.timing_advice(t, 1, entry=100, stop=94.5, tp1=103)
-    assert any("good placement" in x for x in good)
+    assert any(x.startswith("Stop 94.50 sits just under support 95.00.") for x in good)
     tight = technical.timing_advice(t, 1, entry=100, stop=95.2, tp1=110)
-    assert any("a test of support would stop you out" in x for x in tight)
-    assert any("Resistance 104.00 before TP1" in x for x in tight)
+    assert any("a test of support reaches the stop" in x for x in tight)
+    before = [x for x in tight if x.startswith("Resistance 104.00 before TP1")]
+    # Medido: casi todas las entradas largas tienen una resistencia antes del TP1.
+    assert before and "It holds on 87% of entries, so it says little." in before[0]
+    # Ninguna afirmacion sin medir: ni "buena colocacion" ni "se frenara ahi".
+    assert all("good placement" not in x and "stall" not in x for x in good + tight)
+    assert all("Measured (" in x for x in good + tight)
 
 
 def test_factores_con_peso_cero_no_mueven_el_score():
@@ -151,3 +156,23 @@ def test_condiciones_de_entrada_por_lado():
     cold = {"rsi": 50, "pct_b": -0.1, "trend": "DOWN", "adx": 30, "plus_di": 10, "minus_di": 30}
     g = technical.timing_flags(cold)
     assert g[-1]["extended"] and g[-1]["with_trend"] and g[1]["against_trend"]
+
+
+def test_niveles_frente_al_stop_y_al_tp1_por_lado():
+    t = {"atr": 2.0, "support": 95.0, "resistance": 104.0}
+    # Largo: stop 94,5 justo bajo el soporte 95 (0,5 < 0,5 x 2 = 1).
+    assert technical.level_flags(t, 1, 100, 94.5, 103) == {
+        "stop_behind_level": True, "level_inside_stop": False, "level_before_tp1": False}
+    # Largo: stop 95,2 por encima del soporte: un test del soporte lo toca; resistencia antes del TP1.
+    assert technical.level_flags(t, 1, 100, 95.2, 110) == {
+        "stop_behind_level": False, "level_inside_stop": True, "level_before_tp1": True}
+    # Largo: soporte 3 ATR por encima del stop: ni detras ni dentro.
+    assert not any(technical.level_flags(t, 1, 100, 89.0, 103).values())
+    # Corto: espejo con la resistencia detras del stop y el soporte antes del TP1.
+    assert technical.level_flags(t, -1, 100, 104.6, 97) == {
+        "stop_behind_level": True, "level_inside_stop": False, "level_before_tp1": False}
+    assert technical.level_flags(t, -1, 100, 103.9, 90) == {
+        "stop_behind_level": False, "level_inside_stop": True, "level_before_tp1": True}
+    nan = {"atr": 2.0, "support": float("nan"), "resistance": float("nan")}
+    assert not any(technical.level_flags(nan, 1, 100, 94, 106).values())
+    assert not any(technical.level_flags(nan, -1, 100, 106, 94).values())

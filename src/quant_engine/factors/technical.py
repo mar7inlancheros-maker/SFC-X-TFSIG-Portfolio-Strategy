@@ -243,11 +243,27 @@ TIMING_EVIDENCE: dict[tuple[int, str], dict[str, object]] = {
     (-1, "against_trend"): {"diff": -0.036, "t": -1.16, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
                             "stopped": (0.51, 0.53)},
     (-1, "with_trend"): {"diff": 0.008, "t": 0.19, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.55, 0.52)},
+    # `python tools/qe_rule_studies.py levels --end 2026-10-30`: mismas entradas,
+    # soportes y resistencias de `pivots` con precios hasta la entrada; Holm
+    # sobre estas seis. `tp1`: fraccion que llega al TP1 (con, sin); `share`:
+    # fraccion de entradas con la condicion.
+    (1, "stop_behind_level"): {"diff": 0.016, "t": 0.24, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                               "stopped": (0.52, 0.53), "tp1": (0.31, 0.32), "share": 0.031},
+    (1, "level_inside_stop"): {"diff": 0.039, "t": 0.66, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                               "stopped": (0.53, 0.53), "tp1": (0.34, 0.32), "share": 0.069},
+    (1, "level_before_tp1"): {"diff": -0.078, "t": -0.99, "p_holm": 0.968, "verdict": "NOT SUPPORTED",
+                              "stopped": (0.53, 0.55), "tp1": (0.32, 0.33), "share": 0.871},
+    (-1, "stop_behind_level"): {"diff": 0.037, "t": 1.25, "p_holm": 0.850, "verdict": "NOT SUPPORTED",
+                                "stopped": (0.51, 0.53), "tp1": (0.48, 0.47), "share": 0.071},
+    (-1, "level_inside_stop"): {"diff": -0.032, "t": -1.68, "p_holm": 0.468, "verdict": "NOT SUPPORTED",
+                                "stopped": (0.56, 0.52), "tp1": (0.44, 0.47), "share": 0.106},
+    (-1, "level_before_tp1"): {"diff": 0.047, "t": 2.53, "p_holm": 0.069, "verdict": "NOT SUPPORTED",
+                               "stopped": (0.53, 0.53), "tp1": (0.47, 0.46), "share": 0.801},
 }
 _VERDICT_TEXT = {
     "SUPPORTED": "the measurement backs this condition",
     "CONTRADICTED": "the measurement points the other way",
-    "NOT SUPPORTED": "no measurable effect on the rule's E(R), so it is no reason to wait or to skip",
+    "NOT SUPPORTED": "no measurable effect on the rule's E(R), so it is no reason to change the order",
 }
 
 
@@ -256,10 +272,39 @@ def evidence_note(side: int, flag: str) -> str:
     e = TIMING_EVIDENCE.get((side, flag))
     if not e:
         return ""
-    stopped = e.get("stopped")
+    stopped, tp1, share = e.get("stopped"), e.get("tp1"), e.get("share")
     stop_txt = f", stopped out {stopped[0]:.0%} vs {stopped[1]:.0%}" if stopped else ""
+    tp1_txt = f", TP1 reached {tp1[0]:.0%} vs {tp1[1]:.0%}" if tp1 else ""
+    # Una condicion que se cumple en casi todas las entradas no distingue nada.
+    common = f" It holds on {share:.0%} of entries, so it says little." if share and share >= 0.5 else ""
     return (f" Measured ({TIMING_SAMPLE}): {e['diff']:+.2f}R vs other entries the same month, "
-            f"t {e['t']:+.1f}{stop_txt}; {_VERDICT_TEXT[str(e['verdict'])]}.")
+            f"t {e['t']:+.1f}{stop_txt}{tp1_txt}; {_VERDICT_TEXT[str(e['verdict'])]}.{common}")
+
+
+def level_flags(t, side: int, entry: float, stop: float, tp1: float) -> dict[str, bool]:
+    """Donde caen el stop y el TP1 frente a soportes y resistencias.
+
+    - `stop_behind_level`: el stop queda justo detras del nivel (a menos de
+      0,5 ATR): un test del nivel no lo toca.
+    - `level_inside_stop`: el nivel esta en el stop o del lado de la entrada
+      a menos de 0,25 ATR: un test del nivel toca el stop.
+    - `level_before_tp1`: hay un nivel entre la entrada y el TP1.
+
+    `t` necesita `atr`, `support` y `resistance` (de `technical_view` o de
+    `nearest_levels` en la sesion de entrada). La ficha y
+    `tools/qe_rule_studies.py levels` usan esta funcion.
+    """
+    atr = t["atr"]
+    behind, front = (t["support"], t["resistance"]) if side > 0 else (t["resistance"], t["support"])
+    if side > 0:
+        good = bool(np.isfinite(behind) and stop < behind and behind - stop < 0.5 * atr)
+        inside = bool(not good and np.isfinite(behind) and stop >= behind - 0.25 * atr and behind < entry)
+        before = bool(np.isfinite(front) and entry < front < tp1)
+    else:
+        good = bool(np.isfinite(behind) and stop > behind and stop - behind < 0.5 * atr)
+        inside = bool(not good and np.isfinite(behind) and stop <= behind + 0.25 * atr and behind > entry)
+        before = bool(np.isfinite(front) and tp1 < front < entry)
+    return {"stop_behind_level": good, "level_inside_stop": inside, "level_before_tp1": before}
 
 
 def timing_advice(t: dict, side: int, entry: float, stop: float, tp1: float) -> list[str]:
@@ -269,6 +314,7 @@ def timing_advice(t: dict, side: int, entry: float, stop: float, tp1: float) -> 
     out = []
     atr = t["atr"]
     flag = timing_flags(t)[side]
+    lv = level_flags(t, side, entry, stop, tp1)
     if side > 0:
         if flag["extended"]:
             out.append(f"Extended (RSI {t['rsi']:.0f}, %B {t['pct_b']:.2f}): price stretched above its 20-day "
@@ -278,15 +324,14 @@ def timing_advice(t: dict, side: int, entry: float, stop: float, tp1: float) -> 
                        f"+DI {t['plus_di']:.0f})." + evidence_note(1, "against_trend"))
         elif flag["with_trend"]:
             out.append("Long-term trend UP, on the side of the long." + evidence_note(1, "with_trend"))
-        sup = t["support"]
-        if np.isfinite(sup) and stop < sup and sup - stop < 0.5 * atr:
-            out.append(f"Stop {stop:,.2f} sits just under support {sup:,.2f}: good placement.")
-        elif np.isfinite(sup) and stop >= sup - 0.25 * atr and sup < entry:
-            out.append(f"Support {sup:,.2f} is at or below the stop {stop:,.2f}: a test of support would stop you "
-                       f"out; a stop under it ({sup - 0.25 * atr:,.2f}) avoids that but widens R.")
-        res = t["resistance"]
-        if np.isfinite(res) and entry < res < tp1:
-            out.append(f"Resistance {res:,.2f} before TP1 {tp1:,.2f}: expect the move to stall there.")
+        sup, res = t["support"], t["resistance"]
+        if lv["stop_behind_level"]:
+            out.append(f"Stop {stop:,.2f} sits just under support {sup:,.2f}." + evidence_note(1, "stop_behind_level"))
+        elif lv["level_inside_stop"]:
+            out.append(f"Support {sup:,.2f} is at or below the stop {stop:,.2f}: a test of support reaches the stop; "
+                       f"a stop under it would be {sup - 0.25 * atr:,.2f}." + evidence_note(1, "level_inside_stop"))
+        if lv["level_before_tp1"]:
+            out.append(f"Resistance {res:,.2f} before TP1 {tp1:,.2f}." + evidence_note(1, "level_before_tp1"))
     else:
         if flag["extended"]:
             out.append(f"Oversold (RSI {t['rsi']:.0f}, %B {t['pct_b']:.2f}): price stretched below its 20-day "
@@ -296,13 +341,13 @@ def timing_advice(t: dict, side: int, entry: float, stop: float, tp1: float) -> 
                        f"-DI {t['minus_di']:.0f})." + evidence_note(-1, "against_trend"))
         elif flag["with_trend"]:
             out.append("Long-term trend DOWN, on the side of the short." + evidence_note(-1, "with_trend"))
-        res = t["resistance"]
-        if np.isfinite(res) and stop > res and stop - res < 0.5 * atr:
-            out.append(f"Stop {stop:,.2f} sits just above resistance {res:,.2f}: good placement.")
-        elif np.isfinite(res) and stop <= res + 0.25 * atr and res > entry:
-            out.append(f"Resistance {res:,.2f} is at or above the stop {stop:,.2f}: a test of resistance would stop "
-                       f"you out; a stop above it ({res + 0.25 * atr:,.2f}) avoids that but widens R.")
-        sup = t["support"]
-        if np.isfinite(sup) and tp1 < sup < entry:
-            out.append(f"Support {sup:,.2f} before TP1 {tp1:,.2f}: expect the move to stall there.")
+        res, sup = t["resistance"], t["support"]
+        if lv["stop_behind_level"]:
+            out.append(f"Stop {stop:,.2f} sits just above resistance {res:,.2f}."
+                       + evidence_note(-1, "stop_behind_level"))
+        elif lv["level_inside_stop"]:
+            out.append(f"Resistance {res:,.2f} is at or above the stop {stop:,.2f}: a test of resistance reaches the "
+                       f"stop; a stop above it would be {res + 0.25 * atr:,.2f}." + evidence_note(-1, "level_inside_stop"))
+        if lv["level_before_tp1"]:
+            out.append(f"Support {sup:,.2f} before TP1 {tp1:,.2f}." + evidence_note(-1, "level_before_tp1"))
     return out

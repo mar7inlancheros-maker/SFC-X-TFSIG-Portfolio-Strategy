@@ -10,6 +10,7 @@
     python tools/qe_rule_studies.py long-rule      # y los largos?
     python tools/qe_rule_studies.py rule-holdout   # las reglas nuevas aguantan en OTROS nombres?
     python tools/qe_rule_studies.py timing         # los consejos tecnicos de entrada mueven el E(R)?
+    python tools/qe_rule_studies.py levels         # y los de soportes y resistencias frente al stop y el TP1?
 
 Corren sobre `scoring.reference_peers` del YAML (50 large caps) con la regla
 de `trade_plan.simulate_trades`. Descargan precios de Yahoo (con cache). Cada
@@ -28,6 +29,9 @@ Resultados del 30-oct-2026, 6 anos, con la regla de cada lado (largos: stop
   afirmaciones de la ficha movio el E(R) (la mayor, t 1,3; Holm 1,00);
   comprar extendido, +0,07R mejor. Por eso la ficha cita la cifra y no
   aconseja esperar.
+- levels (mismas entradas): ninguna de las seis afirmaciones de niveles se
+  sostiene; la resistencia antes del TP1 salta en el 87% de los largos. El
+  unico p suelto bajo va contra la ficha (cortos, +0,047R, t 2,5, Holm 0,07).
 - persistence: dentro del lado, correlacion de rangos E(R)_1 vs E(R)_2 de
   +0,10 (cortos, t 0,7) y -0,11 (largos). Por eso la conviccion no usa el backtest
   del nombre.
@@ -357,6 +361,9 @@ def rule_holdout(end: pd.Timestamp, months: int, top: int, p) -> None:
 # (lado, condicion de `technical.timing_flags`, signo que afirma la ficha)
 TIMING_CLAIMS = [(1, "extended", -1), (1, "against_trend", -1), (1, "with_trend", 1),
                  (-1, "extended", -1), (-1, "against_trend", -1), (-1, "with_trend", 1)]
+# (lado, condicion de `technical.level_flags`, signo que afirma la ficha)
+LEVEL_CLAIMS = [(1, "stop_behind_level", 1), (1, "level_inside_stop", -1), (1, "level_before_tp1", -1),
+                (-1, "stop_behind_level", 1), (-1, "level_inside_stop", -1), (-1, "level_before_tp1", -1)]
 MIN_PER_GROUP = 5
 
 
@@ -375,7 +382,7 @@ def _holdout_picks(end: pd.Timestamp, months: int, top: int, p):
     return dates, picks
 
 
-def timing_table(df: pd.DataFrame) -> pd.DataFrame:
+def timing_table(df: pd.DataFrame, claims=None) -> pd.DataFrame:
     """Cada afirmacion de la ficha contra las entradas, con su p de Holm.
 
     `df`: una fila por entrada con `date`, `side`, `r` y una columna booleana
@@ -385,7 +392,7 @@ def timing_table(df: pd.DataFrame) -> pd.DataFrame:
     tres meses.
     """
     out = []
-    for side, flag, claim in TIMING_CLAIMS:
+    for side, flag, claim in (claims or TIMING_CLAIMS):
         sub = df[df.side == side]
         g = sub.groupby(["date", flag])["r"].agg(["mean", "size"]).unstack(flag)
         n_true = g["size"][True] if True in g["size"] else pd.Series(0, index=g.index)
@@ -397,10 +404,12 @@ def timing_table(df: pd.DataFrame) -> pd.DataFrame:
         # La tasa de stop es descriptiva: la ficha decia "el stop es mas probable";
         # el veredicto sale del E(R), que es lo que cobra la regla.
         stopped = sub["stopped"] if "stopped" in sub else pd.Series(np.nan, index=sub.index)
+        hit_tp1 = sub["tp1"] if "tp1" in sub else pd.Series(np.nan, index=sub.index)
         out.append({"side": side, "flag": flag, "claim": claim, "share": float(sub[flag].mean()),
                     "er_flag": float(sub.loc[sub[flag], "r"].mean()),
                     "er_rest": float(sub.loc[~sub[flag], "r"].mean()),
                     "stop_flag": float(stopped[sub[flag]].mean()), "stop_rest": float(stopped[~sub[flag]].mean()),
+                    "tp1_flag": float(hit_tp1[sub[flag]].mean()), "tp1_rest": float(hit_tp1[~sub[flag]].mean()),
                     "diff": float(diff.mean()) if len(diff) else float("nan"), "t": t, "p": p_two,
                     "months": len(diff)})
     res = pd.DataFrame(out)
@@ -468,20 +477,73 @@ def timing(end: pd.Timestamp, months: int, top: int, p) -> None:
               f"-> {r['verdict']}")
 
 
+def levels(end: pd.Timestamp, months: int, top: int, p) -> None:
+    """Los avisos de niveles de la ficha (`technical.level_flags`), medidos.
+
+    Mismas entradas que `timing` (870 nombres sin los 50 pares, primera sesion
+    tras cada cierre de mes). En cada entrada, soportes y resistencias con
+    `technical.pivots` y `nearest_levels` sobre los precios HASTA esa sesion,
+    y el stop y el TP1 de la regla de cada lado. La ficha dice que un stop
+    justo detras del nivel es buena colocacion, que un nivel dentro del stop
+    hace que un test lo toque y que un nivel antes del TP1 frena el movimiento.
+
+    Criterio fijado antes de mirar: el de `timing` (signo afirmado y p de
+    Newey-West ajustado por Holm sobre estas seis < 0,05). Tasas de stop y de
+    TP1, descriptivas.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    dates, picks = _holdout_picks(end, months, top, p)
+    names = sorted(picks["ticker"].unique())
+    print(f"{len(dates)} month-ends, {len(names)} names (reference peers left out); downloading OHLC...", flush=True)
+    market = loader.load_ohlcv(names, pd.Timestamp(dates[0]) - pd.DateOffset(months=13), end).ohlcv
+    one = dataclasses.replace(p, history_d=1)
+    rows = []
+    for t, grp in picks.groupby("ticker"):
+        if t not in market:
+            continue
+        c, h, lo, a = _series(market[t])
+        for d in grp["date"]:
+            i = int(c.index.searchsorted(d, side="right"))
+            if i < 130 or i + p.horizon_d >= len(c) or not np.isfinite(a.iloc[i]):
+                continue
+            res, sup = technical.pivots(h.iloc[: i + 1], lo.iloc[: i + 1])
+            support, resistance = technical.nearest_levels(float(c.iloc[i]), res, sup)
+            state = {"atr": float(a.iloc[i]), "support": support, "resistance": resistance}
+            cut = slice(0, i + p.horizon_d + 1)
+            for side in (1, -1):
+                lv = tp.levels(float(c.iloc[i]), float(a.iloc[i]), side, p)
+                flags = technical.level_flags(state, side, float(c.iloc[i]), lv["stop"], lv["tp1"])
+                sims = tp.simulate_trades(c.iloc[cut], h.iloc[cut], lo.iloc[cut], a.iloc[cut], side, one,
+                                          cost=COST, borrow=BORROW if side < 0 else 0.0)
+                if len(sims):
+                    ex = sims["exit"].iloc[-1]
+                    rows.append({"date": d, "ticker": t, "side": side, "r": float(sims["r_mult"].iloc[-1]),
+                                 "stopped": ex == "stop", "tp1": str(ex).startswith("tp1"), **flags})
+    df = pd.DataFrame(rows)
+    print(f"{len(df) // 2:,} entries per side")
+    for _, r in timing_table(df, LEVEL_CLAIMS).iterrows():
+        print(f"{'long ' if r['side'] > 0 else 'short'} {r['flag']:17} {r['share']:5.1%} of entries | "
+              f"E(R) with {r['er_flag']:+.3f}R, without {r['er_rest']:+.3f}R | stopped {r['stop_flag']:.0%} vs "
+              f"{r['stop_rest']:.0%} | TP1 {r['tp1_flag']:.0%} vs {r['tp1_rest']:.0%} | monthly difference "
+              f"{r['diff']:+.3f}R t {r['t']:+.2f} p {r['p']:.3f} Holm {r['p_holm']:.3f} ({r['months']} months) "
+              f"-> {r['verdict']}")
+
+
 def main(argv: list[str] | None = None) -> int:
     enable_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("study", choices=["time-stop", "persistence", "multifactor", "quant-score", "short-rule",
-                                      "long-rule", "rule-holdout", "timing"])
+                                      "long-rule", "rule-holdout", "timing", "levels"])
     ap.add_argument("--end", default=None, help="ultima fecha (AAAA-MM-DD); por defecto, hoy")
     ap.add_argument("--years", type=int, default=6)
     ap.add_argument("--months", type=int, default=36, help="multifactor: cierres de mes evaluados")
     ap.add_argument("--top", type=int, default=600, help="multifactor: nombres mas liquidos por fecha")
     args = ap.parse_args(argv)
     end = pd.Timestamp(args.end) if args.end else pd.Timestamp.today().normalize()
-    if args.study in ("multifactor", "quant-score", "rule-holdout", "timing"):
+    if args.study in ("multifactor", "quant-score", "rule-holdout", "timing", "levels"):
         {"multifactor": multifactor, "quant-score": quant_score, "rule-holdout": rule_holdout,
-         "timing": timing}[args.study](end, args.months, args.top, tp.PlanParams())
+         "timing": timing, "levels": levels}[args.study](end, args.months, args.top, tp.PlanParams())
         return 0
     peers = [str(t).upper() for t in load_yaml(DEFAULT_YAML)["scoring"]["reference_peers"]]
     market = loader.load_ohlcv(peers, end - pd.DateOffset(years=args.years), end).ohlcv

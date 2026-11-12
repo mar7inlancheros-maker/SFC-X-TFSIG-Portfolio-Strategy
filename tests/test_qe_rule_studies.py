@@ -44,7 +44,7 @@ def test_meses_con_pocas_entradas_no_cuentan():
 
 
 def test_la_ficha_cita_una_cifra_por_cada_afirmacion_del_estudio():
-    claims = {(side, flag) for side, flag, _ in studies.TIMING_CLAIMS}
+    claims = {(side, flag) for side, flag, _ in studies.TIMING_CLAIMS + studies.LEVEL_CLAIMS}
     assert set(technical.TIMING_EVIDENCE) == claims
     for (side, flag), e in technical.TIMING_EVIDENCE.items():
         assert e["verdict"] in ("SUPPORTED", "CONTRADICTED", "NOT SUPPORTED")
