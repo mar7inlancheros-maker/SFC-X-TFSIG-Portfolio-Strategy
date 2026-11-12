@@ -443,7 +443,7 @@ def build_cards(result) -> dict[str, dict]:
         vol = result.clean.volume.get(t)
         tech = technical.technical_view(close_l, high_l, low_l, vol)
         card["technical"] = technical.describe(tech)
-        card["statistics"] = statistics_lines(t, row, getattr(result, "statistics", {}) or {})
+        card["statistics"] = statistics_lines(t, row, getattr(result, "statistics", {}) or {}, side)
         card["timing"] = technical.timing_advice(tech, side, float(row["entry"]), float(row["stop"]),
                                                  float(row["tp1"])) if side else []
         val = (getattr(result, "valuation", None) or {}).get(t)
@@ -667,8 +667,8 @@ def multifactor_line(t: str, row: pd.Series, mf: dict | None) -> str:
             f"{pd.Timestamp(mf['date']):%Y-%m-%d}, quintile Q{q} ({parts}); {verdict if side else 'no trade'}.{stale}")
 
 
-def statistics_lines(ticker: str, row: pd.Series, stats: dict) -> list[str]:
-    """Inferencia del nombre y el intervalo del E(R) de la regla, para la ficha."""
+def statistics_lines(ticker: str, row: pd.Series, stats: dict, side: int = 0) -> list[str]:
+    """Inferencia del nombre, el intervalo del E(R) de la regla y su tasa base, para la ficha."""
     from .inference import statistics as stats_mod  # noqa: PLC0415
 
     lines = stats_mod.describe(stats.get(ticker) or {})
@@ -679,6 +679,11 @@ def statistics_lines(ticker: str, row: pd.Series, stats: dict) -> list[str]:
                      f"positive in {pp:.0%} of resamples (blocks of the holding horizon, since daily entries "
                      "overlap). This is the name's own history: on 50 large caps a name's past E(R) did not "
                      "predict its next one, so it is not a signal by itself.")
+    from .trade_plan import base_rate_line  # noqa: PLC0415
+
+    base = base_rate_line(side) if side else ""
+    if base:
+        lines.append(base)
     return lines
 
 

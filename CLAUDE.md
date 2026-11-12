@@ -311,7 +311,7 @@ python tools/risk_mutation.py --list          # el catálogo
   atrás). La primera pasada dejó vivos 7 de 50 (entre ellos "un día que toca
   stop y objetivo cuenta como objetivo", "la t sin Newey-West", "impuestos
   negativos sobre pérdidas" y "fundamentales por fin de periodo y no por
-  publicación"); hoy están los 62 cazados, con los de la inferencia
+  publicación"); hoy están los 64 cazados, con los de la inferencia
   (z del ratio de varianzas, PSR sin asimetría, bootstrap sin bloques, DSR sin
   descontar variantes), Holm y BH sin su monotonía, el veredicto con el p
   suelto, la pendiente de la SMA200 mirando al futuro y las condiciones
@@ -611,7 +611,9 @@ Trampas:
   frente a 53%). Lo mismo con los niveles (`qe_rule_studies.py levels`,
   `technical.level_flags`): stop detrás del nivel, nivel dentro del stop y
   nivel antes del TP1, ninguno se sostiene; el de la resistencia antes del
-  TP1 salta en el 87% de los largos y la ficha lo dice. Por eso la ficha dice la condición y la cifra
+  TP1 salta en el 87% de los largos y la ficha lo dice. Cada cifra va con su
+  intervalo del 95% (`ci`). Yahoo reajusta la historia con los dividendos:
+  volver a correr mueve el segundo decimal. Por eso la ficha dice la condición y la cifra
   (`technical.TIMING_EVIDENCE`), no "espera un retroceso" ni "el stop es más
   probable". Las condiciones salen de `technical.timing_flags` y los
   indicadores de `technical.indicator_series`, los mismos para la ficha y el
@@ -619,6 +621,12 @@ Trampas:
   sesión anterior no cambie). No volver a escribir un consejo técnico sin
   medirlo así; si cambia una condición o la regla, se vuelve a correr y se
   actualiza la tabla.
+- **La tasa base de la regla va en cada ficha** (`trade_plan.RULE_BASE_RATE`,
+  de `qe_rule_studies.py timing`): en 870 nombres líquidos sin research,
+  jul-2023 a jun-2026, los largos ganaron +0,18R por entrada (IC −0,01 a
+  +0,37) y los cortos −0,11R (IC −0,23 a +0,00). Es el punto de partida contra
+  el que leer el caso de un nombre: un corto empieza perdiendo por la deriva
+  del mercado. Si cambia la regla, se vuelve a correr y se actualiza.
 - **La t del backtest de la regla es de Newey-West** (`trade_plan.hac_t_stat`,
   retardo = la operación más larga). Las entradas diarias se solapan: con el
   error estándar ingenuo, 756 entradas parecerían 756 operaciones

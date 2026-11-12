@@ -49,4 +49,21 @@ def test_la_ficha_cita_una_cifra_por_cada_afirmacion_del_estudio():
     for (side, flag), e in technical.TIMING_EVIDENCE.items():
         assert e["verdict"] in ("SUPPORTED", "CONTRADICTED", "NOT SUPPORTED")
         note = technical.evidence_note(side, flag)
-        assert note.isascii() and f"t {e['t']:+.1f}" in note
+        lo, hi = e["ci"]
+        assert note.isascii() and f"95% CI {lo:+.2f} to {hi:+.2f}R" in note
+        assert lo < e["diff"] < hi
+        # Un intervalo crudo que excluye el cero con un veredicto sin efecto tiene que explicarse.
+        if e["verdict"] == "NOT SUPPORTED" and (lo > 0 or hi < 0):
+            assert "not after Holm's correction" in note and "no measurable effect" not in note
+        else:
+            assert "not after Holm's correction" not in note
+
+
+def test_tasa_base_por_lado():
+    rng = np.random.default_rng(1)
+    rows = [{"date": d, "side": side, "r": rng.normal(0.3 * side, 1.0)}
+            for d in pd.date_range("2023-01-31", periods=36, freq="ME") for _ in range(50) for side in (1, -1)]
+    b = studies.base_rate(pd.DataFrame(rows)).set_index("side")
+    assert b.loc[1, "exp_r"] > 0.2 and b.loc[1, "ci_lo"] > 0 and b.loc[1, "t"] > 2
+    assert b.loc[-1, "exp_r"] < -0.2 and b.loc[-1, "ci_hi"] < 0
+    assert b.loc[1, "ci_lo"] < b.loc[1, "exp_r"] < b.loc[1, "ci_hi"] and b.loc[1, "months"] == 36

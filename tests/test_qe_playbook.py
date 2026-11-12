@@ -473,3 +473,14 @@ def test_los_avisos_de_datos_van_junto_a_la_orden():
     r = SimpleNamespace(trade_plan={"orders": orders}, clean=SimpleNamespace(stats=stats))
     out = pb.order_flags(r)
     assert list(out) == ["INTC"] and "-29%" in out["INTC"][0]     # sin orden o cobertura: no se avisa aqui
+
+
+def test_la_ficha_trae_la_tasa_base_de_su_lado():
+    row = pd.Series({"bt_exp_r_lo": -0.2, "bt_exp_r_hi": 0.3, "bt_p_positive": 0.6})
+    long_lines = pb.statistics_lines("AAA", row, {}, side=1)
+    short_lines = pb.statistics_lines("AAA", row, {}, side=-1)
+    b_long, b_short = tp.RULE_BASE_RATE[1], tp.RULE_BASE_RATE[-1]
+    assert long_lines[-1].startswith(f"Base rate of the rule for longs: {b_long['exp_r']:+.2f}R per entry")
+    assert short_lines[-1].startswith(f"Base rate of the rule for shorts: {b_short['exp_r']:+.2f}R per entry")
+    assert "with no research view" in long_lines[-1] and long_lines[-1].isascii()
+    assert not any(x.startswith("Base rate") for x in pb.statistics_lines("AAA", row, {}, side=0))
