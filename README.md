@@ -705,7 +705,10 @@ dentro del stop y nivel antes del TP1. Ninguno movió el E(R) ni la tasa de
 stop. La resistencia antes del TP1 aparece en el 87% de las entradas largas
 (el TP1 está a 6 ATR): casi siempre hay un pivote en medio y el aviso no
 distingue nada. El único p suelto bajo va contra la ficha (cortos con soporte
-antes del TP1, +0,047R, t 2,5; Holm 0,07). La ficha ya no dice "espera un
+antes del TP1, +0,046R, t 2,5; Holm 0,08). Cada cifra lleva su intervalo del
+95%: "sin efecto medible" no es "efecto cero", y el intervalo dice cuánto
+cabría aún. Si el intervalo suelto excluye el cero y Holm no, la ficha lo
+explica. La ficha ya no dice "espera un
 retroceso" ni "el stop es más probable": dice la condición y lo que se midió.
 
 No cambian la dirección. Además, dos factores con evidencia académica entran

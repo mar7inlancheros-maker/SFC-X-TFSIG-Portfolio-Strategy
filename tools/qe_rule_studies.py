@@ -31,7 +31,9 @@ Resultados del 30-oct-2026, 6 anos, con la regla de cada lado (largos: stop
   aconseja esperar.
 - levels (mismas entradas): ninguna de las seis afirmaciones de niveles se
   sostiene; la resistencia antes del TP1 salta en el 87% de los largos. El
-  unico p suelto bajo va contra la ficha (cortos, +0,047R, t 2,5, Holm 0,07).
+  unico p suelto bajo va contra la ficha (cortos, +0,046R, t 2,5, Holm 0,08).
+- base rate (timing): largos +0,181R por entrada (IC -0,01 a +0,37, t 1,9),
+  cortos -0,114R (IC -0,23 a +0,00, t -1,9). En `trade_plan.RULE_BASE_RATE`.
 - persistence: dentro del lado, correlacion de rangos E(R)_1 vs E(R)_2 de
   +0,10 (cortos, t 0,7) y -0,11 (largos). Por eso la conviccion no usa el backtest
   del nombre.
@@ -399,7 +401,8 @@ def timing_table(df: pd.DataFrame, claims=None) -> pd.DataFrame:
         n_false = g["size"][False] if False in g["size"] else pd.Series(0, index=g.index)
         both = g[(n_true.fillna(0) >= MIN_PER_GROUP) & (n_false.fillna(0) >= MIN_PER_GROUP)]
         diff = (both["mean"][True] - both["mean"][False]).dropna() if len(both) else pd.Series(dtype=float)
-        t = diff.mean() / newey_west_se(diff, 3) if len(diff) > 6 and diff.std() > 0 else float("nan")
+        se = newey_west_se(diff, 3) if len(diff) > 6 and diff.std() > 0 else float("nan")
+        t = diff.mean() / se if np.isfinite(se) else float("nan")
         p_two = 2 * (1 - stats_mod.NormalDist().cdf(abs(t))) if np.isfinite(t) else float("nan")
         # La tasa de stop es descriptiva: la ficha decia "el stop es mas probable";
         # el veredicto sale del E(R), que es lo que cobra la regla.
@@ -410,14 +413,33 @@ def timing_table(df: pd.DataFrame, claims=None) -> pd.DataFrame:
                     "er_rest": float(sub.loc[~sub[flag], "r"].mean()),
                     "stop_flag": float(stopped[sub[flag]].mean()), "stop_rest": float(stopped[~sub[flag]].mean()),
                     "tp1_flag": float(hit_tp1[sub[flag]].mean()), "tp1_rest": float(hit_tp1[~sub[flag]].mean()),
-                    "diff": float(diff.mean()) if len(diff) else float("nan"), "t": t, "p": p_two,
+                    "diff": float(diff.mean()) if len(diff) else float("nan"), "se": float(se), "t": t, "p": p_two,
                     "months": len(diff)})
     res = pd.DataFrame(out)
+    # Intervalo del 95%: "sin efecto medible" dice cuanto efecto cabria aun.
+    res["ci_lo"], res["ci_hi"] = res["diff"] - 1.96 * res["se"], res["diff"] + 1.96 * res["se"]
     res["p_holm"] = stats_mod.holm(res["p"])
     sig = res["p_holm"] < 0.05
     agrees = np.sign(res["diff"]) == res["claim"]
     res["verdict"] = np.where(sig & agrees, "SUPPORTED", np.where(sig, "CONTRADICTED", "NOT SUPPORTED"))
     return res
+
+
+def base_rate(df: pd.DataFrame) -> pd.DataFrame:
+    """E(R) de la regla por lado sobre todas las entradas: la tasa base.
+
+    Media de las medias mensuales, t de Newey-West (retardo 3) e intervalo del
+    95%. Es lo que gana la regla en un nombre liquido cualquiera en ese
+    periodo, sin research: el punto de partida contra el que leer una ficha.
+    """
+    out = []
+    for side in (1, -1):
+        m = df[df.side == side].groupby("date")["r"].mean()
+        se = newey_west_se(m, 3) if len(m) > 6 else float("nan")
+        out.append({"side": side, "exp_r": float(m.mean()), "se": float(se), "t": float(m.mean() / se),
+                    "ci_lo": float(m.mean() - 1.96 * se), "ci_hi": float(m.mean() + 1.96 * se),
+                    "months": len(m), "positive_months": float((m > 0).mean()), "entries": int((df.side == side).sum())})
+    return pd.DataFrame(out)
 
 
 def timing(end: pd.Timestamp, months: int, top: int, p) -> None:
@@ -469,10 +491,14 @@ def timing(end: pd.Timestamp, months: int, top: int, p) -> None:
                                     for f in ("extended", "against_trend", "with_trend")}})
     df = pd.DataFrame(rows)
     print(f"{len(df) // 2:,} entries per side")
+    for _, b in base_rate(df).iterrows():
+        print(f"base rate {'long ' if b['side'] > 0 else 'short'}: E(R) {b['exp_r']:+.3f}R per entry, 95% CI "
+              f"[{b['ci_lo']:+.3f}, {b['ci_hi']:+.3f}] t {b['t']:+.2f}, positive in {b['positive_months']:.0%} "
+              f"of {b['months']} months")
     for _, r in timing_table(df).iterrows():
         print(f"{'long ' if r['side'] > 0 else 'short'} {r['flag']:13} {r['share']:5.1%} of entries | "
               f"E(R) with {r['er_flag']:+.3f}R, without {r['er_rest']:+.3f}R | stopped {r['stop_flag']:.0%} vs "
-              f"{r['stop_rest']:.0%} | monthly difference "
+              f"{r['stop_rest']:.0%} | 95% CI [{r['ci_lo']:+.3f}, {r['ci_hi']:+.3f}] | monthly difference "
               f"{r['diff']:+.3f}R t {r['t']:+.2f} p {r['p']:.3f} Holm {r['p_holm']:.3f} ({r['months']} months) "
               f"-> {r['verdict']}")
 
@@ -525,7 +551,8 @@ def levels(end: pd.Timestamp, months: int, top: int, p) -> None:
     for _, r in timing_table(df, LEVEL_CLAIMS).iterrows():
         print(f"{'long ' if r['side'] > 0 else 'short'} {r['flag']:17} {r['share']:5.1%} of entries | "
               f"E(R) with {r['er_flag']:+.3f}R, without {r['er_rest']:+.3f}R | stopped {r['stop_flag']:.0%} vs "
-              f"{r['stop_rest']:.0%} | TP1 {r['tp1_flag']:.0%} vs {r['tp1_rest']:.0%} | monthly difference "
+              f"{r['stop_rest']:.0%} | TP1 {r['tp1_flag']:.0%} vs {r['tp1_rest']:.0%} | 95% CI "
+              f"[{r['ci_lo']:+.3f}, {r['ci_hi']:+.3f}] | monthly difference "
               f"{r['diff']:+.3f}R t {r['t']:+.2f} p {r['p']:.3f} Holm {r['p_holm']:.3f} ({r['months']} months) "
               f"-> {r['verdict']}")
 

@@ -233,32 +233,45 @@ def describe(t: dict) -> list[str]:
 # `stopped` es la fraccion de entradas que acaban en el stop (con, sin).
 # Si cambia la regla del plan o una condicion de `timing_flags`, se vuelve a
 # correr y se actualiza.
+# Yahoo reajusta la historia con cada dividendo: volver a correr mueve las cifras
+# en el segundo decimal (la de largos contra tendencia paso de -0,091 a -0,080).
+# `ci` es el intervalo del 95% de `diff`: lo que cabe aun sin efecto medible.
 TIMING_SAMPLE = "870 liquid names excluding the 50 reference pairs, 36 month-ends to Jun-2026"
 TIMING_EVIDENCE: dict[tuple[int, str], dict[str, object]] = {
-    (1, "extended"): {"diff": 0.070, "t": 1.31, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.53, 0.53)},
-    (1, "against_trend"): {"diff": -0.091, "t": -1.01, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
-                           "stopped": (0.51, 0.53)},
-    (1, "with_trend"): {"diff": 0.072, "t": 1.08, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.54, 0.52)},
-    (-1, "extended"): {"diff": -0.049, "t": -0.78, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.57, 0.53)},
-    (-1, "against_trend"): {"diff": -0.036, "t": -1.16, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
-                            "stopped": (0.51, 0.53)},
-    (-1, "with_trend"): {"diff": 0.008, "t": 0.19, "p_holm": 1.0, "verdict": "NOT SUPPORTED", "stopped": (0.55, 0.52)},
+    (1, "extended"): {"diff": 0.070, "ci": (-0.034, 0.175), "t": 1.31, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                      "stopped": (0.53, 0.53)},
+    (1, "against_trend"): {"diff": -0.080, "ci": (-0.256, 0.096), "t": -0.89, "p_holm": 1.0,
+                           "verdict": "NOT SUPPORTED", "stopped": (0.51, 0.53)},
+    (1, "with_trend"): {"diff": 0.072, "ci": (-0.058, 0.203), "t": 1.08, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                        "stopped": (0.54, 0.52)},
+    (-1, "extended"): {"diff": -0.049, "ci": (-0.171, 0.073), "t": -0.78, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                       "stopped": (0.57, 0.53)},
+    (-1, "against_trend"): {"diff": -0.036, "ci": (-0.096, 0.023), "t": -1.19, "p_holm": 1.0,
+                            "verdict": "NOT SUPPORTED", "stopped": (0.51, 0.53)},
+    (-1, "with_trend"): {"diff": 0.008, "ci": (-0.076, 0.092), "t": 0.19, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
+                         "stopped": (0.55, 0.52)},
     # `python tools/qe_rule_studies.py levels --end 2026-10-30`: mismas entradas,
     # soportes y resistencias de `pivots` con precios hasta la entrada; Holm
     # sobre estas seis. `tp1`: fraccion que llega al TP1 (con, sin); `share`:
     # fraccion de entradas con la condicion.
-    (1, "stop_behind_level"): {"diff": 0.016, "t": 0.24, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
-                               "stopped": (0.52, 0.53), "tp1": (0.31, 0.32), "share": 0.031},
-    (1, "level_inside_stop"): {"diff": 0.039, "t": 0.66, "p_holm": 1.0, "verdict": "NOT SUPPORTED",
-                               "stopped": (0.53, 0.53), "tp1": (0.34, 0.32), "share": 0.069},
-    (1, "level_before_tp1"): {"diff": -0.078, "t": -0.99, "p_holm": 0.968, "verdict": "NOT SUPPORTED",
-                              "stopped": (0.53, 0.55), "tp1": (0.32, 0.33), "share": 0.871},
-    (-1, "stop_behind_level"): {"diff": 0.037, "t": 1.25, "p_holm": 0.850, "verdict": "NOT SUPPORTED",
-                                "stopped": (0.51, 0.53), "tp1": (0.48, 0.47), "share": 0.071},
-    (-1, "level_inside_stop"): {"diff": -0.032, "t": -1.68, "p_holm": 0.468, "verdict": "NOT SUPPORTED",
-                                "stopped": (0.56, 0.52), "tp1": (0.44, 0.47), "share": 0.106},
-    (-1, "level_before_tp1"): {"diff": 0.047, "t": 2.53, "p_holm": 0.069, "verdict": "NOT SUPPORTED",
-                               "stopped": (0.53, 0.53), "tp1": (0.47, 0.46), "share": 0.801},
+    (1, "stop_behind_level"): {"diff": 0.015, "ci": (-0.111, 0.142), "t": 0.24, "p_holm": 0.962,
+                               "verdict": "NOT SUPPORTED", "stopped": (0.52, 0.53), "tp1": (0.31, 0.32),
+                               "share": 0.031},
+    (1, "level_inside_stop"): {"diff": 0.043, "ci": (-0.072, 0.157), "t": 0.73, "p_holm": 0.962,
+                               "verdict": "NOT SUPPORTED", "stopped": (0.53, 0.53), "tp1": (0.34, 0.32),
+                               "share": 0.069},
+    (1, "level_before_tp1"): {"diff": -0.078, "ci": (-0.232, 0.076), "t": -0.99, "p_holm": 0.962,
+                              "verdict": "NOT SUPPORTED", "stopped": (0.53, 0.55), "tp1": (0.32, 0.33),
+                              "share": 0.871},
+    (-1, "stop_behind_level"): {"diff": 0.036, "ci": (-0.024, 0.095), "t": 1.18, "p_holm": 0.950,
+                                "verdict": "NOT SUPPORTED", "stopped": (0.52, 0.53), "tp1": (0.48, 0.47),
+                                "share": 0.071},
+    (-1, "level_inside_stop"): {"diff": -0.032, "ci": (-0.069, 0.004), "t": -1.72, "p_holm": 0.426,
+                                "verdict": "NOT SUPPORTED", "stopped": (0.56, 0.52), "tp1": (0.44, 0.47),
+                                "share": 0.106},
+    (-1, "level_before_tp1"): {"diff": 0.046, "ci": (0.009, 0.082), "t": 2.47, "p_holm": 0.082,
+                               "verdict": "NOT SUPPORTED", "stopped": (0.53, 0.53), "tp1": (0.47, 0.46),
+                               "share": 0.801},
 }
 _VERDICT_TEXT = {
     "SUPPORTED": "the measurement backs this condition",
@@ -277,8 +290,17 @@ def evidence_note(side: int, flag: str) -> str:
     tp1_txt = f", TP1 reached {tp1[0]:.0%} vs {tp1[1]:.0%}" if tp1 else ""
     # Una condicion que se cumple en casi todas las entradas no distingue nada.
     common = f" It holds on {share:.0%} of entries, so it says little." if share and share >= 0.5 else ""
-    return (f" Measured ({TIMING_SAMPLE}): {e['diff']:+.2f}R vs other entries the same month, "
-            f"t {e['t']:+.1f}{stop_txt}{tp1_txt}; {_VERDICT_TEXT[str(e['verdict'])]}.{common}")
+    # El intervalo dice cuanto efecto cabe aun: "sin efecto medible" no es "efecto cero".
+    ci = e.get("ci")
+    size = (f" (95% CI {ci[0]:+.2f} to {ci[1]:+.2f}R)" if ci else f", t {e['t']:+.1f}")
+    verdict = _VERDICT_TEXT[str(e["verdict"])]
+    if ci and e["verdict"] == "NOT SUPPORTED" and (ci[0] > 0 or ci[1] < 0):
+        # El intervalo crudo excluye el cero pero la familia de seis pruebas no:
+        # decirlo, o el lector ve una contradiccion entre la cifra y el veredicto.
+        verdict = (f"the interval excludes zero on its own, but not after Holm's correction for the six claims "
+                   f"tested (p {e['p_holm']:.2f}), so it is no reason to change the order")
+    return (f" Measured ({TIMING_SAMPLE}): {e['diff']:+.2f}R vs other entries the same month{size}"
+            f"{stop_txt}{tp1_txt}; {verdict}.{common}")
 
 
 def level_flags(t, side: int, entry: float, stop: float, tp1: float) -> dict[str, bool]:

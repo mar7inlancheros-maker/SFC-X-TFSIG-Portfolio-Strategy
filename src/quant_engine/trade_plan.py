@@ -468,6 +468,31 @@ def missing_wrds_weight(weights: dict[str, float]) -> float:
 
 EXITS = ("stop", "tp1_be", "tp1_tp2", "tp1_time", "time")
 
+# Tasa base de la regla: lo que gano por entrada en un nombre liquido cualquiera,
+# sin research (`python tools/qe_rule_studies.py timing --end 2026-10-30`, base
+# rate: 870 nombres sin los 50 pares, primera sesion tras cada cierre de mes,
+# jul-2023 a jun-2026, niveles de cada lado sin stop por tiempo, costes y
+# prestamo incluidos). Media de las medias mensuales, intervalo del 95% de
+# Newey-West. Es un periodo alcista: los cortos pierden por la deriva del
+# mercado. Si cambia la regla, se vuelve a correr y se actualiza.
+RULE_BASE_RATE = {
+    1: {"exp_r": 0.181, "ci": (-0.010, 0.371), "t": 1.86, "positive_months": 0.69},
+    -1: {"exp_r": -0.114, "ci": (-0.231, 0.003), "t": -1.91, "positive_months": 0.31},
+}
+RULE_BASE_SAMPLE = "870 liquid names excluding the 50 reference pairs, Jul-2023 to Jun-2026"
+
+
+def base_rate_line(side: int) -> str:
+    """La tasa base de la regla en el lado de la ficha, en una frase."""
+    b = RULE_BASE_RATE.get(side)
+    if not b:
+        return ""
+    lo, hi = b["ci"]
+    sig = "positive" if lo > 0 else "negative" if hi < 0 else "not distinguishable from zero at 95%"
+    return (f"Base rate of the rule for {'longs' if side > 0 else 'shorts'}: {b['exp_r']:+.2f}R per entry "
+            f"(95% CI {lo:+.2f} to {hi:+.2f}R, {sig}; positive in {b['positive_months']:.0%} of months) on "
+            f"{RULE_BASE_SAMPLE}, with no research view. Read this name's case against it.")
+
 
 def simulate_trades(close: pd.Series, high: pd.Series, low: pd.Series, atr_series: pd.Series,
                     side: int, p: PlanParams, cost: float = 0.0, borrow: float = 0.0,

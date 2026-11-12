@@ -176,3 +176,16 @@ def test_niveles_frente_al_stop_y_al_tp1_por_lado():
     nan = {"atr": 2.0, "support": float("nan"), "resistance": float("nan")}
     assert not any(technical.level_flags(nan, 1, 100, 94, 106).values())
     assert not any(technical.level_flags(nan, -1, 100, 106, 94).values())
+
+
+def test_la_nota_medida_da_el_intervalo_y_explica_holm():
+    for (side, flag), e in technical.TIMING_EVIDENCE.items():
+        note = technical.evidence_note(side, flag)
+        lo, hi = e["ci"]
+        assert f"95% CI {lo:+.2f} to {hi:+.2f}R" in note and note.isascii()
+        # Intervalo suelto que excluye el cero con veredicto sin efecto: se explica el ajuste.
+        if e["verdict"] == "NOT SUPPORTED" and (lo > 0 or hi < 0):
+            assert "not after Holm's correction" in note and "no measurable effect" not in note
+        else:
+            assert "not after Holm's correction" not in note
+    assert any(e["ci"][0] > 0 or e["ci"][1] < 0 for e in technical.TIMING_EVIDENCE.values())
