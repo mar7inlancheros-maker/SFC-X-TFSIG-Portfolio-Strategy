@@ -66,7 +66,12 @@ def test_consejos_de_entrada_segun_el_lado():
     hot = _view(100 * np.exp(np.linspace(0, 0.6, 300)))
     long_tips = technical.timing_advice(hot, 1, hot["price"], hot["price"] * 0.95, hot["price"] * 1.08)
     assert any(t.startswith("Extended") for t in long_tips)
-    assert any("trend supports the long" in t for t in long_tips)
+    assert any(t.startswith("Long-term trend UP, on the side of the long") for t in long_tips)
+    # Cada condicion medida cita lo que se midio y no aconseja esperar.
+    flagged = [t for t in long_tips if t.startswith(("Extended", "Long-term trend"))]
+    assert len(flagged) == 2 and all("Measured (" in t and "no reason to wait" in t for t in flagged)
+    assert all("smaller R" not in t and "more likely to be hit" not in t for t in long_tips)
+    assert all(t.isascii() for t in long_tips)
     short_tips = technical.timing_advice(hot, -1, hot["price"], hot["price"] * 1.05, hot["price"] * 0.92)
     assert any(t.startswith("Shorting into a strong uptrend") for t in short_tips)
     cold = _view(100 * np.exp(np.linspace(0, -0.6, 300)))
@@ -106,3 +111,43 @@ def test_movimiento_de_resultados_con_fechas_reales_y_con_aproximacion():
     proxy = technical.earnings_moves(r)
     assert proxy["source"].startswith("proxy") and proxy["n"] >= 8
     assert technical.earnings_moves(r.iloc[:100]) is None
+
+
+def _ohlc(n=420, seed=11):
+    rng = np.random.default_rng(seed)
+    c = _series(100 * np.exp(np.cumsum(rng.normal(0.0003, 0.015, n))))
+    return c, c * (1 + rng.uniform(0, 0.01, n)), c * (1 - rng.uniform(0, 0.01, n))
+
+
+def test_los_indicadores_de_una_sesion_no_ven_el_futuro():
+    c, h, lo = _ohlc()
+    base = technical.indicator_series(c, h, lo)
+    later = c.copy()
+    later.iloc[300:] *= 3                     # precios posteriores a la sesion 299, triplicados
+    moved = technical.indicator_series(later, h.where(h.index < c.index[300], h * 3),
+                                       lo.where(lo.index < c.index[300], lo * 3))
+    pd.testing.assert_frame_equal(base.iloc[:300], moved.iloc[:300])
+
+
+def test_la_ficha_y_el_estudio_leen_lo_mismo():
+    c, h, lo = _ohlc()
+    view = technical.technical_view(c, h, lo)
+    last = technical.indicator_series(c, h, lo).iloc[-1]
+    for key in ("trend", "rsi", "pct_b", "adx", "plus_di", "minus_di", "atr", "sma200_slope"):
+        assert view[key] == last[key], key
+    flags = technical.timing_flags(view)
+    for side, prefix in ((1, "long"), (-1, "short")):
+        for name, value in flags[side].items():
+            assert bool(value) == bool(last[f"{prefix}_{name}"]), (side, name)
+
+
+def test_condiciones_de_entrada_por_lado():
+    hot = {"rsi": 75, "pct_b": 0.9, "trend": "UP", "adx": 30, "plus_di": 30, "minus_di": 10}
+    f = technical.timing_flags(hot)
+    assert f[1]["extended"] and f[1]["with_trend"] and not f[1]["against_trend"]
+    assert f[-1]["against_trend"] and not f[-1]["extended"] and not f[-1]["with_trend"]
+    weak = dict(hot, adx=20)                  # sin fuerza no hay "tendencia fuerte en contra"
+    assert not technical.timing_flags(weak)[-1]["against_trend"]
+    cold = {"rsi": 50, "pct_b": -0.1, "trend": "DOWN", "adx": 30, "plus_di": 10, "minus_di": 30}
+    g = technical.timing_flags(cold)
+    assert g[-1]["extended"] and g[-1]["with_trend"] and g[1]["against_trend"]

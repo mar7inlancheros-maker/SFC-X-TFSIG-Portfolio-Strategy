@@ -16,6 +16,11 @@
   2014): probabilidad de que el Sharpe verdadero supere un umbral, con la
   asimetria y la curtosis de la muestra, y descontando cuantas variantes se
   probaron antes de mirar este.
+- **Pruebas multiples**: Holm (controla la probabilidad de un solo falso
+  positivo; para decidir una regla) y Benjamini-Hochberg (controla la
+  proporcion de falsos positivos; para leer muchos nombres a la vez). Con 50
+  nombres y dos horizontes, un p < 0,05 suelto saldria unas cinco veces por
+  pura suerte.
 
 Funciones puras: sin red ni disco. scipy no es dependencia del proyecto: la
 normal sale de `statistics.NormalDist`.
@@ -132,6 +137,48 @@ def block_bootstrap_mean(x, block: int, *, n_boot: int = 2000, level: float = 0.
             "level": level, "block": block}
 
 
+def holm(pvalues) -> np.ndarray:
+    """p-valores ajustados de Holm (1979), en el orden de entrada; NaN se respeta."""
+    p = np.asarray(pvalues, dtype=float)
+    out = np.full(p.shape, np.nan)
+    ok = np.flatnonzero(np.isfinite(p))
+    m = len(ok)
+    if not m:
+        return out
+    order = ok[np.argsort(p[ok], kind="stable")]
+    adj = np.minimum(1.0, (m - np.arange(m)) * p[order])
+    out[order] = np.maximum.accumulate(adj)
+    return out
+
+
+def benjamini_hochberg(pvalues) -> np.ndarray:
+    """q-valores de Benjamini y Hochberg (1995), en el orden de entrada; NaN se respeta."""
+    p = np.asarray(pvalues, dtype=float)
+    out = np.full(p.shape, np.nan)
+    ok = np.flatnonzero(np.isfinite(p))
+    m = len(ok)
+    if not m:
+        return out
+    order = ok[np.argsort(p[ok], kind="stable")]
+    adj = np.minimum(1.0, m * p[order] / np.arange(1, m + 1))
+    out[order] = np.minimum.accumulate(adj[::-1])[::-1]
+    return out
+
+
+def adjust_random_walk(stats: dict[str, dict]) -> dict[str, dict]:
+    """Anade a cada prueba de paseo aleatorio su q-valor BH sobre toda la canasta.
+
+    Una prueba por nombre y horizonte: la familia es la canasta entera. El
+    veredicto de la ficha sale del q-valor, no del p suelto.
+    """
+    cells = [(t, q) for t, s in stats.items() for q, v in (s.get("random_walk") or {}).items() if v]
+    qv = benjamini_hochberg([stats[t]["random_walk"][q]["p"] for t, q in cells])
+    for (t, q), value in zip(cells, qv, strict=True):
+        stats[t]["random_walk"][q]["q_value"] = float(value)
+        stats[t]["random_walk"][q]["family"] = len(cells)
+    return stats
+
+
 def _sr_moments(returns) -> tuple[float, float, float, int]:
     r = np.asarray(pd.Series(returns).dropna(), dtype=float)
     n = len(r)
@@ -201,10 +248,17 @@ def describe(stats: dict) -> list[str]:
     rw = [v for v in (stats.get("random_walk") or {}).values() if v]
     if rw:
         parts = []
+        # Con q-valor (canasta), el veredicto lo controla la tasa de falsos
+        # positivos de toda la familia; sin el, el p suelto.
+        family = max((v.get("family", 1) for v in rw), default=1)
         for v in rw:
-            verdict = ("trending" if v["vr"] > 1 else "mean-reverting") if v["p"] < 0.05 else "random walk"
-            parts.append(f"VR({v['q']}) {v['vr']:.2f}, z {v['z']:+.1f} ({verdict})")
-        lines.append("Random-walk test (Lo-MacKinlay, heteroskedasticity-robust): " + "; ".join(parts) + ".")
+            sig = v.get("q_value", v["p"])
+            verdict = ("trending" if v["vr"] > 1 else "mean-reverting") if sig < 0.05 else "random walk"
+            parts.append(f"VR({v['q']}) {v['vr']:.2f}, z {v['z']:+.1f}, "
+                         + (f"q {sig:.2f}" if "q_value" in v else f"p {sig:.2f}") + f" ({verdict})")
+        tail = (f" q is the p-value adjusted by Benjamini-Hochberg over the {family} tests in this basket."
+                if any("q_value" in v for v in rw) else "")
+        lines.append("Random-walk test (Lo-MacKinlay, heteroskedasticity-robust): " + "; ".join(parts) + "." + tail)
     nm, tail = stats.get("normality") or {}, stats.get("tail") or {}
     if nm and tail:
         fat = nm["p"] < 0.01

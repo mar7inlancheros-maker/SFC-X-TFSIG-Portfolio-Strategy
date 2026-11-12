@@ -377,7 +377,7 @@ def test_salida_a_bolsa_reciente_tiene_ficha_limitada_sin_tamano():
     card = pb.limited_card(result, "NEW", tp.PlanParams())
     assert card["signal"] == "NOT ANALYZED" and card["headline"].startswith("LIMITED VIEW NEW: only 70 sessions")
     assert "levels for research's SHORT" in card["fundamentals"][0] and card["shares"] == 0 and not card["steps"]
-    assert card["technical"] and card["technical"][0].startswith("Trend")
+    assert card["technical"] and card["technical"][0].startswith("Long-term trend")
     short = SimpleNamespace(**{**result.__dict__, "quality": quality.assign(sessions=20)})
     assert pb.limited_card(short, "NEW", tp.PlanParams())["headline"].startswith("NOT ANALYZED")
 

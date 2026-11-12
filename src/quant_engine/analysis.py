@@ -692,7 +692,8 @@ def run_analysis(settings: EngineSettings, *, signals_csv: Path | None = None,
 
     progress("statistics (random walk, normality, GARCH)")
     eval_returns = clean.returns.loc[clean.returns.index >= eval_start]
-    result.statistics = {t: stats_mod.name_statistics(eval_returns[t]) for t in tickers}
+    result.statistics = stats_mod.adjust_random_walk(
+        {t: stats_mod.name_statistics(eval_returns[t]) for t in tickers})
 
     progress("trade plan")
     from .trade_plan import build_plan, params_from_settings  # noqa: PLC0415
